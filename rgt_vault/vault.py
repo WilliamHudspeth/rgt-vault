@@ -145,11 +145,19 @@ class VaultManager:
         self.storage.set_secret(namespace, name, ciphertext, 1, policy_hash=self.policy_hash)
 
     def get_fingerprint(self, name: str, namespace: str = "default", version: Optional[int] = None) -> str:
-        """Returns the SHA256 fingerprint of the ciphertext for debugging."""
+        """Returns the SHA256 fingerprint of the ciphertext for debugging.
+
+        Fingerprint reads are deliberately NOT policy-gated: a fingerprint is
+        a small fixed-length hash that leaks no plaintext, and a debugger
+        often needs to inspect a secret even when the calling agent is not
+        authorized to *read* it. Rate limiting also does not apply to
+        fingerprints (deliberately, per the ROADMAP "Audit log noise
+        reduction" item).
+        """
         if self.storage.is_honeytoken(namespace, name):
             self._log_audit("HONEYTOKEN_TRIGGERED", name, json.dumps({"severity": "critical", "agent": "system", "namespace": namespace, "purpose": "fingerprint"}))
             raise PermissionError(f"Honeytoken access detected: {namespace}/{name}")
-            
+
         result = self.storage.get_secret(namespace, name, version, policy_hash=self.policy_hash)
         if not result:
             raise SecretNotFoundError(f"Secret '{namespace}/{name}' not found.")
@@ -182,11 +190,11 @@ class VaultManager:
             
         ciphertext, dek_version = result
         aad = self._get_aad(namespace, name)
-        
+
         # We currently only support dek_version=1 for AESGCM
         if dek_version != 1:
-            raise ValueError(f"Unsupported DEK version {dek_version}")
-            
+            raise ValidationError(f"Unsupported DEK version {dek_version}")
+
         plaintext_bytes = decrypt(ciphertext, self.dek, aad)
         buffer = bytearray(plaintext_bytes)
         del plaintext_bytes 

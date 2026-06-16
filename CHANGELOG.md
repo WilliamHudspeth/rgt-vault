@@ -6,6 +6,55 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **CLI parity.** `rgt-vault` now exposes `set`, `get`, `list`, `revoke`,
+  `fingerprint`, `rotate {master,dek}`, `verify-audit`, `audit`, and
+  `simulate` subcommands with a `--provider {keyring,platform}` selector
+  (closes the "CLI parity" roadmap item). `--db` and `--policy` are global
+  options. The default provider is `keyring` (Secret Service / Credential
+  Manager) for local development convenience; production deployments
+  should pass `--provider platform` to use the sealed TPM/DPAPI/Keychain
+  backend.
+- **`RGT_VAULT_DEBUG=1` env var** dumps a full Python traceback to stderr
+  when the CLI catches an unexpected error, on top of the always-printed
+  `<ExceptionType>: <message>` summary.
+- **`tests/test_cli.py`** with 16 hermetic tests for every subcommand
+  (uses a stub `KeyringProvider` so the test suite never touches the
+  developer's real OS keyring).
+- **`tests/test_decryption_errors.py`** (8 tests) enforcing that the public
+  crypto and vault paths raise only `DecryptionError` /
+  `ValidationError` / `ChecksumError` (all `VaultError` subclasses) for any
+  failure mode -- never the raw `cryptography.exceptions.InvalidTag` or a
+  bare `ValueError`, so callers can't distinguish "wrong key" from
+  "tampered ciphertext" via the exception type.
+- **`tests/test_migration_atomicity.py`** verifying that a failing
+  migration file rolls back its bookkeeping row (the migration will be
+  retried on next startup rather than silently skipped).
+
+### Changed
+- **`crypto.decrypt` is now a single, type-stable entry point.** It
+  raises :class:`DecryptionError` (a `VaultError`) for *any* failure --
+  truncated token, wrong AAD, wrong key, tampering -- and validates that
+  the `dek` is exactly 32 bytes and the `aad` is bytes/bytearray. The
+  internal `AES256GCMWrapper.unwrap` still raises `InvalidTag` (it's the
+  low-level helper); the public path no longer leaks the underlying
+  library's exception type to callers.
+- **Storage `ChecksumError` is now a `VaultError` subclass.** Previously
+  `StorageBackend.get_secret` raised a bare `ValueError` on checksum
+  mismatch; now it raises `ChecksumError`, which the CLI / API surface
+  can map to a single error category.
+- **Migration runner is transactional.** Each migration's `executescript`
+  + bookkeeping INSERT now run inside a `BEGIN` / `COMMIT` pair with a
+  `ROLLBACK` on exception. A failed migration leaves the database in the
+  same state as before the attempt (closes the "Migration atomicity"
+  roadmap item).
+- **`get_fingerprint` docstring** documents the deliberate decision to
+  *not* policy-gate fingerprint reads (the ciphertext fingerprint leaks
+  no plaintext) and *not* rate-limit them (per the "Audit log noise
+  reduction" roadmap item).
+- **`Unsupported DEK version` now raises `ValidationError`** instead of a
+  bare `ValueError`, consistent with the other public-API error types.
+
 ## [0.1.0] — 2026-06-16
 
 ### Fixed

@@ -17,3 +17,11 @@ class ChecksumError(VaultError):
 class ValidationError(VaultError):
     """Raised when input validation fails."""
     pass
+
+class DecryptionError(VaultError):
+    """Raised when a ciphertext fails to decrypt (bad AAD, wrong key, tampering,
+    or malformed input). Hides the underlying cause from attackers probing the
+    vault via the public API; the original exception is chained in ``__cause__``
+    for debug logs.
+    """
+    pass
