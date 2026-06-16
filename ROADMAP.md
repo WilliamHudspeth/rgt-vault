@@ -17,6 +17,11 @@ production-readiness audit.
 
 ## Planned
 
+- **Local HTTP server for LLM/agent clients.** ~~A loopback FastAPI surface with
+  bearer-token auth and server-side actions so non-Python clients can use the
+  vault without plaintext crossing the wire.~~ **DONE** in `rgt_vault/server/`
+  (`rgt-vault serve`); covered by `tests/test_server.py` and
+  `tests/test_actions.py`.
 - **Migration atomicity.** ~~Wrap each migration file + its bookkeeping row in a
   single transaction; verify with `PRAGMA integrity_check`.~~ **DONE** in
   `rgt_vault/storage/sqlite.py::_apply_migrations`; covered by
@@ -42,3 +47,8 @@ production-readiness audit.
 
 - Pluggable storage backends (Postgres) for multi-process deployments.
 - Optional envelope re-encryption to enable cross-vault backup restore.
+- **Egress-proxy `/use` model.** Today `/use` returns the action result over
+  authenticated loopback; a future mode would make the vault perform the
+  outbound call itself for arbitrary registered upstreams (request templating),
+  keeping plaintext off localhost entirely. Per-agent tokens (rather than one
+  shared token) would land alongside it.

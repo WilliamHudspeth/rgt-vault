@@ -6,7 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-06-16
+
 ### Fixed
+- **Audit-chain verification mismatch on null `secret_name`.** `log_audit`
+  hashed a missing secret name as `''`, but `verify_audit_chain` reconstructed
+  it as the string `"None"`, so any entry without a secret name
+  (`SIMULATION_RUN`, list denials, and the new per-request `HTTP_API` lines)
+  failed verification. The verifier now coerces `None -> ''` to match the
+  writer.
 - **LinuxTPMProvider was non-functional on modern tpm2-tools.** Found by
   running the suite against a real `/dev/tpmrm0`. Three concrete bugs
   were blocking end-to-end use:
@@ -36,6 +44,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hardcoded PCR list would silently break previously-sealed blobs.
 
 ### Added
+- **Local HTTP server (`rgt-vault serve`).** A new optional `[server]` extra
+  (FastAPI + uvicorn) exposes the vault over loopback HTTP so non-Python
+  clients — LLM agents in Ollama/llama.cpp/vLLM, scripts — can use it.
+  Bearer-token auth (loopback-only `127.0.0.1:8765` by default); every request
+  is gated through the existing ABAC engine / rate limiter / honeytokens and
+  recorded (token id, never the token) in the hash-chained audit log.
+  Endpoints: set, list, use, revoke, rotate, audit, audit/verify,
+  policy/simulate. **Plaintext never crosses the HTTP boundary** — `/use` runs
+  a registered server-side action (`openai_chat`, `http_get_with_auth`,
+  `http_post_with_auth`, `echo`) against the leased buffer and returns only the
+  result. New `rgt-vault init` mints the token file. Importing `rgt_vault` does
+  not require FastAPI; the server layer raises a clear `ImportError` with
+  install instructions if the extra is missing. `tests/test_server.py` and
+  `tests/test_actions.py` add 20 hermetic tests (FastAPI TestClient, no socket).
 - **CLI parity.** `rgt-vault` now exposes `set`, `get`, `list`, `revoke`,
   `fingerprint`, `rotate {master,dek}`, `verify-audit`, `audit`, and
   `simulate` subcommands with a `--provider {keyring,platform}` selector
