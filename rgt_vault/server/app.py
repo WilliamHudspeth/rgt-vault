@@ -15,6 +15,7 @@ action, returning only the action's result.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
 try:
@@ -39,6 +40,8 @@ from rgt_vault.exceptions import (
 from rgt_vault.server.actions import ActionRegistry, register_builtin_actions
 from rgt_vault.server.auth import TokenStore
 from rgt_vault.vault import VaultManager
+
+logger = logging.getLogger("rgt_vault.server")
 
 
 class SetSecretBody(BaseModel):
@@ -84,11 +87,25 @@ def build_app(
     vault: VaultManager,
     token_store: TokenStore,
     registry: Optional[ActionRegistry] = None,
+    *,
+    allow_private_network: bool = False,
 ) -> "FastAPI":
-    """Construct the FastAPI app over an existing vault, token store, and registry."""
+    """Construct the FastAPI app over an existing vault, token store, and registry.
+
+    ``allow_private_network``: when False (the default), the built-in
+    ``http_get_with_auth`` / ``http_post_with_auth`` / ``openai_chat``
+    actions refuse to call loopback, link-local, RFC1918, multicast, and
+    reserved addresses. Operators who need to call a self-hosted LLM on a
+    private network can set this to True (or call ``rgt-vault serve
+    --allow-private-network``). The setting is process-wide; per-request
+    override is also accepted via ``params["allow_private_network"]``.
+    """
     if registry is None:
         registry = ActionRegistry()
         register_builtin_actions(registry)
+
+    # Stash on the registry so per-action calls can consult the default.
+    registry.default_allow_private_network = allow_private_network
 
     app = FastAPI(
         title="rgt-vault",
@@ -164,11 +181,24 @@ def build_app(
 
         def _run(buf: bytearray) -> Any:
             try:
-                return spec.fn(buf, body.params)
+                return spec.fn(buf, body.params, registry=registry)
             except VaultError:
+                # VaultError subclasses already carry a sanitized message.
                 raise
-            except Exception as e:  # noqa: BLE001 - surface as a clean 500
-                raise ActionExecutionError(f"Action '{body.action}' raised: {e}") from e
+            except Exception:
+                # P0-2 audit fix: NEVER embed the raw exception text in
+                # the HTTP response. The plaintext secret could appear
+                # in an exception message (e.g. an http library that
+                # echoes the Authorization header). Log the full traceback
+                # server-side for operators; tell the client only that the
+                # action raised an error.
+                logger.exception(
+                    "Action %r raised an unhandled exception; details suppressed from response",
+                    body.action,
+                )
+                raise ActionExecutionError(
+                    f"Action '{body.action}' failed; see server logs for details."
+                )
 
         result = vault.execute(body.agent, namespace, body.purpose, name, _run)
         return {"ok": True, "action": body.action, "result": result}
@@ -205,7 +235,21 @@ def build_app(
         return {"ok": True, "target": body.target, "key_epoch": vault.key_epoch}
 
     @app.get("/v1/audit")
-    def audit(request: Request, limit: int = 50, token_id: str = Depends(require_token)) -> Dict[str, Any]:
+    def audit(
+        request: Request,
+        limit: int = 50,
+        token_id: str = Depends(require_token),
+    ) -> Dict[str, Any]:
+        # Cap the per-call limit so an authenticated caller cannot exhaust
+        # server memory by asking for an arbitrarily large audit dump.
+        if limit < 1:
+            raise HTTPException(status_code=400, detail="'limit' must be >= 1.")
+        if limit > 1000:
+            raise HTTPException(
+                status_code=400,
+                detail="'limit' must be <= 1000. Use /v1/audit/verify and a "
+                       "tail query tool to walk larger histories.",
+            )
         return {"entries": vault.get_audit_log(limit=limit)}
 
     @app.post("/v1/audit/verify")

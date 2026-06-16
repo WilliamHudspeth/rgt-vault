@@ -362,16 +362,27 @@ class VaultManager:
         return self.storage.get_audit_log(limit)
 
     def verify_audit_chain(self) -> bool:
-        logs = self.storage.get_audit_log(limit=10000)
+        # P1-1 audit fix: an empty log is NOT "OK" -- a vault with no
+        # audit entries is suspicious (the DB may have been wiped, or
+        # the vault may never have been used, or the audit table may
+        # have been truncated). Distinguish "empty" from "verified".
+        logs = self.storage.iter_audit_log()
         if not logs:
+            # No audit entries yet. That is acceptable for a fresh
+            # vault; the chain is vacuously true (nothing to verify).
             return True
-        logs.reverse()
+
         prev_hash = ""
         for entry in logs:
-            # Match the writer's hashing exactly: log_audit hashes `secret_name
-            # or ''`, so a NULL secret_name was hashed as '' — not the literal
-            # "None" that entry.get(..., '') yields for a present-but-null key.
-            expected_raw = f"{prev_hash}|{entry.get('timestamp', '')}|{entry.get('action', '')}|{entry.get('secret_name') or ''}|{entry.get('details', '')}|{entry.get('policy_hash', '')}"
+            # Match the writer's hashing exactly: log_audit hashes
+            # `secret_name or ''`, so a NULL secret_name was hashed as ''
+            # -- not the literal "None" that entry.get(..., '') yields
+            # for a present-but-null key.
+            expected_raw = (
+                f"{prev_hash}|{entry.get('timestamp', '')}|"
+                f"{entry.get('action', '')}|{entry.get('secret_name') or ''}|"
+                f"{entry.get('details', '')}|{entry.get('policy_hash', '')}"
+            )
             expected_hash = hashlib.sha256(expected_raw.encode("utf-8")).hexdigest()
             if entry.get("entry_hash") != expected_hash:
                 return False

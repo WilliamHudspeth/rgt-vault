@@ -167,13 +167,33 @@ class StorageBackend:
             rows = cursor.fetchall()
             return [dict(r) for r in rows]
 
+    def iter_audit_log(self) -> List[Dict[str, Any]]:
+        """Return ALL audit rows in chronological order (oldest first).
+
+        Used by ``VaultManager.verify_audit_chain`` so verification is not
+        silently capped at a fixed limit. Callers that only need a tail
+        should use ``get_audit_log``.
+        """
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM audit_logs ORDER BY id ASC")
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    def audit_log_count(self) -> int:
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            (n,) = cursor.execute("SELECT COUNT(*) FROM audit_logs").fetchone()
+            return int(n)
+
     def set_secret(self, namespace: str, name: str, ciphertext: bytes, dek_version: int, secret_id: Optional[str] = None, policy_hash: str = "") -> None:
         checksum = hashlib.sha256(ciphertext).hexdigest()
         now = _utcnow_iso()
         if not secret_id:
             secret_id = str(uuid.uuid4())
 
-        with self._get_conn() as conn:
+        with self._audit_lock, self._get_conn() as conn:
             cursor = conn.cursor()
             try:
                 # P0-4 / P2-1 / P2-2 audit fix: take a write lock for the
@@ -197,12 +217,20 @@ class StorageBackend:
                     INSERT INTO secrets (secret_id, namespace, name, version, ciphertext, checksum, created_at, updated_at, status, dek_version)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
                 """, (secret_id, namespace, name, next_version, ciphertext, checksum, now, now, dek_version))
+
+                # P2-4 audit fix: write the audit entry inside the same
+                # transaction as the secret insert. If either fails, the
+                # other rolls back -- a write that's logged but didn't
+                # happen (or vice versa) would be an integrity gap.
+                self._append_audit_in_tx(
+                    cursor, "SET_SECRET", name,
+                    f"Version {next_version} created in {namespace}", policy_hash,
+                )
                 conn.commit()
+                return
             except Exception:
                 conn.rollback()
                 raise
-
-        self.log_audit("SET_SECRET", name, f"Version {next_version} created in {namespace}", policy_hash)
 
     def get_secret(self, namespace: str, name: str, version: Optional[int] = None, policy_hash: str = "") -> Optional[Tuple[bytes, int]]:
         # P0-5 audit fix: combine the read and the audit-log write into one
@@ -261,9 +289,11 @@ class StorageBackend:
                             details: str, policy_hash: str) -> None:
         """Append an audit entry inside an already-open transaction.
 
-        Used by ``get_secret`` to keep the read+audit as a single atomic
-        step. Reads ``prev_hash`` via the same cursor so the chain stays
-        consistent within the transaction.
+        Used by ``get_secret``, ``set_secret``, ``revoke_secret``, and
+        ``bulk_rewrite_active_secrets`` to keep the data-mutating step
+        and its audit row as a single atomic step. Reads ``prev_hash``
+        via the same cursor so the chain stays consistent within the
+        transaction.
         """
         timestamp = _utcnow_iso()
         cursor.execute("SELECT entry_hash FROM audit_logs ORDER BY id DESC LIMIT 1")
@@ -280,12 +310,12 @@ class StorageBackend:
         with self._get_conn() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT secret_id, name, version, created_at, updated_at, status 
-                FROM secrets 
+                SELECT secret_id, name, version, created_at, updated_at, status
+                FROM secrets
                 WHERE namespace = ? AND status = 'ACTIVE'
             """, (namespace,))
             rows = cursor.fetchall()
-            
+
             secrets = []
             for row in rows:
                 secrets.append({
@@ -294,9 +324,9 @@ class StorageBackend:
                     "latest_version": row[2],
                     "created_at": row[3],
                     "updated_at": row[4],
-                    "status": row[5]
+                    "status": row[5],
                 })
-                
+
         self.log_audit("LIST_SECRETS", None, f"Listed {len(secrets)} secrets in {namespace}", policy_hash)
         return secrets
 
@@ -443,8 +473,21 @@ class StorageBackend:
             conn.commit()
 
     def revoke_secret(self, namespace: str, name: str, policy_hash: str = "") -> None:
-        with self._get_conn() as conn:
+        # P2-1 audit fix: revoke + audit row in one transaction.
+        with self._audit_lock, self._get_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute("UPDATE secrets SET status = 'REVOKED' WHERE namespace = ? AND name = ? AND status = 'ACTIVE'", (namespace, name))
-            conn.commit()
-        self.log_audit("REVOKE_SECRET", name, f"Revoked active secret in {namespace}", policy_hash)
+            try:
+                cursor.execute("BEGIN IMMEDIATE")
+                cursor.execute(
+                    "UPDATE secrets SET status = 'REVOKED' "
+                    "WHERE namespace = ? AND name = ? AND status = 'ACTIVE'",
+                    (namespace, name),
+                )
+                self._append_audit_in_tx(
+                    cursor, "REVOKE_SECRET", name,
+                    f"Revoked active secret in {namespace}", policy_hash,
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
