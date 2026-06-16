@@ -11,7 +11,7 @@ disclosure process in [SECURITY.md](SECURITY.md).
 ## Development setup
 
 ```bash
-git clone <your-fork>
+git clone https://github.com/WilliamHudspeth/rgt-vault
 cd rgt-vault
 python -m venv .venv && . .venv/bin/activate   # or .venv\Scripts\activate on Windows
 pip install -e ".[dev]"
