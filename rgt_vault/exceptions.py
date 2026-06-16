@@ -25,3 +25,25 @@ class DecryptionError(VaultError):
     for debug logs.
     """
     pass
+
+class ServerAuthError(VaultError):
+    """Raised by the HTTP server when a caller fails to present a valid token,
+    presents a token from a different vault, or hits a server-internal auth
+    path (e.g. trying to start ``serve`` without a token file). Mapped to
+    HTTP 401 by the FastAPI exception handler.
+    """
+    pass
+
+class ActionNotFoundError(VaultError):
+    """Raised by the HTTP server's ``/use`` endpoint when the requested
+    action name is not registered. Mapped to HTTP 404.
+    """
+    pass
+
+class ActionExecutionError(VaultError):
+    """Raised when a registered server-side action throws while it holds the
+    leased secret buffer. The vault still zeroizes the buffer (the lease
+    context manager guarantees that); the original exception is chained in
+    ``__cause__``. Mapped to HTTP 500 by the FastAPI exception handler.
+    """
+    pass
