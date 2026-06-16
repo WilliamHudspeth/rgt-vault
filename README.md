@@ -5,7 +5,7 @@ AES-256-GCM encryption, Argon2id key derivation, ABAC authorization, secret
 leasing, audit logging, and agent-aware access controls to reduce secret
 exposure in LLM-powered applications.
 
-> **Status: `v0.1.0` — Security Preview.** Suitable for evaluation and
+> **Status: `v0.2.0` — Security Preview.** Suitable for evaluation and
 > feedback, not yet for protecting production secrets. APIs and on-disk formats
 > may change before `v1.0.0`. Read the [threat model](docs/threat-model.md) and
 > [SECURITY.md](SECURITY.md) before relying on it.
@@ -102,6 +102,44 @@ rgt-vault simulate --policy policy.yaml --agent research_agent \
     --namespace openai --purpose inference --action read
 # -> ALLOWED / DENIED + reason
 ```
+
+## Calling the vault from a local LLM / agent
+
+For clients that can't call Python directly (an LLM agent in Ollama/llama.cpp/
+vLLM, a shell script, another language), run the optional local HTTP server.
+
+```bash
+pip install -e ".[server]"
+rgt-vault init                 # mints a bearer token (prints the value once)
+rgt-vault serve                # binds 127.0.0.1:8765 (loopback only)
+```
+
+The server is a thin layer over the same `VaultManager`: every request is
+gated by the ABAC policy, rate limiter, honeytokens, and hash-chained audit
+log. **Plaintext never crosses the HTTP boundary** — instead of returning a
+secret, you ask the vault to run a named *server-side action* that consumes
+the secret in-process and returns only the result:
+
+```bash
+TOKEN="...the token from rgt-vault init..."
+
+# Store a secret
+curl -s localhost:8765/v1/secrets -H "Authorization: Bearer $TOKEN" \
+  -d '{"name":"OPENAI_API_KEY","value":"sk-...","agent":"admin"}'
+
+# Use it: the vault injects the key as a Bearer token on an outbound call and
+# returns only the upstream response — the LLM never sees the secret.
+curl -s localhost:8765/v1/secrets/default/OPENAI_API_KEY/use \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"action":"openai_chat","agent":"research_agent","purpose":"inference",
+       "params":{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}}'
+```
+
+Built-in actions: `openai_chat`, `http_get_with_auth`, `http_post_with_auth`,
+and `echo` (a no-secret diagnostic). The server binds to loopback with no TLS;
+exposing it beyond `127.0.0.1` requires a reverse proxy you place in front, and
+widens the surface the [threat model](docs/threat-model.md) discusses. See
+`GET /openapi.json` for the full schema.
 
 ## Architecture
 
