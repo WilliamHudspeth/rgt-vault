@@ -46,11 +46,11 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/WilliamHudspeth/rgt-vault"
-Repository = "https://github.com/WilliamHudspeth/rgt-vault"
-Issues = "https://github.com/WilliamHudspeth/rgt-vault/issues"
-Changelog = "https://github.com/WilliamHudspeth/rgt-vault/blob/main/CHANGELOG.md"
-Security = "https://github.com/WilliamHudspeth/rgt-vault/blob/main/SECURITY.md"
+Homepage = "https://github.com/wshb/rgt-vault"
+Repository = "https://github.com/wshb/rgt-vault"
+Issues = "https://github.com/wshb/rgt-vault/issues"
+Changelog = "https://github.com/wshb/rgt-vault/blob/main/CHANGELOG.md"
+Security = "https://github.com/wshb/rgt-vault/blob/main/SECURITY.md"
 
 [project.scripts]
 rgt-vault = "rgt_vault.cli:main"
