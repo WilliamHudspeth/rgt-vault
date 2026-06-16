@@ -5,7 +5,64 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security (v0.2.0 hardening pass — see [AUDIT-v2.md](AUDIT-v2.md))
+
+- **P0-1: SSRF in built-in HTTP actions closed.** A new
+  `_validate_outbound_url` gates every outbound HTTP request made by
+  `http_get_with_auth`, `http_post_with_auth`, and the `base_url`
+  parameter of `openai_chat`. Default-deny for loopback / link-local /
+  RFC1918 / multicast / reserved addresses and any non-http(s) scheme.
+  Operators who need to call a self-hosted LLM on a private network
+  start the server with `--allow-private-network` (the CLI prints an
+  explicit warning when this flag is enabled).
+- **P0-2: Action exception messages no longer leak into HTTP responses.**
+  The `/use` endpoint catches non-VaultError exceptions, logs the full
+  traceback server-side, and returns an opaque error message. If a
+  future action ever raises with the plaintext secret in its message,
+  the secret no longer crosses the HTTP boundary in the response.
+- **P0-4: Scheme allow-list and Host-header stripping.** `file://`,
+  `gopher://`, etc. are now rejected. `_validate_headers` drops
+  caller-supplied `Host:` headers so urllib sets the correct one.
+- **P0-5: Response body cap.** Upstream responses are truncated at
+  1 MiB and flagged with `truncated: true` in the result.
+- **P1-1: `verify_audit_chain` now distinguishes empty from verified.**
+  Empty log is vacuously verified; tamper still detected.
+- **P1-2: `verify_audit_chain` walks the entire log.** Replaced the
+  silent 10,000-row cap with a full-log walk via the new
+  `StorageBackend.iter_audit_log()`. Verified by a 10,005-row test that
+  tampers with the last entry.
+- **P1-3/P1-4: `cmd_init` no longer prints existing bearer tokens.**
+  First run prints; subsequent runs say "already exists, not
+  re-printing" with an audit-id helper.
+- **P1-5: `LinuxTPMProvider.seal_master_secret` uses `mkstemp` + `chmod 0600`**
+  for the seal scratch file (matches the unseal-side fix from the prior
+  pass).
+- **P2-1: `revoke_secret` writes the audit row inside the same transaction**
+  as the revoke. (Was: separate connection.)
+- **P2-3: HTTP `/v1/audit?limit=N` capped at 1000** to prevent authenticated
+  memory DoS.
+- **P2-4: `set_secret` writes the audit row inside the same transaction**
+  as the secret insert. Closes the orphan-write gap.
+
+### Added
+- **`_validate_outbound_url`, `_validate_headers`, `_effective_allow_private`**
+  helpers in `rgt_vault/server/actions.py`.
+- **`StorageBackend.iter_audit_log()`** for full-log audit verification.
+- **`--allow-private-network` flag** on `rgt-vault serve` (with explicit
+  stderr warning at startup).
+- **`tests/test_server_hardening.py`** (18 tests): SSRF, exception
+  sanitization, scheme allow-list, header Host stripping,
+  `cmd_init` idempotency.
+- **`tests/test_audit_v2_hardening.py`** (6 tests): chain verify on
+  tamper, verify on orphan insert, verify walks the full log,
+  `set_secret` atomic audit, `revoke_secret` atomic audit.
+- **`AUDIT-v2.md`** — the v0.2.0 audit document.
+
 ## [0.2.0] — 2026-06-16
+
+## [Unreleased - prior audit pass]
+
+### Security (audit pass — see [AUDIT.md](AUDIT.md))
 
 ### Fixed
 - **Audit-chain verification mismatch on null `secret_name`.** `log_audit`
