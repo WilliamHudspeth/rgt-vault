@@ -194,9 +194,22 @@ def seal_master_secret(
     private_path = out_dir / "master_secret.priv"
     public_path = out_dir / "master_secret.pub"
 
-    with tempfile.NamedTemporaryFile(delete=False) as tmp_secret:
-        tmp_secret.write(master_secret)
-        secret_file = tmp_secret.name
+    # P0-1 (seal-side) audit fix: use mkstemp + chmod 0600 to ensure the
+    # plaintext master secret never sits on disk with permissive mode.
+    # ``tpm2_create -i <file>`` reads the secret from this file.
+    sec_fd, secret_file = tempfile.mkstemp(
+        prefix=".rgt-seal-",
+        dir=str(out_dir),
+    )
+    try:
+        os.write(sec_fd, master_secret)
+    finally:
+        os.close(sec_fd)
+    try:
+        os.chmod(secret_file, 0o600)
+    except OSError as e:
+        os.unlink(secret_file)
+        raise TPMError(f"Could not set 0600 on seal scratch file: {e}")
 
     primary_ctx = str(out_dir / "primary.ctx")
     try:

@@ -177,14 +177,32 @@ def cmd_audit(args: argparse.Namespace) -> int:
 def cmd_init(args: argparse.Namespace) -> int:
     """Generate (or report) the server bearer-token file.
 
-    Idempotent: if the token file already exists and is non-empty, the existing
-    token is printed rather than overwritten. Delete the file to mint a new one.
+    Idempotent: if the token file already exists and is non-empty, the
+    existing token is NOT printed. Delete the file to mint a new one.
+    P1-3/P1-4 audit fix: never echo an existing token to stdout.
     """
-    from rgt_vault.server.auth import load_or_create_token
+    from rgt_vault.server.auth import DEFAULT_TOKEN_PATH, TokenStore, load_or_create_token
 
-    path, token = load_or_create_token(Path(args.token_file) if args.token_file else None)
-    print(f"Token file: {path}")
-    print(f"Bearer token: {token}")
+    path = Path(args.token_file) if args.token_file else None
+    store_path = path if path else DEFAULT_TOKEN_PATH
+    store = TokenStore(store_path)
+
+    if store.exists():
+        existing = store.read()
+        if existing:
+            print(f"Token file: {store_path}")
+            print("Token file already exists; not re-printing. Delete the file to mint a new one.")
+            print("To see the token id (sha256 prefix) used in audit logs, run:")
+            print(
+                "  python -c \"import hashlib; "
+                f"print(hashlib.sha256(open(r'{store_path}').read().strip().encode()).hexdigest()[:8])\""
+            )
+            return 0
+
+    # File does not exist or was empty -- (re)create it.
+    new_path, new_token = load_or_create_token(path)
+    print(f"Token file: {new_path}")
+    print(f"Bearer token: {new_token}")
     print("Send it as a header:  Authorization: Bearer <token>")
     return 0
 
@@ -210,13 +228,26 @@ def cmd_serve(args: argparse.Namespace) -> int:
     store = TokenStore(token_path)
     registry = ActionRegistry()
     register_builtin_actions(registry)
-    app = build_app(vault, store, registry)
+    app = build_app(
+        vault,
+        store,
+        registry,
+        allow_private_network=args.allow_private_network,
+    )
 
     print(f"rgt-vault server: http://{args.host}:{args.port}  (token file: {token_path})")
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         print(
             f"WARNING: binding to {args.host} exposes the vault beyond loopback. "
             "Put a TLS-terminating reverse proxy in front and restrict access.",
+            file=sys.stderr,
+        )
+    if args.allow_private_network:
+        print(
+            "WARNING: --allow-private-network enables the built-in HTTP "
+            "actions to call loopback / link-local / RFC1918 addresses. "
+            "Any caller with a valid bearer token can use this to probe "
+            "internal services (SSRF). Only enable on trusted networks.",
             file=sys.stderr,
         )
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
@@ -316,6 +347,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1, loopback only)")
     p_serve.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765)")
     p_serve.add_argument("--token-file", default=None, help="Token file path (default: ~/.config/rgt-vault/server.token)")
+    p_serve.add_argument(
+        "--allow-private-network", action="store_true",
+        help="Permit built-in HTTP actions to call loopback / private addresses. "
+             "Default: off. Only enable on trusted networks.",
+    )
     p_serve.set_defaults(func=cmd_serve)
 
     return parser
