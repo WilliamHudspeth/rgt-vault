@@ -130,6 +130,9 @@ def test_keychain_json_is_0600(tmp_path):
     """After initialize_dek, keychain.json must be mode 0600 so it can't
     be read by other users on a multi-user host.
     """
+    if os.name != "posix":
+        pytest.skip("POSIX permission bits don't apply on this platform; "
+                    "Windows os.chmod only toggles the read-only flag")
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         pytest.skip("chmod is permissive under root; not a meaningful test")
 
