@@ -17,12 +17,15 @@ production-readiness audit.
 
 ## Planned
 
-- **Migration atomicity.** Wrap each migration file + its bookkeeping row in a
-  single transaction; verify with `PRAGMA integrity_check`.
+- **Migration atomicity.** ~~Wrap each migration file + its bookkeeping row in a
+  single transaction; verify with `PRAGMA integrity_check`.~~ **DONE** in
+  `rgt_vault/storage/sqlite.py::_apply_migrations`; covered by
+  `tests/test_migration_atomicity.py`.
 - **Automated rotation for platform providers.** DPAPI/TPM re-seal helpers
   invoked through `rotate_secret()`.
-- **CLI parity.** `get`/`lease`/`list`/`rotate`/`audit verify` subcommands with a
-  selectable provider (`--provider keyring|dpapi|tpm`).
+- **CLI parity.** ~~`get`/`lease`/`list`/`rotate`/`audit verify` subcommands with a
+  selectable provider (`--provider keyring|dpapi|tpm`).~~ **DONE** in
+  `rgt_vault/cli.py`; covered by `tests/test_cli.py`.
 - **Audit log noise reduction.** Separate storage-layer and policy-layer events;
   avoid logging debug reads (e.g. `get_fingerprint`).
 - **CI.** GitHub Actions matrix (Linux/macOS/Windows × Python 3.9–3.12) running

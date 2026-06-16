@@ -14,7 +14,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from rgt_vault.crypto import decrypt, encrypt
-from rgt_vault.exceptions import ValidationError
+from rgt_vault.exceptions import DecryptionError, ValidationError
 from rgt_vault.keychain import AES256GCMWrapper
 from rgt_vault.vault import VaultManager
 
@@ -30,9 +30,16 @@ def test_encrypt_decrypt_roundtrip(data, aad):
 @settings(max_examples=200, deadline=None)
 @given(token=st.binary(max_size=80), aad=st.binary(max_size=64))
 def test_decrypt_arbitrary_bytes_never_returns_plaintext(token, aad):
-    """Random bytes must raise, never silently authenticate."""
+    """Random bytes must raise DecryptionError, never silently authenticate.
+
+    The public crypto.decrypt entry point is contracted to raise
+    :class:`DecryptionError` (a ``VaultError``) for *any* failure mode so
+    callers can't accidentally distinguish "bad AAD" from "wrong key" via the
+    exception type. AES256GCMWrapper.unwrap is the low-level internal helper
+    and still raises ``InvalidTag``; that path is exercised separately.
+    """
     key = os.urandom(32)
-    with pytest.raises((ValueError, InvalidTag)):
+    with pytest.raises(DecryptionError):
         decrypt(token, key, aad)
 
 
@@ -43,7 +50,7 @@ def test_decrypt_rejects_wrong_aad(data, aad, other):
         return
     key = os.urandom(32)
     ct = encrypt(data, key, aad)
-    with pytest.raises(InvalidTag):
+    with pytest.raises(DecryptionError):
         decrypt(ct, key, other)
 
 
@@ -51,7 +58,7 @@ def test_decrypt_rejects_wrong_aad(data, aad, other):
 @given(data=st.binary(max_size=512), aad=st.binary(max_size=64))
 def test_decrypt_rejects_wrong_key(data, aad):
     ct = encrypt(data, os.urandom(32), aad)
-    with pytest.raises(InvalidTag):
+    with pytest.raises(DecryptionError):
         decrypt(ct, os.urandom(32), aad)
 
 

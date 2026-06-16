@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from rgt_vault.exceptions import ChecksumError
+
 DEFAULT_DB_PATH = Path.home() / ".secure-vault" / "vault.db"
 
 
@@ -44,26 +46,36 @@ class StorageBackend:
                 applied_at TEXT NOT NULL
             )
         """)
-        
+
         applied = {row[0] for row in cursor.execute("SELECT version FROM schema_migrations").fetchall()}
-        
+
         migrations_dir = Path(__file__).parent / "migrations"
         if not migrations_dir.exists():
             return
-            
+
         for sql_file in sorted(migrations_dir.glob("*.sql")):
             try:
                 version = int(sql_file.name.split('_')[0])
             except ValueError:
                 continue
-                
+
             if version not in applied:
                 with open(sql_file) as f:
                     script = f.read()
-                cursor.executescript(script)
-                cursor.execute("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", 
-                               (version, _utcnow_iso()))
-                conn.commit()
+                # Run the migration script and the bookkeeping insert in a
+                # single transaction. If either fails, the whole migration
+                # is rolled back and re-attempted on next startup.
+                cursor.execute("BEGIN")
+                try:
+                    cursor.executescript(script)
+                    cursor.execute(
+                        "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+                        (version, _utcnow_iso()),
+                    )
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
 
     def _init_db(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -202,11 +214,11 @@ class StorageBackend:
                 ciphertext, checksum, dek_version = row
                 if hashlib.sha256(ciphertext).hexdigest() != checksum:
                     self.log_audit("GET_SECRET_FAILED", name, "Checksum mismatch", policy_hash)
-                    raise ValueError(f"Integrity check failed for secret '{namespace}/{name}'")
-                    
+                    raise ChecksumError(f"Integrity check failed for secret '{namespace}/{name}'")
+
                 self.log_audit("GET_SECRET", name, f"Version {'latest' if version is None else version} accessed from {namespace}", policy_hash)
                 return ciphertext, dek_version
-                
+
             self.log_audit("GET_SECRET_FAILED", name, f"Secret not found in {namespace}", policy_hash)
             return None
 
