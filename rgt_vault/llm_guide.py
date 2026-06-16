@@ -39,10 +39,13 @@ yielded via a context manager (`lease_secret`) or passed to a callback
 (`execute`). When the lease/callback ends, the vault overwrites that
 buffer using `ctypes.memset`.
 
-IMPORTANT — this zeroization is best-effort and partial: it wipes only the
-buffer the vault controls. If you copy the secret into an immutable object
-(e.g. `bytes(buf)` or `buf.decode()`), that copy lives until Python garbage
-collects it and is NOT wiped. Minimize and avoid such copies; never log them.
+**IMPORTANT (P1-5 audit fix):** zeroization is best-effort and **partial**.
+The vault wipes only the buffer it controls. If you copy the secret into
+an immutable object (e.g. `bytes(buf)` or `buf.decode()`), that copy lives
+until Python garbage collects it and is NOT wiped. The CLI's `get`
+subcommand deliberately writes plaintext to stdout to support scripting —
+this is an explicit escape hatch and **bypasses the zeroization
+guarantee**. For programmatic use, prefer `execute` with a callback.
 
 ### 2.4. Agent Authorization (ABAC)
 Secrets are protected by an Attribute-Based Access Control (ABAC) engine.

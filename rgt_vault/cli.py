@@ -37,10 +37,40 @@ def _build_vault(args: argparse.Namespace) -> VaultManager:
 
 
 def cmd_set(args: argparse.Namespace) -> int:
+    # P1-1 audit fix: never accept the plaintext secret via argv. argv is
+    # visible to other local users via /proc/<pid>/cmdline and may be
+    # captured by process supervisors / shell history. The value must come
+    # from stdin (one line, trailing newline stripped) or from a file
+    # referenced by --value-file.
+    if bool(args.value) == bool(args.value_file):
+        # argparse shouldn't allow this state because of the mutually-
+        # exclusive group, but be explicit.
+        print(
+            "Error: provide exactly one of an inline VALUE (from stdin "
+            "via 'echo SECRET | rgt-vault set NAME -') or --value-file PATH.",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.value_file:
+        with open(args.value_file, "r", encoding="utf-8") as f:
+            value = f.read().rstrip("\n").rstrip("\r")
+    else:
+        # Read from stdin. Per POSIX, a tty stdin in non-interactive mode
+        # would block forever waiting for EOF; the caller is expected to
+        # pipe/redirect. We deliberately do NOT use input() (which prompts).
+        # ``sys.stdin.read()`` returns ``str`` under text mode and ``bytes``
+        # under binary mode; handle both consistently.
+        raw = sys.stdin.read()
+        if isinstance(raw, bytes):
+            value = raw.rstrip(b"\n").rstrip(b"\r").decode("utf-8", errors="replace")
+        else:
+            value = raw.rstrip("\n").rstrip("\r")
+
     vault = _build_vault(args)
     vault.set_secret(
         args.name,
-        args.value,
+        value,
         namespace=args.namespace,
         agent=args.agent,
         purpose=args.purpose,
@@ -52,10 +82,22 @@ def cmd_set(args: argparse.Namespace) -> int:
 def cmd_get(args: argparse.Namespace) -> int:
     """Lease a secret, print its UTF-8 value to stdout, and zeroize the buffer.
 
-    Exits non-zero on policy denial or not-found. WARNING: writing the
-    plaintext to stdout defeats the leased-buffer zeroization guarantee. Prefer
-    the ``execute`` subcommand for programmatic use.
+    Exits non-zero on policy denial or not-found.
+
+    **WARNING (P1-5 audit fix):** writing the plaintext to stdout defeats
+    the leased-buffer zeroization guarantee -- the Python string lives in
+    interpreter memory until garbage-collected, and may also be captured
+    by your shell history, process accounting, or a paging terminal.
+    Prefer the ``execute`` subcommand for programmatic use.
+
+    A one-line warning is printed to stderr to make the trade-off visible
+    in scripts.
     """
+    print(
+        "WARNING: 'get' writes plaintext to stdout and bypasses the "
+        "zeroization guarantee; prefer 'execute' for production use.",
+        file=sys.stderr,
+    )
     vault = _build_vault(args)
 
     def _print(buf: bytearray) -> None:
@@ -196,9 +238,19 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # set
-    p_set = subparsers.add_parser("set", help="Store a secret")
+    p_set = subparsers.add_parser(
+        "set", help="Store a secret (read the value from stdin or --value-file; never from argv)"
+    )
     p_set.add_argument("name", help="Secret name")
-    p_set.add_argument("value", help="Secret value")
+    value_group = p_set.add_mutually_exclusive_group(required=True)
+    value_group.add_argument(
+        "-", dest="value", action="store_true",
+        help="Read the secret value from stdin (default for piping).",
+    )
+    value_group.add_argument(
+        "--value-file", dest="value_file", default=None,
+        help="Read the secret value from a file (recommended for automation).",
+    )
     p_set.add_argument("--namespace", default="default")
     p_set.add_argument("--agent", default="cli")
     p_set.add_argument("--purpose", default="")

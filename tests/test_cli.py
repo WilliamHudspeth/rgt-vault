@@ -7,6 +7,7 @@ hermetic CI runs. We use a stub provider that mimics the production behavior
 without side effects, then drive the CLI by patching its ``KeyringProvider``
 import to the stub.
 """
+import io
 import os
 import sys
 
@@ -48,11 +49,13 @@ def policy_file(tmp_path):
     return p
 
 
-def _run_cli_inproc(monkeypatch, args):
+def _run_cli_inproc(monkeypatch, args, stdin_payload: bytes = b""):
     """In-process CLI runner: capture stdout/stderr, patch KeyringProvider.
 
     Redirects stdout/stderr to two local lists (one for each stream) and
-    restores at the end. Independent of pytest's capture mode.
+    restores at the end. Independent of pytest's capture mode. ``stdin_payload``
+    is exposed via ``sys.stdin`` for the duration of the call (used by
+    the P1-1 audit fix where ``set`` reads the secret value from stdin).
     """
     from rgt_vault import cli
     monkeypatch.setattr(cli, "KeyringProvider", _StubKeyringProvider)
@@ -67,9 +70,14 @@ def _run_cli_inproc(monkeypatch, args):
         def flush(self):
             pass
 
-    real_stdout, real_stderr = sys.stdout, sys.stderr
+    real_stdout, real_stderr, real_stdin = sys.stdout, sys.stderr, sys.stdin
     sys.stdout = _Stream(out)
     sys.stderr = _Stream(err)
+    # StringIO so ``sys.stdin.read()`` returns ``str`` (matches production
+    # text-mode stdin). The vault CLI normalizes bytes-vs-str internally.
+    sys.stdin = io.StringIO(
+        stdin_payload.decode("utf-8") if isinstance(stdin_payload, bytes) else stdin_payload
+    )
     try:
         rc = cli.main()
     except SystemExit as e:
@@ -77,6 +85,7 @@ def _run_cli_inproc(monkeypatch, args):
     finally:
         sys.stdout = real_stdout
         sys.stderr = real_stderr
+        sys.stdin = real_stdin
     return rc, "".join(out), "".join(err)
 
 
@@ -146,12 +155,16 @@ def test_simulate_deny_beats_allow(monkeypatch, tmp_path):
 
 def test_set_and_get_roundtrip(monkeypatch, tmp_path, policy_file):
     db = tmp_path / "v.db"
-    # set
-    rc, out, _ = _run_cli_inproc(monkeypatch, [
-        "--db", str(db), "--policy", str(policy_file),
-        "set", "MY_KEY", "super-secret",
-        "--namespace", "default", "--agent", "cli", "--purpose", "test",
-    ])
+    # set (P1-1 audit fix: value via stdin, not argv)
+    rc, out, _ = _run_cli_inproc(
+        monkeypatch,
+        [
+            "--db", str(db), "--policy", str(policy_file),
+            "set", "MY_KEY", "-",
+            "--namespace", "default", "--agent", "cli", "--purpose", "test",
+        ],
+        stdin_payload=b"super-secret\n",
+    )
     assert rc == 0
     assert "MY_KEY" in out
     assert db.exists()
@@ -180,10 +193,15 @@ def test_list_empty_namespace(monkeypatch, tmp_path, policy_file):
 def test_list_after_set(monkeypatch, tmp_path, policy_file):
     db = tmp_path / "v.db"
     for name in ("A", "B", "C"):
-        _run_cli_inproc(monkeypatch, [
-            "--db", str(db), "--policy", str(policy_file),
-            "set", name, "v", "--namespace", "default", "--agent", "cli", "--purpose", "",
-        ])
+        _run_cli_inproc(
+            monkeypatch,
+            [
+                "--db", str(db), "--policy", str(policy_file),
+                "set", name, "-",
+                "--namespace", "default", "--agent", "cli", "--purpose", "",
+            ],
+            stdin_payload=b"v\n",
+        )
     rc, out, _ = _run_cli_inproc(monkeypatch, [
         "--db", str(db), "--policy", str(policy_file),
         "list", "--namespace", "default", "--agent", "cli", "--purpose", "",
@@ -195,10 +213,15 @@ def test_list_after_set(monkeypatch, tmp_path, policy_file):
 
 def test_revoke_hides_secret(monkeypatch, tmp_path, policy_file):
     db = tmp_path / "v.db"
-    _run_cli_inproc(monkeypatch, [
-        "--db", str(db), "--policy", str(policy_file),
-        "set", "K", "v", "--namespace", "default", "--agent", "cli", "--purpose", "",
-    ])
+    _run_cli_inproc(
+        monkeypatch,
+        [
+            "--db", str(db), "--policy", str(policy_file),
+            "set", "K", "-",
+            "--namespace", "default", "--agent", "cli", "--purpose", "",
+        ],
+        stdin_payload=b"v\n",
+    )
     rc, out, _ = _run_cli_inproc(monkeypatch, [
         "--db", str(db), "--policy", str(policy_file),
         "revoke", "K", "--namespace", "default",
@@ -217,10 +240,15 @@ def test_set_with_policy_deny(monkeypatch, tmp_path):
     deny_policy = tmp_path / "p.yaml"
     deny_policy.write_text("rules:\n  - effect: deny\n    agent: cli\n")
     db = tmp_path / "v.db"
-    rc, _, err = _run_cli_inproc(monkeypatch, [
-        "--db", str(db), "--policy", str(deny_policy),
-        "set", "K", "v", "--namespace", "default", "--agent", "cli", "--purpose", "",
-    ])
+    rc, _, err = _run_cli_inproc(
+        monkeypatch,
+        [
+            "--db", str(db), "--policy", str(deny_policy),
+            "set", "K", "-",
+            "--namespace", "default", "--agent", "cli", "--purpose", "",
+        ],
+        stdin_payload=b"v\n",
+    )
     assert rc == 1
     assert "denied" in err.lower()
 
@@ -231,10 +259,15 @@ def test_set_with_policy_deny(monkeypatch, tmp_path):
 
 def test_fingerprint_after_set(monkeypatch, tmp_path, policy_file):
     db = tmp_path / "v.db"
-    _run_cli_inproc(monkeypatch, [
-        "--db", str(db), "--policy", str(policy_file),
-        "set", "K", "v", "--namespace", "default", "--agent", "cli", "--purpose", "",
-    ])
+    _run_cli_inproc(
+        monkeypatch,
+        [
+            "--db", str(db), "--policy", str(policy_file),
+            "set", "K", "-",
+            "--namespace", "default", "--agent", "cli", "--purpose", "",
+        ],
+        stdin_payload=b"v\n",
+    )
     rc, out, _ = _run_cli_inproc(monkeypatch, [
         "--db", str(db), "--policy", str(policy_file),
         "fingerprint", "K", "--namespace", "default",
@@ -252,10 +285,15 @@ def test_fingerprint_after_set(monkeypatch, tmp_path, policy_file):
 
 def test_rotate_master_key(monkeypatch, tmp_path, policy_file):
     db = tmp_path / "v.db"
-    _run_cli_inproc(monkeypatch, [
-        "--db", str(db), "--policy", str(policy_file),
-        "set", "K", "v", "--namespace", "default", "--agent", "cli", "--purpose", "",
-    ])
+    _run_cli_inproc(
+        monkeypatch,
+        [
+            "--db", str(db), "--policy", str(policy_file),
+            "set", "K", "-",
+            "--namespace", "default", "--agent", "cli", "--purpose", "",
+        ],
+        stdin_payload=b"v\n",
+    )
     rc, out, _ = _run_cli_inproc(monkeypatch, [
         "--db", str(db), "--policy", str(policy_file),
         "rotate", "master",
@@ -277,10 +315,15 @@ def test_rotate_master_key(monkeypatch, tmp_path, policy_file):
 
 def test_verify_audit_ok(monkeypatch, tmp_path, policy_file):
     db = tmp_path / "v.db"
-    _run_cli_inproc(monkeypatch, [
-        "--db", str(db), "--policy", str(policy_file),
-        "set", "K", "v", "--namespace", "default", "--agent", "cli", "--purpose", "",
-    ])
+    _run_cli_inproc(
+        monkeypatch,
+        [
+            "--db", str(db), "--policy", str(policy_file),
+            "set", "K", "-",
+            "--namespace", "default", "--agent", "cli", "--purpose", "",
+        ],
+        stdin_payload=b"v\n",
+    )
     rc, out, _ = _run_cli_inproc(monkeypatch, [
         "--db", str(db), "--policy", str(policy_file),
         "verify-audit",
@@ -295,10 +338,15 @@ def test_verify_audit_ok(monkeypatch, tmp_path, policy_file):
 
 def test_audit_shows_set_action(monkeypatch, tmp_path, policy_file):
     db = tmp_path / "v.db"
-    _run_cli_inproc(monkeypatch, [
-        "--db", str(db), "--policy", str(policy_file),
-        "set", "K", "v", "--namespace", "default", "--agent", "cli", "--purpose", "",
-    ])
+    _run_cli_inproc(
+        monkeypatch,
+        [
+            "--db", str(db), "--policy", str(policy_file),
+            "set", "K", "-",
+            "--namespace", "default", "--agent", "cli", "--purpose", "",
+        ],
+        stdin_payload=b"v\n",
+    )
     rc, out, _ = _run_cli_inproc(monkeypatch, [
         "--db", str(db), "--policy", str(policy_file),
         "audit", "--limit", "5",
@@ -338,3 +386,93 @@ def test_unknown_provider(monkeypatch, tmp_path, policy_file):
     ])
     assert rc == 2
     assert "invalid choice" in err.lower() or "banana" in err.lower()
+
+
+# ------------------------------------------------------------------
+# P1-1: CLI plaintext from stdin / --value-file (not argv)
+# ------------------------------------------------------------------
+
+def test_set_from_stdin(monkeypatch, tmp_path, policy_file):
+    """The plaintext value must be passed via stdin (or --value-file), not
+    argv, so it doesn't appear in /proc/<pid>/cmdline."""
+    db = tmp_path / "v.db"
+    rc, out, _ = _run_cli_inproc(
+        monkeypatch,
+        [
+            "--db", str(db), "--policy", str(policy_file),
+            "set", "STDIN_KEY", "-",
+            "--namespace", "default", "--agent", "cli", "--purpose", "test",
+        ],
+        stdin_payload=b"from-stdin-secret\n",
+    )
+    assert rc == 0
+    rc, out, _ = _run_cli_inproc(monkeypatch, [
+        "--db", str(db), "--policy", str(policy_file),
+        "get", "STDIN_KEY",
+        "--namespace", "default", "--agent", "cli", "--purpose", "test",
+    ])
+    assert rc == 0
+    assert "from-stdin-secret" in out
+
+
+def test_set_from_value_file(monkeypatch, tmp_path, policy_file):
+    """--value-file reads the plaintext from disk; safer for automation."""
+    db = tmp_path / "v.db"
+    vf = tmp_path / "secret.txt"
+    vf.write_text("from-file-secret")
+    rc, out, _ = _run_cli_inproc(
+        monkeypatch,
+        [
+            "--db", str(db), "--policy", str(policy_file),
+            "set", "FILE_KEY", "--value-file", str(vf),
+            "--namespace", "default", "--agent", "cli", "--purpose", "test",
+        ],
+    )
+    assert rc == 0
+    rc, out, _ = _run_cli_inproc(monkeypatch, [
+        "--db", str(db), "--policy", str(policy_file),
+        "get", "FILE_KEY",
+        "--namespace", "default", "--agent", "cli", "--purpose", "test",
+    ])
+    assert rc == 0
+    assert "from-file-secret" in out
+
+
+def test_set_rejects_both_value_sources(monkeypatch, tmp_path, policy_file):
+    """Passing both '-' and --value-file is a usage error."""
+    db = tmp_path / "v.db"
+    vf = tmp_path / "secret.txt"
+    vf.write_text("x")
+    rc, _, err = _run_cli_inproc(monkeypatch, [
+        "--db", str(db), "--policy", str(policy_file),
+        "set", "K", "-", "--value-file", str(vf),
+        "--namespace", "default", "--agent", "cli",
+    ])
+    assert rc != 0
+
+
+# ------------------------------------------------------------------
+# P1-5: cmd_get emits zeroization-bypass warning to stderr
+# ------------------------------------------------------------------
+
+def test_get_warns_about_stdout(monkeypatch, tmp_path, policy_file):
+    """cmd_get must print a warning to stderr so users don't accidentally
+    treat 'get' as the safe path."""
+    db = tmp_path / "v.db"
+    _run_cli_inproc(
+        monkeypatch,
+        [
+            "--db", str(db), "--policy", str(policy_file),
+            "set", "K", "-",
+            "--namespace", "default", "--agent", "cli", "--purpose", "",
+        ],
+        stdin_payload=b"v\n",
+    )
+    rc, out, err = _run_cli_inproc(monkeypatch, [
+        "--db", str(db), "--policy", str(policy_file),
+        "get", "K",
+        "--namespace", "default", "--agent", "cli", "--purpose", "test",
+    ])
+    assert rc == 0
+    assert "WARNING" in err
+    assert "zeroization" in err.lower()

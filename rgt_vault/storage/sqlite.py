@@ -172,55 +172,109 @@ class StorageBackend:
         now = _utcnow_iso()
         if not secret_id:
             secret_id = str(uuid.uuid4())
-        
+
         with self._get_conn() as conn:
             cursor = conn.cursor()
-            # If secret exists, inherit secret_id
-            cursor.execute("SELECT secret_id FROM secrets WHERE namespace = ? AND name = ? LIMIT 1", (namespace, name))
-            row = cursor.fetchone()
-            if row:
-                secret_id = row[0]
-                
-            cursor.execute("UPDATE secrets SET status = 'SUPERSEDED' WHERE namespace = ? AND name = ? AND status = 'ACTIVE'", (namespace, name))
-            cursor.execute("SELECT MAX(version) FROM secrets WHERE namespace = ? AND name = ?", (namespace, name))
-            row = cursor.fetchone()
-            next_version = (row[0] + 1) if row and row[0] is not None else 1
-            
-            cursor.execute("""
-                INSERT INTO secrets (secret_id, namespace, name, version, ciphertext, checksum, created_at, updated_at, status, dek_version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
-            """, (secret_id, namespace, name, next_version, ciphertext, checksum, now, now, dek_version))
-            conn.commit()
-            
+            try:
+                # P0-4 / P2-1 / P2-2 audit fix: take a write lock for the
+                # entire update-supersede-insert sequence so concurrent
+                # writers for the same name serialize cleanly and a crash
+                # leaves either the old version or the new version, never a
+                # half-applied state.
+                cursor.execute("BEGIN IMMEDIATE")
+                # If secret exists, inherit secret_id
+                cursor.execute("SELECT secret_id FROM secrets WHERE namespace = ? AND name = ? LIMIT 1", (namespace, name))
+                row = cursor.fetchone()
+                if row:
+                    secret_id = row[0]
+
+                cursor.execute("UPDATE secrets SET status = 'SUPERSEDED' WHERE namespace = ? AND name = ? AND status = 'ACTIVE'", (namespace, name))
+                cursor.execute("SELECT MAX(version) FROM secrets WHERE namespace = ? AND name = ?", (namespace, name))
+                row = cursor.fetchone()
+                next_version = (row[0] + 1) if row and row[0] is not None else 1
+
+                cursor.execute("""
+                    INSERT INTO secrets (secret_id, namespace, name, version, ciphertext, checksum, created_at, updated_at, status, dek_version)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
+                """, (secret_id, namespace, name, next_version, ciphertext, checksum, now, now, dek_version))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
         self.log_audit("SET_SECRET", name, f"Version {next_version} created in {namespace}", policy_hash)
 
     def get_secret(self, namespace: str, name: str, version: Optional[int] = None, policy_hash: str = "") -> Optional[Tuple[bytes, int]]:
-        with self._get_conn() as conn:
+        # P0-5 audit fix: combine the read and the audit-log write into one
+        # transaction. If the audit write fails (disk full, DB locked, etc.),
+        # the read is rolled back too -- an unlogged read is a silent
+        # integrity gap for a tamper-evident audit chain. The caller will
+        # see the exception and can decide whether to retry.
+        with self._audit_lock, self._get_conn() as conn:
             cursor = conn.cursor()
-            if version is not None:
-                cursor.execute("""
-                    SELECT ciphertext, checksum, dek_version FROM secrets 
-                    WHERE namespace = ? AND name = ? AND version = ?
-                """, (namespace, name, version))
-            else:
-                cursor.execute("""
-                    SELECT ciphertext, checksum, dek_version FROM secrets 
-                    WHERE namespace = ? AND name = ? AND status = 'ACTIVE' ORDER BY version DESC LIMIT 1
-                """, (namespace, name))
-            
-            row = cursor.fetchone()
-            
-            if row:
-                ciphertext, checksum, dek_version = row
-                if hashlib.sha256(ciphertext).hexdigest() != checksum:
-                    self.log_audit("GET_SECRET_FAILED", name, "Checksum mismatch", policy_hash)
-                    raise ChecksumError(f"Integrity check failed for secret '{namespace}/{name}'")
+            try:
+                cursor.execute("BEGIN IMMEDIATE")
+                if version is not None:
+                    cursor.execute("""
+                        SELECT ciphertext, checksum, dek_version FROM secrets
+                        WHERE namespace = ? AND name = ? AND version = ?
+                    """, (namespace, name, version))
+                else:
+                    cursor.execute("""
+                        SELECT ciphertext, checksum, dek_version FROM secrets
+                        WHERE namespace = ? AND name = ? AND status = 'ACTIVE' ORDER BY version DESC LIMIT 1
+                    """, (namespace, name))
 
-                self.log_audit("GET_SECRET", name, f"Version {'latest' if version is None else version} accessed from {namespace}", policy_hash)
-                return ciphertext, dek_version
+                row = cursor.fetchone()
 
-            self.log_audit("GET_SECRET_FAILED", name, f"Secret not found in {namespace}", policy_hash)
-            return None
+                if row:
+                    ciphertext, checksum, dek_version = row
+                    if hashlib.sha256(ciphertext).hexdigest() != checksum:
+                        # Audit the failure and commit -- the integrity
+                        # violation is recorded, then surface the error.
+                        self._append_audit_in_tx(
+                            cursor, "GET_SECRET_FAILED", name,
+                            "Checksum mismatch", policy_hash,
+                        )
+                        conn.commit()
+                        raise ChecksumError(f"Integrity check failed for secret '{namespace}/{name}'")
+
+                    self._append_audit_in_tx(
+                        cursor, "GET_SECRET", name,
+                        f"Version {'latest' if version is None else version} accessed from {namespace}",
+                        policy_hash,
+                    )
+                    conn.commit()
+                    return ciphertext, dek_version
+
+                self._append_audit_in_tx(
+                    cursor, "GET_SECRET_FAILED", name,
+                    f"Secret not found in {namespace}", policy_hash,
+                )
+                conn.commit()
+                return None
+            except Exception:
+                conn.rollback()
+                raise
+
+    def _append_audit_in_tx(self, cursor, action: str, secret_name: Optional[str],
+                            details: str, policy_hash: str) -> None:
+        """Append an audit entry inside an already-open transaction.
+
+        Used by ``get_secret`` to keep the read+audit as a single atomic
+        step. Reads ``prev_hash`` via the same cursor so the chain stays
+        consistent within the transaction.
+        """
+        timestamp = _utcnow_iso()
+        cursor.execute("SELECT entry_hash FROM audit_logs ORDER BY id DESC LIMIT 1")
+        prev_row = cursor.fetchone()
+        prev_hash = prev_row[0] if prev_row else ""
+        raw = f"{prev_hash}|{timestamp}|{action}|{secret_name or ''}|{details}|{policy_hash}"
+        entry_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        cursor.execute("""
+            INSERT INTO audit_logs (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash))
 
     def list_secrets(self, namespace: str, policy_hash: str = "") -> List[Dict[str, Any]]:
         with self._get_conn() as conn:
@@ -270,11 +324,51 @@ class StorageBackend:
         new_checksum = hashlib.sha256(new_ciphertext).hexdigest()
         with self._get_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE secrets SET ciphertext = ?, checksum = ?, dek_version = ? WHERE id = ?",
-                (new_ciphertext, new_checksum, new_dek_version, record_id)
-            )
-            conn.commit()
+            try:
+                cursor.execute("BEGIN IMMEDIATE")
+                cursor.execute(
+                    "UPDATE secrets SET ciphertext = ?, checksum = ?, dek_version = ? WHERE id = ?",
+                    (new_ciphertext, new_checksum, new_dek_version, record_id)
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+    def bulk_rewrite_active_secrets(self, rewrite_fn) -> int:
+        """Apply ``rewrite_fn(record_id, namespace, name, ciphertext, dek_version) ->
+        (new_ciphertext, new_dek_version)`` to every ACTIVE secret, in a
+        single SQLite transaction.
+
+        Used by ``VaultManager.rotate_dek`` and ``_migrate_legacy_secrets``
+        to make the multi-row rewrite atomic. If any single row fails the
+        rewrite, the transaction rolls back and no row is modified. On
+        success, returns the number of rows rewritten.
+        """
+        rewritten = 0
+        with self._audit_lock, self._get_conn() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute("BEGIN IMMEDIATE")
+                rows = cursor.execute(
+                    "SELECT id, namespace, name, ciphertext, dek_version "
+                    "FROM secrets WHERE status = 'ACTIVE'"
+                ).fetchall()
+                for record_id, namespace, name, ciphertext, dek_version in rows:
+                    new_ct, new_ver = rewrite_fn(
+                        record_id, namespace, name, ciphertext, dek_version,
+                    )
+                    new_checksum = hashlib.sha256(new_ct).hexdigest()
+                    cursor.execute(
+                        "UPDATE secrets SET ciphertext = ?, checksum = ?, dek_version = ? WHERE id = ?",
+                        (new_ct, new_checksum, new_ver, record_id),
+                    )
+                    rewritten += 1
+                conn.commit()
+                return rewritten
+            except Exception:
+                conn.rollback()
+                raise
 
     def export_data(self) -> Dict[str, Any]:
         with self._get_conn() as conn:

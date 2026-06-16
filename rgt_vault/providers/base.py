@@ -24,3 +24,18 @@ class MasterSecretProvider(ABC):
             f"{type(self).__name__} does not support automated master-key rotation; "
             "re-seal the master secret out-of-band and increment the key epoch."
         )
+
+    def bootstrap_master_secret(self):
+        """Create a fresh master secret if one does not already exist.
+
+        Default implementation: no-op (assumes the secret is already sealed
+        by an out-of-band process -- e.g. TPM/DPAPI/macOS Keychain). Providers
+        whose backing store supports atomic create-if-missing (currently
+        only :class:`rgt_vault.keychain.KeyringProvider`) override this.
+
+        Called by :class:`VaultManager` only on first-time initialization
+        (no keychain.json present). Returning a value is not required --
+        ``get_secret`` will be called immediately after, and that is the
+        authoritative read path.
+        """
+        return None
