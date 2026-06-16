@@ -5,6 +5,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-06-16
+
 ### Security (v0.2.0 hardening pass — see [AUDIT-v2.md](AUDIT-v2.md))
 
 - **P0-1: SSRF in built-in HTTP actions closed.** A new
@@ -58,11 +60,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `set_secret` atomic audit, `revoke_secret` atomic audit.
 - **`AUDIT-v2.md`** — the v0.2.0 audit document.
 
-## [0.2.0] — 2026-06-16
-
-## [Unreleased - prior audit pass]
-
-### Security (audit pass — see [AUDIT.md](AUDIT.md))
+### Security (prior audit pass — see [AUDIT.md](AUDIT.md))
 
 ### Fixed
 - **Audit-chain verification mismatch on null `secret_name`.** `log_audit`
