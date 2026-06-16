@@ -60,7 +60,8 @@ def _run_cli_inproc(monkeypatch, args, stdin_payload: bytes = b""):
     from rgt_vault import cli
     monkeypatch.setattr(cli, "KeyringProvider", _StubKeyringProvider)
     monkeypatch.setattr("sys.argv", ["rgt-vault", *args])
-    out, err = [], []
+    out: list = []
+    err: list = []
 
     class _Stream:
         def __init__(self, sink):
@@ -81,7 +82,8 @@ def _run_cli_inproc(monkeypatch, args, stdin_payload: bytes = b""):
     try:
         rc = cli.main()
     except SystemExit as e:
-        rc = e.code
+        # SystemExit.code is int | str | None; normalize to an int rc.
+        rc = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
     finally:
         sys.stdout = real_stdout
         sys.stderr = real_stderr
