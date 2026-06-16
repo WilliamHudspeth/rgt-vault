@@ -315,7 +315,10 @@ class VaultManager:
         logs.reverse()
         prev_hash = ""
         for entry in logs:
-            expected_raw = f"{prev_hash}|{entry.get('timestamp', '')}|{entry.get('action', '')}|{entry.get('secret_name', '')}|{entry.get('details', '')}|{entry.get('policy_hash', '')}"
+            # Match the writer's hashing exactly: log_audit hashes `secret_name
+            # or ''`, so a NULL secret_name was hashed as '' — not the literal
+            # "None" that entry.get(..., '') yields for a present-but-null key.
+            expected_raw = f"{prev_hash}|{entry.get('timestamp', '')}|{entry.get('action', '')}|{entry.get('secret_name') or ''}|{entry.get('details', '')}|{entry.get('policy_hash', '')}"
             expected_hash = hashlib.sha256(expected_raw.encode("utf-8")).hexdigest()
             if entry.get("entry_hash") != expected_hash:
                 return False

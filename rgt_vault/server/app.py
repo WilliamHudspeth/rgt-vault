@@ -1,0 +1,222 @@
+"""FastAPI application for the rgt-vault HTTP server.
+
+This module is only importable when the ``[server]`` extra (FastAPI + uvicorn)
+is installed. Importing the rest of ``rgt_vault`` does not pull this in.
+
+The app is a thin translation layer: every endpoint maps an HTTP request onto
+an existing :class:`~rgt_vault.vault.VaultManager` method, so the ABAC policy
+engine, rate limiter, honeytokens, and hash-chained audit log all apply exactly
+as they do for in-process callers. The server adds no new authorization logic
+of its own beyond the bearer-token gate in front of every endpoint.
+
+Plaintext never crosses the HTTP boundary: ``/v1/secrets/{ns}/{name}/use``
+leases the secret into a server-side ``bytearray`` and hands it to a registered
+action, returning only the action's result.
+"""
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+try:
+    from fastapi import Depends, FastAPI, Header, HTTPException, Request
+    from fastapi.responses import JSONResponse
+    from pydantic import BaseModel, Field
+except ModuleNotFoundError as e:  # pragma: no cover - exercised only without extra
+    raise ImportError(
+        "The rgt-vault HTTP server requires the [server] extra. "
+        "Install it with: pip install 'rgt-vault[server]'"
+    ) from e
+
+from rgt_vault.exceptions import (
+    ActionExecutionError,
+    ActionNotFoundError,
+    PolicyDeniedError,
+    SecretNotFoundError,
+    ServerAuthError,
+    ValidationError,
+    VaultError,
+)
+from rgt_vault.server.actions import ActionRegistry, register_builtin_actions
+from rgt_vault.server.auth import TokenStore
+from rgt_vault.vault import VaultManager
+
+
+class SetSecretBody(BaseModel):
+    name: str
+    value: str
+    namespace: str = "default"
+    agent: str = "cli"
+    purpose: str = ""
+
+
+class UseBody(BaseModel):
+    action: str
+    agent: str
+    purpose: str = ""
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RotateBody(BaseModel):
+    target: str  # "master" | "dek"
+
+
+class SimulateBody(BaseModel):
+    agent: str
+    namespace: str
+    purpose: str = ""
+    action: str = "read"
+
+
+# VaultError subclass -> HTTP status. PermissionError (honeytoken / rate limit)
+# is handled separately because it is a builtin, not a VaultError.
+_STATUS_MAP = {
+    ServerAuthError: 401,
+    PolicyDeniedError: 403,
+    SecretNotFoundError: 404,
+    ActionNotFoundError: 404,
+    ValidationError: 400,
+    ActionExecutionError: 500,
+    VaultError: 400,  # catch-all base, matched last via MRO walk
+}
+
+
+def build_app(
+    vault: VaultManager,
+    token_store: TokenStore,
+    registry: Optional[ActionRegistry] = None,
+) -> "FastAPI":
+    """Construct the FastAPI app over an existing vault, token store, and registry."""
+    if registry is None:
+        registry = ActionRegistry()
+        register_builtin_actions(registry)
+
+    app = FastAPI(
+        title="rgt-vault",
+        version="0.2.0",
+        description="Local HTTP surface for the rgt-vault secrets manager.",
+    )
+
+    def require_token(request: Request, authorization: Optional[str] = Header(None)) -> str:
+        """Auth dependency: verify the bearer token and audit the request.
+
+        Every authenticated request writes one ``HTTP_API`` line to the
+        hash-chained audit log (token id + client IP + method + path), so an
+        audit-chain verification covers HTTP traffic as well as CLI/in-process
+        use. The token itself is never logged — only its 8-char id.
+        """
+        token_id = token_store.verify(authorization)  # raises ServerAuthError -> 401
+        client = request.client.host if request.client else "?"
+        vault._log_audit(
+            "HTTP_API",
+            None,
+            f"token={token_id} ip={client} {request.method} {request.url.path}",
+        )
+        return token_id
+
+    def _register_error(exc_type: type, status: int) -> None:
+        async def handler(request: Request, exc: Exception) -> JSONResponse:
+            return JSONResponse(
+                status_code=status,
+                content={"error": exc_type.__name__, "detail": str(exc)},
+            )
+
+        app.add_exception_handler(exc_type, handler)
+
+    for exc_type, status in _STATUS_MAP.items():
+        _register_error(exc_type, status)
+    # Honeytoken access and rate-limit breaches raise builtin PermissionError.
+    _register_error(PermissionError, 403)
+
+    @app.get("/healthz")
+    def healthz() -> Dict[str, Any]:
+        return {
+            "status": "ok",
+            "vault_id": vault.vault_id,
+            "key_epoch": vault.key_epoch,
+            "actions": [s.name for s in registry.list()],
+        }
+
+    @app.post("/v1/secrets")
+    def set_secret(request: Request, body: SetSecretBody, token_id: str = Depends(require_token)) -> Dict[str, Any]:
+        vault.set_secret(
+            body.name,
+            body.value,
+            namespace=body.namespace,
+            agent=body.agent,
+            purpose=body.purpose,
+        )
+        return {"ok": True, "namespace": body.namespace, "name": body.name}
+
+    @app.post("/v1/secrets/{namespace}/{name}/use")
+    def use_secret(
+        request: Request,
+        namespace: str,
+        name: str,
+        body: UseBody,
+        token_id: str = Depends(require_token),
+    ) -> Dict[str, Any]:
+        spec = registry.get(body.action)  # raises ActionNotFoundError -> 404
+        try:
+            spec.validate_params(body.params)
+        except ActionExecutionError as e:
+            # A malformed param set is a client error, not a server fault.
+            raise HTTPException(status_code=400, detail=str(e))
+
+        def _run(buf: bytearray) -> Any:
+            try:
+                return spec.fn(buf, body.params)
+            except VaultError:
+                raise
+            except Exception as e:  # noqa: BLE001 - surface as a clean 500
+                raise ActionExecutionError(f"Action '{body.action}' raised: {e}") from e
+
+        result = vault.execute(body.agent, namespace, body.purpose, name, _run)
+        return {"ok": True, "action": body.action, "result": result}
+
+    @app.get("/v1/secrets")
+    def list_secrets(
+        request: Request,
+        namespace: str,
+        agent: str,
+        purpose: str = "",
+        token_id: str = Depends(require_token),
+    ) -> Dict[str, Any]:
+        items = vault.list_secrets(namespace, agent=agent, purpose=purpose)
+        return {"namespace": namespace, "secrets": items}
+
+    @app.post("/v1/secrets/{namespace}/{name}/revoke")
+    def revoke(
+        request: Request,
+        namespace: str,
+        name: str,
+        token_id: str = Depends(require_token),
+    ) -> Dict[str, Any]:
+        vault.revoke_secret(namespace, name)
+        return {"ok": True, "namespace": namespace, "name": name}
+
+    @app.post("/v1/rotate")
+    def rotate(request: Request, body: RotateBody, token_id: str = Depends(require_token)) -> Dict[str, Any]:
+        if body.target == "master":
+            vault.rotate_master_key()
+        elif body.target == "dek":
+            vault.rotate_dek()
+        else:
+            raise HTTPException(status_code=400, detail="target must be 'master' or 'dek'")
+        return {"ok": True, "target": body.target, "key_epoch": vault.key_epoch}
+
+    @app.get("/v1/audit")
+    def audit(request: Request, limit: int = 50, token_id: str = Depends(require_token)) -> Dict[str, Any]:
+        return {"entries": vault.get_audit_log(limit=limit)}
+
+    @app.post("/v1/audit/verify")
+    def audit_verify(request: Request, token_id: str = Depends(require_token)) -> Dict[str, Any]:
+        return {"ok": vault.verify_audit_chain()}
+
+    @app.post("/v1/policy/simulate")
+    def policy_simulate(request: Request, body: SimulateBody, token_id: str = Depends(require_token)) -> Dict[str, Any]:
+        return vault.simulate(body.agent, body.namespace, body.purpose, body.action)
+
+    return app
+
+
+__all__ = ["build_app"]

@@ -132,6 +132,55 @@ def cmd_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_init(args: argparse.Namespace) -> int:
+    """Generate (or report) the server bearer-token file.
+
+    Idempotent: if the token file already exists and is non-empty, the existing
+    token is printed rather than overwritten. Delete the file to mint a new one.
+    """
+    from rgt_vault.server.auth import load_or_create_token
+
+    path, token = load_or_create_token(Path(args.token_file) if args.token_file else None)
+    print(f"Token file: {path}")
+    print(f"Bearer token: {token}")
+    print("Send it as a header:  Authorization: Bearer <token>")
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Run the local HTTP server (loopback-only by default)."""
+    try:
+        import uvicorn
+    except ModuleNotFoundError:
+        print(
+            "Error: the server requires the [server] extra. "
+            "Install it with: pip install 'rgt-vault[server]'",
+            file=sys.stderr,
+        )
+        return 1
+
+    from rgt_vault.server.actions import ActionRegistry, register_builtin_actions
+    from rgt_vault.server.app import build_app
+    from rgt_vault.server.auth import TokenStore, load_or_create_token
+
+    vault = _build_vault(args)
+    token_path, _token = load_or_create_token(Path(args.token_file) if args.token_file else None)
+    store = TokenStore(token_path)
+    registry = ActionRegistry()
+    register_builtin_actions(registry)
+    app = build_app(vault, store, registry)
+
+    print(f"rgt-vault server: http://{args.host}:{args.port}  (token file: {token_path})")
+    if args.host not in ("127.0.0.1", "localhost", "::1"):
+        print(
+            f"WARNING: binding to {args.host} exposes the vault beyond loopback. "
+            "Put a TLS-terminating reverse proxy in front and restrict access.",
+            file=sys.stderr,
+        )
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Agent Vault CLI")
     parser.add_argument("--db", default="~/.secure-vault/vault.db", help="Path to vault.db")
@@ -204,6 +253,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p_au = subparsers.add_parser("audit", help="Tail the audit log")
     p_au.add_argument("--limit", type=int, default=20)
     p_au.set_defaults(func=cmd_audit)
+
+    # init (generate the server bearer-token file)
+    p_init = subparsers.add_parser("init", help="Generate the server bearer-token file")
+    p_init.add_argument("--token-file", default=None, help="Token file path (default: ~/.config/rgt-vault/server.token)")
+    p_init.set_defaults(func=cmd_init)
+
+    # serve (local HTTP server)
+    p_serve = subparsers.add_parser("serve", help="Run the local HTTP server (requires [server] extra)")
+    p_serve.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1, loopback only)")
+    p_serve.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765)")
+    p_serve.add_argument("--token-file", default=None, help="Token file path (default: ~/.config/rgt-vault/server.token)")
+    p_serve.set_defaults(func=cmd_serve)
 
     return parser
 
