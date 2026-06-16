@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+ALTER TABLE secrets ADD COLUMN dek_version INTEGER DEFAULT 0;

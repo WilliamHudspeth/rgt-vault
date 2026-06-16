@@ -1,0 +1,92 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rgt-vault"
+version = "0.1.0"
+description = "A secure, policy-controlled secrets vault for AI agents"
+authors = [
+    { name = "William Hudspeth Blackburn", email = "williamhudspethblackburn@gmail.com" }
+]
+readme = "README.md"
+license = { file = "LICENSE" }
+keywords = ["secrets", "vault", "encryption", "aes-gcm", "argon2", "abac", "ai-agents", "security"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security :: Cryptography",
+]
+requires-python = ">=3.9"
+dependencies = [
+    # Argon2id lives in cryptography.hazmat.primitives.kdf.argon2 (added in 44.0)
+    "cryptography>=44.0.0",
+    "keyring>=24.0.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+windows = ["pywin32>=306; sys_platform == 'win32'"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "hypothesis>=6.100",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "bandit>=1.7",
+    "pip-audit>=2.7",
+    "build>=1.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/wshb/rgt-vault"
+Repository = "https://github.com/wshb/rgt-vault"
+Issues = "https://github.com/wshb/rgt-vault/issues"
+Changelog = "https://github.com/wshb/rgt-vault/blob/main/CHANGELOG.md"
+Security = "https://github.com/wshb/rgt-vault/blob/main/SECURITY.md"
+
+[project.scripts]
+rgt-vault = "rgt_vault.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["rgt_vault*"]
+
+[tool.setuptools.package-data]
+"rgt_vault.storage" = ["migrations/*.sql"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+# E/F (pyflakes+pycodestyle) and I (isort). B (bugbear) / UP (pyupgrade) are
+# planned once the typing-style modernization lands — see ROADMAP.md.
+select = ["E", "F", "I"]
+ignore = ["E501"]  # line length handled by formatter; long strings in guide/docs
+
+[tool.mypy]
+# Analysis target; runtime still supports 3.9 (see requires-python).
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_ignores = true
+no_implicit_optional = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["rgt_vault"]
+branch = true
+
+[tool.bandit]
+# Subprocess use in providers is intentional (shell=False, fixed argv) to invoke
+# `security`/`tpm2_*`. CI gates bandit at medium+ severity; these are low.
+skips = []

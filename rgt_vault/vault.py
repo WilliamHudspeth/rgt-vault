@@ -1,0 +1,325 @@
+import base64
+import binascii
+import contextlib
+import hashlib
+import json
+import os
+import threading
+import time
+from collections import defaultdict
+from collections.abc import Generator
+from typing import Any, Callable, Dict, List, Optional
+
+import keyring
+from cryptography.fernet import Fernet, InvalidToken
+
+from rgt_vault.auth import ABACPolicyEngine
+from rgt_vault.crypto import decrypt, encrypt, zeroize_bytearray
+from rgt_vault.exceptions import PolicyDeniedError, SecretNotFoundError, ValidationError
+from rgt_vault.keychain import HardenedDEKManager, MasterSecret, run_crypto_selftest
+from rgt_vault.storage.sqlite import StorageBackend
+
+
+class RateLimiter:
+    """Sliding window rate limiter in memory."""
+    def __init__(self, max_requests: int = 100, window_seconds: int = 3600):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self._windows: Dict[str, list] = defaultdict(list)
+        self._lock = threading.Lock()
+
+    def allow(self, agent_id: str) -> bool:
+        now = time.time()
+        with self._lock:
+            self._windows[agent_id] = [
+                t for t in self._windows[agent_id] if now - t < self.window_seconds
+            ]
+            if len(self._windows[agent_id]) >= self.max_requests:
+                return False
+            self._windows[agent_id].append(now)
+            return True
+
+class VaultManager:
+    def __init__(self, db_path: Optional[str] = None, master_provider=None, policy_yaml: str = "", rate_limit: int = 100, rate_window: int = 3600):
+        # 1. Run cryptographic self-tests (Fail closed)
+        run_crypto_selftest()
+        
+        # 2. Init Storage
+        actual_db_path = db_path or os.path.expanduser("~/.secure-vault/vault.db")
+        self.storage = StorageBackend(actual_db_path)
+        
+        self.auth = ABACPolicyEngine(policy_yaml)
+        self.policy_hash = hashlib.sha256(policy_yaml.encode("utf-8")).hexdigest()[:16] if policy_yaml else ""
+        self.rate_limiter = RateLimiter(max_requests=rate_limit, window_seconds=rate_window)
+
+        # 3. Load Metadata & Keychain
+        self.vault_id = self.storage.get_vault_id()
+        self.key_epoch = self.storage.get_key_epoch()
+        
+        # We store keychain.json next to the DB
+        keychain_path = os.path.join(os.path.dirname(actual_db_path), "keychain.json")
+        
+        from rgt_vault.providers import create_platform_provider
+        self.master_provider = master_provider or create_platform_provider()
+        master_secret = self._normalize_master(self.master_provider.get_secret())
+        
+        self.dek_manager = HardenedDEKManager(keychain_path)
+        
+        if os.path.exists(keychain_path):
+            self.dek = self.dek_manager.load_dek(master_secret, self.vault_id, self.key_epoch)
+        else:
+            self.dek = self.dek_manager.initialize_dek(master_secret, self.vault_id, self.key_epoch)
+            
+        # 4. Migrate Legacy Secrets (v2 Fernet -> v3 AES-256-GCM)
+        self._migrate_legacy_secrets()
+
+    def _migrate_legacy_secrets(self) -> None:
+        """Upgrades dek_version=0 secrets to AESGCM."""
+        active_secrets = self.storage.iter_all_active_secrets()
+        legacy_secrets = [s for s in active_secrets if s[4] == 0]
+        
+        if not legacy_secrets:
+            return
+            
+        encoded_key = keyring.get_password("rgt_vault", "master_key")
+        if not encoded_key:
+            raise ValueError("Legacy secrets found but no legacy Fernet key in keyring.")
+        old_fernet = Fernet(encoded_key.encode('utf-8'))
+        
+        for record_id, namespace, name, ciphertext, dek_version in legacy_secrets:
+            try:
+                plaintext = old_fernet.decrypt(ciphertext)
+            except InvalidToken:
+                continue # corrupted
+            
+            aad = self._get_aad(namespace, name)
+            new_ciphertext = encrypt(plaintext, self.dek, aad)
+            self.storage.update_secret_ciphertext(record_id, new_ciphertext, 1)
+
+    @staticmethod
+    def _normalize_master(secret: Any) -> MasterSecret:
+        """Coerce a provider's master secret into a MasterSecret.
+
+        Platform providers (DPAPI/TPM/Keychain) return raw bytes, while
+        KeyringProvider returns a MasterSecret. The KDF expects MasterSecret,
+        so normalize here at the trust boundary.
+        """
+        if isinstance(secret, MasterSecret):
+            return secret
+        if isinstance(secret, (bytes, bytearray)):
+            return MasterSecret(bytes(secret))
+        raise ValidationError(
+            f"Master secret provider returned unsupported type {type(secret).__name__}; "
+            "expected bytes or MasterSecret."
+        )
+
+    def _get_aad(self, namespace: str, name: str) -> bytes:
+        return f"{self.vault_id}:{namespace}:{name}".encode()
+
+    def _log_audit(self, action: str, secret_name: Optional[str] = None, details: str = "") -> None:
+        self.storage.log_audit(action, secret_name, details, self.policy_hash)
+
+    def _validate_string_param(self, param_name: str, value: Any, max_len: int, allow_empty: bool = False):
+        if not isinstance(value, str):
+            raise ValidationError(f"'{param_name}' must be a string. Got {type(value).__name__}.")
+        stripped_value = value.strip()
+        if not allow_empty and not stripped_value:
+            raise ValidationError(f"'{param_name}' cannot be empty or just whitespace.")
+        if len(value) > max_len:
+            raise ValidationError(f"'{param_name}' exceeds the maximum allowed length of {max_len} characters.")
+
+    def set_secret(self, name: str, value: str, namespace: str = "default", agent: str = "system", purpose: str = "") -> None:
+        """Encrypts and stores a secret."""
+        self._validate_string_param("name", name, max_len=256)
+        self._validate_string_param("namespace", namespace, max_len=128)
+        self._validate_string_param("agent", agent, max_len=128)
+        self._validate_string_param("value", value, max_len=1024 * 1024) # 1MB limit
+        
+        decision = self.auth.evaluate(agent, namespace, purpose, action="write")
+        if not decision["allowed"]:
+            self._log_audit("POLICY_DENIED", name, f"Action: write, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}")
+            raise PolicyDeniedError(f"Agent '{agent}' denied write access to '{name}' ({namespace}/{purpose})")
+            
+        aad = self._get_aad(namespace, name)
+        ciphertext = encrypt(value, self.dek, aad)
+        self.storage.set_secret(namespace, name, ciphertext, 1, policy_hash=self.policy_hash)
+
+    def get_fingerprint(self, name: str, namespace: str = "default", version: Optional[int] = None) -> str:
+        """Returns the SHA256 fingerprint of the ciphertext for debugging."""
+        if self.storage.is_honeytoken(namespace, name):
+            self._log_audit("HONEYTOKEN_TRIGGERED", name, json.dumps({"severity": "critical", "agent": "system", "namespace": namespace, "purpose": "fingerprint"}))
+            raise PermissionError(f"Honeytoken access detected: {namespace}/{name}")
+            
+        result = self.storage.get_secret(namespace, name, version, policy_hash=self.policy_hash)
+        if not result:
+            raise SecretNotFoundError(f"Secret '{namespace}/{name}' not found.")
+        ciphertext, _ = result
+        return hashlib.sha256(ciphertext).hexdigest()[:8]
+
+    @contextlib.contextmanager
+    def lease_secret(self, name: str, agent: str, namespace: str, purpose: str, version: Optional[int] = None) -> Generator[bytearray, None, None]:
+        self._validate_string_param("name", name, max_len=256)
+        self._validate_string_param("agent", agent, max_len=128)
+        self._validate_string_param("namespace", namespace, max_len=128)
+        self._validate_string_param("purpose", purpose, max_len=256)
+        
+        if not self.rate_limiter.allow(agent):
+            self._log_audit("RATE_LIMITED", name, f"Agent: {agent}")
+            raise PermissionError(f"Rate limit exceeded for agent '{agent}'")
+
+        if self.storage.is_honeytoken(namespace, name):
+            self._log_audit("HONEYTOKEN_TRIGGERED", name, json.dumps({"severity": "critical", "agent": agent, "namespace": namespace, "purpose": purpose}))
+            raise PermissionError(f"Honeytoken access detected: {namespace}/{name}")
+
+        decision = self.auth.evaluate(agent, namespace, purpose, action="read")
+        if not decision["allowed"]:
+            self._log_audit("POLICY_DENIED", name, f"Action: read, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}")
+            raise PolicyDeniedError(f"Agent '{agent}' denied read access to '{name}' ({namespace}/{purpose})")
+        
+        result = self.storage.get_secret(namespace, name, version, policy_hash=self.policy_hash)
+        if not result:
+            raise SecretNotFoundError(f"Secret '{namespace}/{name}' not found.")
+            
+        ciphertext, dek_version = result
+        aad = self._get_aad(namespace, name)
+        
+        # We currently only support dek_version=1 for AESGCM
+        if dek_version != 1:
+            raise ValueError(f"Unsupported DEK version {dek_version}")
+            
+        plaintext_bytes = decrypt(ciphertext, self.dek, aad)
+        buffer = bytearray(plaintext_bytes)
+        del plaintext_bytes 
+        
+        self._log_audit("LEASE_GRANTED", name, f"Agent: {agent}")
+        try:
+            yield buffer
+        finally:
+            zeroize_bytearray(buffer)
+            self._log_audit("LEASE_RETURNED", name, f"Agent: {agent}")
+
+    def execute(self, agent: str, namespace: str, purpose: str, secret_name: str, callback: Callable[[bytearray], Any]) -> Any:
+        """Lease a secret and hand the *mutable buffer* to ``callback``.
+
+        The callback receives a ``bytearray`` (not a ``str``). The vault wipes
+        this buffer when the callback returns. NOTE: if the callback copies the
+        secret into an immutable object (e.g. ``bytes(buf)`` or
+        ``buf.decode()``), that copy is the caller's responsibility and is NOT
+        covered by the vault's zeroization guarantee.
+        """
+        if not callable(callback):
+            raise ValidationError("The provided callback must be a callable object.")
+        with self.lease_secret(secret_name, agent, namespace, purpose) as secret_buffer:
+            return callback(secret_buffer)
+
+    def list_secrets(self, namespace: str, agent: str, purpose: str = "") -> List[Dict[str, Any]]:
+        decision = self.auth.evaluate(agent, namespace, purpose, action="read")
+        if not decision["allowed"]:
+            self._log_audit("POLICY_DENIED", None, f"Action: list, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}")
+            raise PolicyDeniedError(f"Unauthorized to access namespace '{namespace}'")
+        return self.storage.list_secrets(namespace, policy_hash=self.policy_hash)
+
+    def simulate(self, agent: str, namespace: str, purpose: str, action: str = "read") -> Dict[str, Any]:
+        self._log_audit("SIMULATION_RUN", None, f"Agent: {agent}, Namespace: {namespace}, Action: {action}")
+        return self.auth.evaluate(agent, namespace, purpose, action)
+
+    def explain(self, agent: str, namespace: str, purpose: str, action: str = "read") -> str:
+        decision = self.simulate(agent, namespace, purpose, action)
+        res = "ALLOWED" if decision["allowed"] else "DENIED"
+        rule = decision.get("matched_rule")
+        rule_str = json.dumps(rule) if rule else "None"
+        return f"Access: {res}\nReason: {decision['reason']}\nMatched Rule: {rule_str}"
+
+    def revoke_secret(self, namespace: str, name: str) -> None:
+        self.storage.revoke_secret(namespace, name, policy_hash=self.policy_hash)
+
+    def rotate_master_key(self) -> None:
+        """Rotate master key. Fast rotation (no data re-encryption)."""
+        new_master = self._normalize_master(self.master_provider.rotate_secret())
+        new_epoch = self.storage.increment_key_epoch()
+        
+        self.dek_manager.rewrap_dek(new_master, self.vault_id, new_epoch)
+        self.key_epoch = new_epoch
+        
+        self._log_audit("ROTATE", "MASTER_KEY", "Master key rotated successfully")
+
+    def rotate_dek(self) -> None:
+        """Rotate Data Encryption Key. Slow rotation (re-encrypts all data)."""
+        new_dek_manager = HardenedDEKManager(self.dek_manager.keychain_path + ".new")
+        new_epoch = self.storage.increment_key_epoch()
+        master_secret = self._normalize_master(self.master_provider.get_secret())
+        new_dek = new_dek_manager.initialize_dek(master_secret, self.vault_id, new_epoch)
+        
+        active_secrets = self.storage.iter_all_active_secrets()
+        for record_id, namespace, name, ciphertext, dek_version in active_secrets:
+            aad = self._get_aad(namespace, name)
+            plaintext = decrypt(ciphertext, self.dek, aad)
+            new_ciphertext = encrypt(plaintext, new_dek, aad)
+            self.storage.update_secret_ciphertext(record_id, new_ciphertext, 1)
+            
+        os.replace(new_dek_manager.keychain_path, self.dek_manager.keychain_path)
+        self.dek_manager = HardenedDEKManager(self.dek_manager.keychain_path)
+        self.dek = self.dek_manager.load_dek(master_secret, self.vault_id, new_epoch)
+        self.key_epoch = new_epoch
+        
+        self._log_audit("ROTATE", "DEK", "Data Encryption Key rotated successfully")
+
+    def export_vault(self) -> bytes:
+        data = self.storage.export_data()
+        # Stamp the vault identity so import can refuse cross-vault restores.
+        # Secrets are bound to this vault_id/DEK via AAD; restoring elsewhere
+        # would fail authentication on first read. See SECURITY.md (Backup).
+        data["vault_id"] = self.vault_id
+        json_str = json.dumps(data, indent=2)
+        return base64.b64encode(json_str.encode("utf-8"))
+
+    def import_vault(self, b64_data: bytes) -> None:
+        if not isinstance(b64_data, bytes):
+            raise ValidationError("b64_data must be a bytes object.")
+        if len(b64_data) > 10 * 1024 * 1024:
+            raise ValidationError("Import payload exceeds the maximum allowed size of 10MB.")
+        try:
+            json_bytes = base64.b64decode(b64_data)
+            data = json.loads(json_bytes.decode("utf-8"))
+        except (binascii.Error, json.JSONDecodeError, UnicodeDecodeError) as e:
+            raise ValidationError(f"Invalid import payload format: {e}")
+
+        # Secrets are AAD-bound to the vault_id and encrypted under this vault's
+        # DEK. Restoring a payload from a different vault would silently produce
+        # undecryptable secrets, so fail loudly instead.
+        payload_vault_id = data.get("vault_id")
+        if payload_vault_id is not None and payload_vault_id != self.vault_id:
+            raise ValidationError(
+                f"Import refused: payload belongs to vault '{payload_vault_id}', "
+                f"but this is vault '{self.vault_id}'. Restore into the original "
+                "vault (same keychain.json/DEK) or re-encrypt before importing."
+            )
+        self.storage.import_data(data)
+        self._log_audit("IMPORT", "VAULT", "Vault imported from external data")
+
+    def get_audit_log(self, limit: int = 100) -> List[Dict[str, Any]]:
+        return self.storage.get_audit_log(limit)
+
+    def verify_audit_chain(self) -> bool:
+        logs = self.storage.get_audit_log(limit=10000)
+        if not logs:
+            return True
+        logs.reverse()
+        prev_hash = ""
+        for entry in logs:
+            expected_raw = f"{prev_hash}|{entry.get('timestamp', '')}|{entry.get('action', '')}|{entry.get('secret_name', '')}|{entry.get('details', '')}|{entry.get('policy_hash', '')}"
+            expected_hash = hashlib.sha256(expected_raw.encode("utf-8")).hexdigest()
+            if entry.get("entry_hash") != expected_hash:
+                return False
+            prev_hash = entry.get("entry_hash") or ""
+        return True
+
+class AgentVaultClient:
+    def __init__(self, vault_manager: VaultManager):
+        self._vault = vault_manager
+    def execute(self, agent: str, namespace: str, purpose: str, secret_name: str, callback: Callable[[bytearray], Any]) -> Any:
+        return self._vault.execute(agent, namespace, purpose, secret_name, callback)
+    @contextlib.contextmanager
+    def lease_secret(self, name: str, agent: str, namespace: str, purpose: str, version: Optional[int] = None) -> Generator[bytearray, None, None]:
+        with self._vault.lease_secret(name, agent, namespace, purpose, version) as secret_buffer:
+            yield secret_buffer
