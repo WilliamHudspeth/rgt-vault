@@ -53,28 +53,81 @@ class LinuxTPMProvider(MasterSecretProvider):
         if not self.public_path.is_file():
             raise FileNotFoundError(f"Sealed public blob not found: {self.public_path}")
 
+        # The PCR list is sealed into the policy at seal time; we need to
+        # assert the same list at unseal time or the policy check fails.
+        # ``seal_master_secret`` writes it next to the blobs as
+        # ``<basename>.pcrs`` -- one line, space-separated integers.
+        # Fall back to [0, 7] for backward compat with blobs sealed before
+        # this file was added, or if the file is unreadable for any
+        # reason (e.g. wrong permissions, race with another process).
+        pcr_file = self.private_path.with_suffix(".pcrs")
+        self.pcr_list = [0, 7]
+        if pcr_file.is_file():
+            try:
+                self.pcr_list = [
+                    int(x) for x in pcr_file.read_text().strip().split()
+                ]
+                if not self.pcr_list:
+                    self.pcr_list = [0, 7]
+            except (OSError, ValueError):
+                # Unreadable / malformed -- fall back rather than crash.
+                # The worst case is a PCR-policy mismatch at unseal time,
+                # which fails closed with a clear TPM error.
+                self.pcr_list = [0, 7]
+
     def get_secret(self) -> bytes:
         with tempfile.NamedTemporaryFile(delete=False) as tmp_out:
             out_path = tmp_out.name
-            
-        ctx_path = str(Path(out_path).with_suffix(".ctx"))
+
+        # Use the private path's parent as scratch for the primary and
+        # loaded-child context files; ensures cleanup is simple.
+        scratch_dir = self.private_path.parent
+        ctx_path = str(scratch_dir / f".{os.getpid()}_child.ctx")
+        primary_ctx = str(scratch_dir / f".{os.getpid()}_primary.ctx")
+        session_path = str(scratch_dir / f".{os.getpid()}_session.ctx")
 
         try:
+            # Modern tpm2-tools requires an explicit primary for both
+            # tpm2_load and the parent handle; the legacy 0x40000001
+            # transient handle is no longer supported.
+            # We deliberately do NOT pass -T here: tpm2-tools' built-in
+            # TCTI auto-discovery is more reliable than the explicit
+            # -T /dev/tpmrm0 form when invoked via subprocess.
             _run_tpm_cmd([
-                "tpm2_load",
-                "-T", self.tpm_device,
-                "-C", "0x40000001",
-                "-u", str(self.public_path),
-                "-r", str(self.private_path),
-                "-c", ctx_path
+                "tpm2_createprimary",
+                "-C", "o",
+                "-G", "rsa",
+                "-c", primary_ctx,
             ])
 
             _run_tpm_cmd([
+                "tpm2_load",
+                "-C", primary_ctx,
+                "-u", str(self.public_path),
+                "-r", str(self.private_path),
+                "-c", ctx_path,
+            ])
+
+            # Build a policy session explicitly. The shorthand
+            # `tpm2_unseal -p pcr:sha256:0,7` is unreliable in modern
+            # tpm2-tools when more than one PCR is listed; the explicit
+            # session path is the supported pattern.
+            pcr_spec = "+".join(f"{self.pcr_bank}:{p}" for p in self.pcr_list)
+            _run_tpm_cmd([
+                "tpm2_startauthsession",
+                "--policy-session",
+                "-S", session_path,
+            ])
+            _run_tpm_cmd([
+                "tpm2_policypcr",
+                "-S", session_path,
+                "-l", pcr_spec,
+            ])
+            _run_tpm_cmd([
                 "tpm2_unseal",
-                "-T", self.tpm_device,
                 "-c", ctx_path,
                 "-o", out_path,
-                "-p", f"pcr:{self.pcr_bank}:0,7"
+                "-p", f"session:{session_path}",
             ])
 
             with open(out_path, "rb") as f:
@@ -86,19 +139,19 @@ class LinuxTPMProvider(MasterSecretProvider):
             return secret
 
         finally:
-            for tmp_file in (out_path, ctx_path):
+            for tmp_file in (out_path, ctx_path, primary_ctx, session_path):
                 try:
                     os.unlink(tmp_file)
                 except OSError:
                     pass
-            try:
-                _run_tpm_cmd([
-                    "tpm2_flushcontext",
-                    "-T", self.tpm_device,
-                    "-c", ctx_path
-                ])
-            except TPMError:
-                pass
+            for handle in (ctx_path, primary_ctx, session_path):
+                try:
+                    _run_tpm_cmd([
+                        "tpm2_flushcontext",
+                        "-c", handle,
+                    ])
+                except TPMError:
+                    pass
 
 
 def seal_master_secret(
@@ -107,6 +160,13 @@ def seal_master_secret(
     pcr_list: List[int] = [0, 7],
     pcr_bank: str = "sha256"
 ) -> tuple[Path, Path]:
+    """Seal a master secret to a PCR policy.
+
+    Creates a transient RSA primary under the owner hierarchy, then seals
+    the secret as a child key bound to the PCR policy. The transient
+    primary is flushed before returning; only the .priv / .pub blobs need
+    to be persisted.
+    """
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -117,27 +177,46 @@ def seal_master_secret(
         tmp_secret.write(master_secret)
         secret_file = tmp_secret.name
 
+    primary_ctx = str(out_dir / "primary.ctx")
     try:
         policy_digest_path = str(out_dir / "policy.digest")
-        pcr_spec = ",".join(f"{pcr_bank}:{p}" for p in pcr_list)
+        # tpm2_createpolicy expects PCR list items to be '+'-separated
+        # (e.g. "sha256:0+sha256:7"); the older tpm2_unseal/load tools
+        # accept the comma form, so this is the only place that needs '+'.
+        pcr_spec = "+".join(f"{pcr_bank}:{p}" for p in pcr_list)
 
         _run_tpm_cmd([
             "tpm2_createpolicy",
             "--policy-pcr",
             "-l", pcr_spec,
-            "-L", policy_digest_path
+            "-L", policy_digest_path,
+        ])
+
+        # Create a transient RSA primary under the owner hierarchy. Modern
+        # tpm2-tools (>=5.0) refuses the legacy transient handle 0x40000001,
+        # so we go through an explicit primary context instead.
+        _run_tpm_cmd([
+            "tpm2_createprimary",
+            "-C", "o",
+            "-G", "rsa",
+            "-c", primary_ctx,
         ])
 
         _run_tpm_cmd([
             "tpm2_create",
-            "-C", "0x40000001",
+            "-C", primary_ctx,
             "-i", secret_file,
             "-u", str(public_path),
             "-r", str(private_path),
             "-L", policy_digest_path,
             "-g", "sha256",
-            "-G", "aes"
         ])
+
+        # Persist the PCR list next to the blobs so the unseal code can
+        # reconstruct the same policy. Without this, the provider would
+        # have to guess (and could guess wrong).
+        pcr_record = private_path.with_suffix(".pcrs")
+        pcr_record.write_text(" ".join(str(p) for p in pcr_list) + "\n")
 
         try:
             os.unlink(policy_digest_path)
@@ -147,4 +226,16 @@ def seal_master_secret(
         return private_path, public_path
 
     finally:
-        os.unlink(secret_file)
+        for path in (secret_file, primary_ctx):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        # Flush the primary from TPM memory.
+        try:
+            subprocess.run(
+                ["tpm2_flushcontext", "-t"],
+                capture_output=True, check=False,
+            )
+        except FileNotFoundError:
+            pass
