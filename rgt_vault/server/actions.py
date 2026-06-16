@@ -39,7 +39,9 @@ from typing import Any, Callable, Dict, List, Optional
 
 from rgt_vault.exceptions import ActionExecutionError, ActionNotFoundError
 
-ActionFn = Callable[[bytearray, Dict[str, Any]], Any]
+# Actions are called as fn(secret_buf, params, *, registry=...); the keyword
+# is optional per-action, so the broad Callable signature is intentional.
+ActionFn = Callable[..., Any]
 
 # Cap the response body we'll echo back over HTTP. Upstream services can be
 # arbitrarily large; without a cap a single /use call could exhaust memory
@@ -160,6 +162,9 @@ class ActionRegistry:
 
     def __init__(self) -> None:
         self._actions: Dict[str, ActionSpec] = {}
+        # Process-wide default for whether built-in HTTP actions may reach
+        # private/loopback networks; set by build_app from the serve flag.
+        self.default_allow_private_network: bool = False
 
     def register(self, spec: ActionSpec) -> None:
         if not spec.name or not isinstance(spec.name, str):

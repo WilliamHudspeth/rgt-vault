@@ -67,7 +67,7 @@ def _authed(app, token):
 class _SSRFHandler(BaseHTTPRequestHandler):
     """Records requests and replies with a fixed body so we can see
     whether the vault reached us (and prove the SSRF was prevented)."""
-    received = []
+    received: list = []
 
     def do_GET(self):
         _SSRFHandler.received.append(("GET", self.path, dict(self.headers)))
@@ -346,7 +346,7 @@ def test_validate_headers_strips_host_header():
 
 def test_validate_headers_rejects_non_dict():
     with pytest.raises(ActionExecutionError, match="must be a JSON object"):
-        _validate_headers("not a dict")  # type: ignore[arg-type]
+        _validate_headers("not a dict")
 
 
 # ------------------------------------------------------------------
