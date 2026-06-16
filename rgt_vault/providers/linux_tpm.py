@@ -76,8 +76,29 @@ class LinuxTPMProvider(MasterSecretProvider):
                 self.pcr_list = [0, 7]
 
     def get_secret(self) -> bytes:
-        with tempfile.NamedTemporaryFile(delete=False) as tmp_out:
-            out_path = tmp_out.name
+        # P0-1 audit fix: create the unseal-target file in the same directory
+        # as the sealed blobs (which should be 0700 -- it contains sealed
+        # secret material) with explicit 0600 permissions. The previous code
+        # used ``NamedTemporaryFile(delete=False)`` which left the file at
+        # the process umask (typically 022, giving 0644 world-readable),
+        # exposing the plaintext master secret to any local user between
+        # ``tpm2_unseal`` writing it and Python reading it.
+        tmp_fd, out_path = tempfile.mkstemp(
+            prefix=".rgt-unseal-",
+            dir=str(self.private_path.parent),
+        )
+        os.close(tmp_fd)
+        try:
+            os.chmod(out_path, 0o600)
+        except OSError:
+            # If we can't chmod (e.g. mounted FS without chmod support),
+            # refuse to continue -- the alternative is silently writing
+            # the master secret to a world-readable file.
+            os.unlink(out_path)
+            raise TPMError(
+                f"Could not set 0600 permissions on {out_path}; refusing to "
+                "unseal master secret to a file with permissive mode."
+            )
 
         # Use the private path's parent as scratch for the primary and
         # loaded-child context files; ensures cleanup is simple.

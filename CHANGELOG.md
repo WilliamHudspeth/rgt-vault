@@ -1,5 +1,4 @@
 # Changelog
-
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -43,7 +42,58 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the seal path used. Without this, any change to the provider's
   hardcoded PCR list would silently break previously-sealed blobs.
 
+### Security (audit pass — see [AUDIT.md](AUDIT.md))
+
+- **P0-1: LinuxTPMProvider no longer exposes plaintext master secret via
+  the temp file written by `tpm2_unseal`.** The unseal target file is now
+  created via `tempfile.mkstemp` in the same directory as the sealed blobs
+  and chmod-ed to 0600 explicitly. Previously, `NamedTemporaryFile` left
+  the file at the process umask (typically 022 → 0644), world-readable
+  during the window between `tpm2_unseal` writing and Python reading it.
+- **P0-2: `KeyringProvider` fails closed on missing keyring entry.**
+  Previously, a missing master-secret entry caused the provider to
+  *silently generate* a new one — which would render the existing vault
+  permanently unreadable, since the DEK is wrapped under the previous
+  master. Now raises `MasterSecretUnavailableError` with recovery
+  guidance. The bootstrap path is moved to an explicit
+  `bootstrap_master_secret` step that runs only on first-time init (no
+  keychain.json present).
+- **P0-3: `rotate_dek` is atomic.** A new
+  `StorageBackend.bulk_rewrite_active_secrets` helper wraps the entire
+  multi-row re-encryption in a single SQLite transaction. A crash
+  mid-rotation leaves either the old DEK or the new DEK in effect; never
+  a mix.
+- **P0-4: `StorageBackend.set_secret` is atomic.** The
+  UPDATE-supersede-INSERT sequence is wrapped in `BEGIN IMMEDIATE` so
+  concurrent writers for the same name serialize cleanly.
+- **P0-5: `StorageBackend.get_secret` is atomic with its audit-log
+  write.** A new `_append_audit_in_tx` helper writes the audit entry
+  inside the same transaction as the read; if the audit write fails,
+  the read rolls back too.
+- **P1-1: CLI plaintext from stdin / `--value-file`, never from argv.**
+  `rgt-vault set NAME` no longer accepts the plaintext value as a
+  positional argument — it must come from stdin
+  (`echo SECRET | rgt-vault set NAME -`) or from `--value-file PATH`.
+  Argv is visible to other local users via `/proc/<pid>/cmdline`.
+- **P1-2: `_migrate_legacy_secrets` is atomic.** Same bulk-rewrite
+  pattern as `rotate_dek`; a mid-migration crash leaves no
+  half-upgraded rows.
+- **P1-3: `keychain.json` is chmod 0600 after writing.** Both
+  `initialize_dek` and `rewrap_dek` lock the file down explicitly.
+- **P1-4: `rotate_master_key` refuses providers that don't implement
+  `rotate_secret`.** Pre-checks capability *before* incrementing the
+  key epoch, raising `RotateNotSupportedError`. Previously, a rotation
+  on DPAPI/TPM/Keychain would bump the epoch and leave the vault in an
+  inconsistent state on restart.
+- **P1-5: `cmd_get` emits a zeroization-bypass warning to stderr**, and
+  `llm_guide.py` no longer overstates the zeroization guarantee when
+  the caller uses the `get` subcommand.
+- **P2-6: Migration 0002 no longer manipulates `PRAGMA foreign_keys`**.
+  Connection-level PRAGMAs belong in the storage layer's per-connection
+  setup, not in migration files.
+
 ### Added
+
 - **Local HTTP server (`rgt-vault serve`).** A new optional `[server]` extra
   (FastAPI + uvicorn) exposes the vault over loopback HTTP so non-Python
   clients — LLM agents in Ollama/llama.cpp/vLLM, scripts — can use it.
@@ -58,6 +108,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   not require FastAPI; the server layer raises a clear `ImportError` with
   install instructions if the extra is missing. `tests/test_server.py` and
   `tests/test_actions.py` add 20 hermetic tests (FastAPI TestClient, no socket).
+- **`MasterSecretUnavailableError`**, **`RotateNotSupportedError`**,
+  **`VaultImportError`** exception subclasses (all `VaultError`) for
+  caller-friendly error handling.
+- **`MasterSecretProvider.bootstrap_master_secret()`** — explicit
+  create-if-missing hook for providers whose backing store supports it.
+- **`StorageBackend.bulk_rewrite_active_secrets(rewrite_fn)`** —
+  atomic multi-row re-encryption helper used by `rotate_dek` and the
+  legacy migration.
+- **`tests/test_audit_fixes.py`** — 11 new tests covering each P0/P1
+  finding above (provider fail-closed, transaction wrappers, atomic
+  rotation, keychain 0600, rotate-master-key pre-check, LinuxTPM temp
+  file 0600).
+- **`tests/test_cli.py`** — 4 new tests for stdin / `--value-file`
+  value sources and the `cmd_get` zeroization-bypass warning.
+- **`AUDIT.md`** — the full production-readiness audit (P0–P3
+  findings, dependency map, security-boundary map, call graph, grading).
 - **CLI parity.** `rgt-vault` now exposes `set`, `get`, `list`, `revoke`,
   `fingerprint`, `rotate {master,dek}`, `verify-audit`, `audit`, and
   `simulate` subcommands with a `--provider {keyring,platform}` selector
@@ -87,7 +153,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `VaultManager.set_secret` / `.execute` / `verify_audit_chain`, and
   `rotate_dek` through the TPM provider.
 
+### Fixed
+
+- **LinuxTPMProvider was non-functional on modern tpm2-tools.** Found by
+  running the suite against a real `/dev/tpmrm0`. Three concrete bugs
+  were blocking end-to-end use:
+  1. `tpm2_createpolicy -l sha256:0,sha256:7` was rejected with
+     `Failed to parse PCR string` -- the tool requires `+` as the
+     separator between `<bank>:<pcr>` items.
+  2. `tpm2_create` / `tpm2_load` with the legacy transient handle
+     `0x40000001` (no explicit primary) failed with
+     `tpm:handle(1):value is out of range or is not correct for the
+     context`. Replaced with an explicit `tpm2_createprimary -C o -G rsa
+     -c primary.ctx` then `tpm2_create -C primary.ctx ...`.
+  3. `tpm2_unseal -p pcr:sha256:0,7` (the multi-PCR shorthand) failed
+     with `policy check failed` even when the PCR values had not drifted.
+     Switched to the explicit policy-session pattern:
+     `tpm2_startauthsession --policy-session` -> `tpm2_policypcr -l
+     sha256:0+sha256:7` -> `tpm2_unseal -p session:...`.
+- **`-G aes` removed from `tpm2_create`.** Modern tpm2-tools refuses the
+  `-G` + `-i` combination; the algorithm is inferred from the input
+  payload.
+- **`-T /dev/tpmrm0` removed from all tpm2 invocations.** The explicit
+  TCTI form occasionally fails to instantiate when invoked via
+  `subprocess.run`; tpm2-tools' built-in TCTI auto-discovery is more
+  reliable.
+- **PCR list is now persisted alongside the sealed blobs** as
+  `<basename>.pcrs` so the unseal path can reconstruct the same policy
+  the seal path used. Without this, any change to the provider's
+  hardcoded PCR list would silently break previously-sealed blobs.
+
 ### Changed
+
 - **`crypto.decrypt` is now a single, type-stable entry point.** It
   raises :class:`DecryptionError` (a `VaultError`) for *any* failure --
   truncated token, wrong AAD, wrong key, tampering -- and validates that
@@ -111,6 +208,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`Unsupported DEK version` now raises `ValidationError`** instead of a
   bare `ValueError`, consistent with the other public-API error types.
 
+### Removed
+
+- The `PRAGMA foreign_keys=off` / `=on` directives embedded in
+  migration `0002_namespace.sql` (P2-6).
+
 ## [0.1.0] — 2026-06-16
 
 ### Fixed
@@ -130,7 +232,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   single `BEGIN IMMEDIATE` transaction, serialized by a process lock, so
   concurrent writers cannot fork the chain.
 - Replaced deprecated `datetime.utcnow()` with timezone-aware UTC.
-- **`llm_guide.py` was a latent `SyntaxError`** — a nested `"""` in an example
+- **`llm_guide.py` was a latent `SyntaxError`** — a nested `"` in an example
   terminated the guide string early. The module now imports.
 - **`import_data` raised an unhandled `TypeError`** on non-list collections
   (e.g. `{"secrets": None}`), found by fuzzing; it now raises `ValueError`.

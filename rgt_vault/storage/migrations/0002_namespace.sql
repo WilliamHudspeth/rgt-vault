@@ -1,4 +1,13 @@
-PRAGMA foreign_keys=off;
+-- P2-6 audit fix: connection-level PRAGMAs (foreign_keys, journal_mode,
+-- synchronous) belong in the storage layer's per-connection setup, not in
+-- migration files. Migrations must be portable SQL that any future
+-- storage backend (Postgres etc.) can execute without SQLite-specific
+-- side effects. The previous version wrapped the body in
+-- ``PRAGMA foreign_keys=off; BEGIN; ...; COMMIT; PRAGMA foreign_keys=on;``
+-- which is unnecessary because the schema currently declares no foreign
+-- keys and the storage layer sets ``PRAGMA foreign_keys=ON`` per
+-- connection anyway.
+
 BEGIN TRANSACTION;
 
 CREATE TABLE secrets_new (
@@ -16,9 +25,9 @@ CREATE TABLE secrets_new (
 );
 
 INSERT INTO secrets_new (id, secret_id, namespace, name, version, ciphertext, checksum, created_at, updated_at, status)
-SELECT id, 
-       lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6))), 
-       'default', name, version, ciphertext, checksum, created_at, updated_at, 
+SELECT id,
+       lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6))),
+       'default', name, version, ciphertext, checksum, created_at, updated_at,
        CASE WHEN is_current = 1 THEN 'ACTIVE' ELSE 'SUPERSEDED' END
 FROM secrets;
 
@@ -40,4 +49,3 @@ ALTER TABLE honeytokens_new RENAME TO honeytokens;
 ALTER TABLE audit_logs ADD COLUMN policy_hash TEXT;
 
 COMMIT;
-PRAGMA foreign_keys=on;

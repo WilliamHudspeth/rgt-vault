@@ -47,3 +47,32 @@ class ActionExecutionError(VaultError):
     ``__cause__``. Mapped to HTTP 500 by the FastAPI exception handler.
     """
     pass
+
+class MasterSecretUnavailableError(VaultError):
+    """Raised when the platform master-secret provider cannot return the
+    existing master secret (e.g. OS keyring entry deleted, TPM reset).
+
+    This is intentionally a hard failure: regenerating the master secret on
+    the fly would render the entire vault permanently unreadable, since the
+    DEK is wrapped under the previous master secret.
+    """
+    pass
+
+class RotateNotSupportedError(VaultError):
+    """Raised when ``rotate_master_key`` is called on a provider that does not
+    support automated master-secret rotation (e.g. DPAPI/TPM, where
+    re-sealing is an out-of-band operation).
+
+    Prevents the vault from incrementing the key epoch without producing a
+    new wrapped DEK, which would otherwise leave the vault in an inconsistent
+    state on restart.
+    """
+    pass
+
+class VaultImportError(VaultError):
+    """Raised when an imported vault payload is rejected (e.g. cross-vault
+    import, malformed payload). Distinct from built-in ``ImportError`` so
+    callers can catch vault-specific import problems without swallowing
+    stdlib ``ImportError``.
+    """
+    pass
