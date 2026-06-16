@@ -22,10 +22,16 @@ production-readiness audit.
   `rgt_vault/storage/sqlite.py::_apply_migrations`; covered by
   `tests/test_migration_atomicity.py`.
 - **Automated rotation for platform providers.** DPAPI/TPM re-seal helpers
-  invoked through `rotate_secret()`.
+  invoked through `rotate_secret()`. (The Linux TPM provider now uses an
+  explicit `tpm2_createprimary` flow that *can* be re-sealed by re-running
+  `seal_master_secret` with a new secret and swapping the .priv/.pub
+  files; this is the building block but the high-level API is still TODO.)
 - **CLI parity.** ~~`get`/`lease`/`list`/`rotate`/`audit verify` subcommands with a
   selectable provider (`--provider keyring|dpapi|tpm`).~~ **DONE** in
   `rgt_vault/cli.py`; covered by `tests/test_cli.py`.
+- **Linux TPM live integration tests** (previously only mocked). **DONE**
+  in `tests/test_tpm_live.py`; auto-skipped when `/dev/tpmrm0` is
+  unreadable.
 - **Audit log noise reduction.** Separate storage-layer and policy-layer events;
   avoid logging debug reads (e.g. `get_fingerprint`).
 - **CI.** GitHub Actions matrix (Linux/macOS/Windows × Python 3.9–3.12) running

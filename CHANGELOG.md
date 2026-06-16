@@ -6,6 +6,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **LinuxTPMProvider was non-functional on modern tpm2-tools.** Found by
+  running the suite against a real `/dev/tpmrm0`. Three concrete bugs
+  were blocking end-to-end use:
+  1. `tpm2_createpolicy -l sha256:0,sha256:7` was rejected with
+     `Failed to parse PCR string` -- the tool requires `+` as the
+     separator between `<bank>:<pcr>` items.
+  2. `tpm2_create` / `tpm2_load` with the legacy transient handle
+     `0x40000001` (no explicit primary) failed with
+     `tpm:handle(1):value is out of range or is not correct for the
+     context`. Replaced with an explicit `tpm2_createprimary -C o -G rsa
+     -c primary.ctx` then `tpm2_create -C primary.ctx ...`.
+  3. `tpm2_unseal -p pcr:sha256:0,7` (the multi-PCR shorthand) failed
+     with `policy check failed` even when the PCR values had not drifted.
+     Switched to the explicit policy-session pattern:
+     `tpm2_startauthsession --policy-session` -> `tpm2_policypcr -l
+     sha256:0+sha256:7` -> `tpm2_unseal -p session:...`.
+- **`-G aes` removed from `tpm2_create`.** Modern tpm2-tools refuses the
+  `-G` + `-i` combination; the algorithm is inferred from the input
+  payload.
+- **`-T /dev/tpmrm0` removed from all tpm2 invocations.** The explicit
+  TCTI form occasionally fails to instantiate when invoked via
+  `subprocess.run`; tpm2-tools' built-in TCTI auto-discovery is more
+  reliable.
+- **PCR list is now persisted alongside the sealed blobs** as
+  `<basename>.pcrs` so the unseal path can reconstruct the same policy
+  the seal path used. Without this, any change to the provider's
+  hardcoded PCR list would silently break previously-sealed blobs.
+
 ### Added
 - **CLI parity.** `rgt-vault` now exposes `set`, `get`, `list`, `revoke`,
   `fingerprint`, `rotate {master,dek}`, `verify-audit`, `audit`, and
@@ -30,6 +59,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`tests/test_migration_atomicity.py`** verifying that a failing
   migration file rolls back its bookkeeping row (the migration will be
   retried on next startup rather than silently skipped).
+- **`tests/test_tpm_live.py`** with 4 hermetic-ish integration tests
+  against a real `/dev/tpmrm0` (auto-skipped if the device is not
+  readable). Covers seal/unseal round-trip, PCR-list persistence, full
+  `VaultManager.set_secret` / `.execute` / `verify_audit_chain`, and
+  `rotate_dek` through the TPM provider.
 
 ### Changed
 - **`crypto.decrypt` is now a single, type-stable entry point.** It
