@@ -129,6 +129,27 @@ class StreamOpenAITests(unittest.TestCase):
             ))
         self.assertEqual(out, ["y"])
 
+    def test_ollama_socket_timeout_raises_runtimeerror(self):
+        """OPUS-102: socket.timeout must not propagate as a raw exception."""
+        import socket as _socket
+        with patch("urllib.request.urlopen", side_effect=_socket.timeout("slow")):
+            with self.assertRaises(RuntimeError) as ctx:
+                list(stream_ollama("http://x", "model", "hi", timeout=1))
+            self.assertIn("timeout", str(ctx.exception).lower())
+
+    def test_openai_compat_timeout_raises_runtimeerror(self):
+        import socket as _socket
+        with patch("urllib.request.urlopen", side_effect=_socket.timeout("slow")):
+            with self.assertRaises(RuntimeError) as ctx:
+                list(stream_openai_chat("http://x", "key", "model", "hi", timeout=1))
+            self.assertIn("timeout", str(ctx.exception).lower())
+
+    def test_ollama_oserror_raises_runtimeerror(self):
+        with patch("urllib.request.urlopen", side_effect=OSError("conn reset")):
+            with self.assertRaises(RuntimeError) as ctx:
+                list(stream_ollama("http://x", "model", "hi", timeout=1))
+            self.assertIn("OSError", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

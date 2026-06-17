@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import socket
 import urllib.error
 import urllib.request
 from typing import Iterator, Optional
@@ -64,6 +65,12 @@ def stream_ollama(
                     yield chunk
     except urllib.error.URLError as e:
         raise RuntimeError(f"Ollama stream failed: {e.reason}") from e
+    except (TimeoutError, socket.timeout) as e:
+        # OPUS-102: socket.timeout is NOT a URLError subclass; catch it
+        # explicitly so a slow stream doesn't crash the consumer.
+        raise RuntimeError("Ollama stream timeout") from e
+    except OSError as e:
+        raise RuntimeError(f"Ollama stream OSError: {type(e).__name__}: {e}") from e
 
 
 def stream_openai_chat(
@@ -126,3 +133,8 @@ def stream_openai_chat(
                         yield chunk
     except urllib.error.URLError as e:
         raise RuntimeError(f"OpenAI-compat stream failed: {e.reason}") from e
+    except (TimeoutError, socket.timeout) as e:
+        # OPUS-102: see Ollama stream above.
+        raise RuntimeError("OpenAI-compat stream timeout") from e
+    except OSError as e:
+        raise RuntimeError(f"OpenAI-compat stream OSError: {type(e).__name__}: {e}") from e
