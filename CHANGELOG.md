@@ -5,6 +5,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Test
+- RGT-1: open a test PR to verify Multica GitHub integration auto-links to this issue.
+
 ## [0.2.0] — 2026-06-16
 
 ### Security (v0.2.0 hardening pass — see [AUDIT-v2.md](AUDIT-v2.md))
