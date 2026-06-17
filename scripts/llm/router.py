@@ -313,6 +313,71 @@ class Router:
             error=f"all providers failed: {summary}",
         )
 
+    def _run_with_timeout(
+        self,
+        spec: str,
+        prompt: str,
+        *,
+        system: Optional[str] = None,
+        max_tokens: int = 600,
+        temperature: float = 0.2,
+        timeout: int = 120,
+    ) -> Reply:
+        """Run a single provider.complete() with an executor-level timeout.
+
+        OPUS-AFK-4: provider-level timeouts are advisory — a buggy or
+        hung provider may ignore them. We enforce the deadline at the
+        executor boundary AND we do NOT block on the executor at exit
+        (ThreadPoolExecutor's __exit__ does shutdown(wait=True) which
+        would join a still-running worker). shutdown(wait=False) returns
+        immediately; the worker thread (and any subprocess it spawned
+        via start_new_session) continues running but does not block the
+        caller. The 'executor timeout' Reply is returned to the caller
+        regardless of whether the worker eventually finishes.
+        """
+        executor_timeout = max(1, timeout + 5)  # 5s grace beyond provider timeout
+        ex = ThreadPoolExecutor(max_workers=1)
+        try:
+            future = ex.submit(self._dispatch, spec, prompt, system, max_tokens, temperature, timeout)
+            try:
+                return future.result(timeout=executor_timeout)
+            except TimeoutError:
+                return Reply(
+                    text="", provider=spec, model="?",
+                    error=f"executor timeout after {executor_timeout}s",
+                )
+        finally:
+            # wait=False so a hung worker doesn't block the caller.
+            ex.shutdown(wait=False, cancel_futures=True)
+
+    def _dispatch(
+        self,
+        spec: str,
+        prompt: str,
+        system: Optional[str],
+        max_tokens: int,
+        temperature: float,
+        timeout: int,
+    ) -> Reply:
+        """Worker-thread entry point used by both _run_with_timeout and
+        call_parallel. Bound method, so 'self' is available for self._get."""
+        try:
+            provider = self._get(spec)
+        except Exception as e:
+            return Reply(text="", provider=spec, model="?", error=f"build failed: {e}")
+        if not provider.is_available():
+            return Reply(text="", provider=spec, model="?", error="unavailable")
+        try:
+            return provider.complete(
+                prompt, system=system, max_tokens=max_tokens,
+                temperature=temperature, timeout=timeout,
+            )
+        except Exception as e:
+            return Reply(
+                text="", provider=spec, model="?",
+                error=f"exception: {type(e).__name__}: {e}",
+            )
+
     def call_parallel(
         self,
         specs: Iterable[str],
@@ -348,35 +413,45 @@ class Router:
             )
 
         # Use threads (providers are network-bound).
-        # OPUS-3: enforce timeout at the executor boundary too. The
-        # provider-level timeout may be ignored by buggy implementations;
-        # future.result(timeout=...) guarantees we don't block forever.
+        # OPUS-3 (FIXED): enforce timeout at the executor boundary, AND
+        # don't block on shutdown. The previous code used
+        # `with ThreadPoolExecutor(...)` which calls shutdown(wait=True)
+        # at exit, joining any still-running worker. So if a provider
+        # ignored its own timeout, future.result(timeout=) would let us
+        # collect a timeout reply — but the with-block exit would then
+        # hang waiting for the worker anyway. Use shutdown(wait=False)
+        # so a hung provider can't wedge the loop.
+        specs = list(specs)
+        if not specs:
+            return []
         executor_timeout = max(1, timeout + 5)  # 5s grace beyond provider timeout
-        with ThreadPoolExecutor(max_workers=max(1, len(specs))) as ex:
-            futures = [ex.submit(_one, s) for s in specs]
+        ex = ThreadPoolExecutor(max_workers=max(1, len(specs)))
+        try:
+            futures = {spec: ex.submit(self._dispatch, spec, prompt, system, max_tokens, temperature, timeout) for spec in specs}
             replies = []
-            for spec, f in zip(specs, futures):
+            for spec in specs:
+                f = futures[spec]
                 try:
-                    replies.append(f.result(timeout=executor_timeout))
+                    replies.append((spec, f.result(timeout=executor_timeout)))
                 except TimeoutError:
                     # OPUS-3: provider ignored its own timeout; we caught
                     # it at the executor level. Must come before the
                     # broader Exception catch (TimeoutError is a subclass).
-                    replies.append(Reply(
+                    replies.append((spec, Reply(
                         text="", provider=spec, model="?",
                         error=f"executor timeout after {executor_timeout}s",
-                    ))
+                    )))
                 except Exception as e:
                     # An exception inside the future (shouldn't happen
                     # now that _one catches its own, but defensively):
-                    replies.append(Reply(
+                    replies.append((spec, Reply(
                         text="", provider=spec, model="?",
                         error=f"future exception: {type(e).__name__}: {e}",
-                    ))
-
-        # Preserve the original spec order so the caller can match
-        # replies back to providers.
-        return list(zip(specs, replies))
+                    )))
+        finally:
+            # wait=False so a hung worker doesn't block the caller.
+            ex.shutdown(wait=False, cancel_futures=True)
+        return replies
 
     def review_pair(
         self,
@@ -416,23 +491,16 @@ class Router:
         # preserving role assignment.
         if primary_spec and secondary_spec and primary_spec == secondary_spec:
             # Same spec for both roles — call it once, return the same
-            # Reply for both slots. Call the underlying provider directly
-            # to avoid two duplicate LLM calls.
-            try:
-                provider = self._get(primary_spec)
-                if not provider.is_available():
-                    empty = Reply(text="", provider=primary_spec, model="?", error="unavailable")
-                    return {
-                        "primary": (primary_spec, empty),
-                        "secondary": (secondary_spec, empty),
-                        "agreement": "unknown",
-                    }
-                reply = provider.complete(prompt, system=system, max_tokens=max_tokens,
-                                          temperature=temperature, timeout=timeout)
-            except Exception as e:
-                err_reply = Reply(text="", provider=primary_spec, model="?",
-                                  error=f"exception: {type(e).__name__}: {e}")
-                reply = err_reply
+            # Reply for both slots. OPUS-AFK-4: previously this branch
+            # called provider.complete() directly with no executor
+            # timeout, so a hung provider (or one that ignored its own
+            # timeout) would block the loop indefinitely. Now we route
+            # through _run_with_timeout so the same OPUS-3 timeout
+            # guarantee applies.
+            reply = self._run_with_timeout(
+                primary_spec, prompt, system=system, max_tokens=max_tokens,
+                temperature=temperature, timeout=timeout,
+            )
             return {
                 "primary": (primary_spec, reply),
                 "secondary": (secondary_spec, reply),
