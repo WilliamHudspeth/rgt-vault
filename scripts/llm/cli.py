@@ -145,6 +145,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Seconds to sleep between calls (default 0 = max throughput)",
     )
 
+    # Streaming mode: print chunks as they arrive.
+    st = sub.add_parser(
+        "stream",
+        help="Stream a prompt to a provider; print chunks as they arrive",
+    )
+    _add_common_args(st)
+    st.add_argument(
+        "--provider",
+        default="ollama:qwen2.5:7b",
+        help="Provider spec (default: ollama:qwen2.5:7b). Currently ollama and "
+             "OpenAI-compatible (groq/mistral/cohere) are supported.",
+    )
+
     # Usage summary: print the rolling totals from /tmp/rgt_llm_usage.csv
     sub.add_parser("usage", help="Print usage summary from /tmp/rgt_llm_usage.csv")
 
@@ -348,6 +361,72 @@ def cmd_usage(_args) -> int:
     return 0
 
 
+def cmd_stream(args) -> int:
+    """Stream a prompt to a provider."""
+    from scripts.llm.router import build_provider
+    from scripts.llm.stream import stream_ollama, stream_openai_chat
+
+    prompt = read_prompt(args)
+    system = args.system or ""
+    spec = args.provider
+
+    if spec.startswith("ollama:"):
+        model = spec[len("ollama:"):]
+        # No way to know the base_url here without re-reading routes.yaml;
+        # we default to localhost which covers 95% of usage.
+        try:
+            for chunk in stream_ollama(
+                "http://localhost:11434", model, prompt,
+                system=system or None,
+                max_tokens=args.max_tokens,
+                timeout=args.timeout,
+            ):
+                print(chunk, end="", flush=True)
+            print()
+        except RuntimeError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 1
+        return 0
+
+    # OpenAI-compatible: groq, mistral, cohere
+    if spec in ("groq", "mistral", "cohere"):
+        import os
+        key_env = {"groq": "GROQ_API_KEY", "mistral": "MISTRAL_API_KEY", "cohere": "COHERE_API_KEY"}[spec]
+        key = os.environ.get(key_env)
+        if not key:
+            print(f"ERROR: {key_env} not set", file=sys.stderr)
+            return 1
+        base_urls = {
+            "groq": "https://api.groq.com/openai/v1",
+            "mistral": "https://api.mistral.ai/v1",
+            "cohere": "https://api.cohere.com/v1",
+        }
+        models = {
+            "groq": "llama-3.3-70b-versatile",
+            "mistral": "mistral-small-latest",
+            "cohere": "command-r-plus-08-2024",
+        }
+        extra = {"User-Agent": "hermes-llm-review/1.0"} if spec == "groq" else None
+        try:
+            for chunk in stream_openai_chat(
+                base_urls[spec], key, models[spec], prompt,
+                system=system or None,
+                max_tokens=args.max_tokens,
+                timeout=args.timeout,
+                extra_headers=extra,
+            ):
+                print(chunk, end="", flush=True)
+            print()
+        except RuntimeError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 1
+        return 0
+
+    # Anything else (claude-cli, gemini-cli) — not yet wired for streaming
+    print(f"ERROR: streaming not implemented for {spec!r}", file=sys.stderr)
+    return 2
+
+
 def cmd_show_chains(_args) -> int:
     router = Router()
     for task in TASKS:
@@ -519,6 +598,8 @@ def main(argv=None) -> int:
         return cmd_fanout(args)
     if args.cmd == "burn":
         return cmd_burn(args)
+    if args.cmd == "stream":
+        return cmd_stream(args)
     if args.cmd == "usage":
         return cmd_usage(args)
     if args.cmd in TASKS:
