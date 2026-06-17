@@ -209,11 +209,11 @@ def _http_request(
     safe_url = _validate_outbound_url(url, allow_private_network=allow_private_network)
     req = urllib.request.Request(url=safe_url, method=method, headers=headers, data=body)
     try:
-        # nosec B310: urlopen is gated by _validate_outbound_url which
-        # (1) restricts the scheme to http/https and (2) refuses
-        # loopback, link-local, RFC1918, multicast, and reserved
-        # addresses unless allow_private_network is explicitly opted in.
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        # urlopen is gated by _validate_outbound_url which (1) restricts the
+        # scheme to http/https and (2) refuses loopback, link-local, RFC1918,
+        # multicast, and reserved addresses unless allow_private_network is
+        # explicitly opted in. nosec must sit on the call line to apply.
+        with urllib.request.urlopen(req, timeout=15) as resp:  # nosec B310
             raw = resp.read(_MAX_RESPONSE_BYTES + 1)
             truncated = len(raw) > _MAX_RESPONSE_BYTES
             if truncated:
