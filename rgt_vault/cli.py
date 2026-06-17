@@ -53,30 +53,39 @@ def cmd_set(args: argparse.Namespace) -> int:
         return 2
 
     if args.value_file:
-        with open(args.value_file, "r", encoding="utf-8") as f:
-            value = f.read().rstrip("\n").rstrip("\r")
+        with open(args.value_file, "rb") as f:
+            raw = f.read()
     else:
-        # Read from stdin. Per POSIX, a tty stdin in non-interactive mode
-        # would block forever waiting for EOF; the caller is expected to
-        # pipe/redirect. We deliberately do NOT use input() (which prompts).
-        # ``sys.stdin.read()`` returns ``str`` under text mode and ``bytes``
-        # under binary mode; handle both consistently.
-        raw = sys.stdin.read()
-        if isinstance(raw, bytes):
-            value = raw.rstrip(b"\n").rstrip(b"\r").decode("utf-8", errors="replace")
+        # Read from stdin in binary mode when available. In tests ``sys.stdin``
+        # may be a ``StringIO`` without a ``.buffer`` attribute; fall back to
+        # text mode and encode.
+        if hasattr(sys.stdin, "buffer"):
+            raw = sys.stdin.buffer.read()
         else:
-            value = raw.rstrip("\n").rstrip("\r")
+            raw = sys.stdin.read().encode("utf-8", errors="replace")
 
-    vault = _build_vault(args)
-    vault.set_secret(
-        args.name,
-        value,
-        namespace=args.namespace,
-        agent=args.agent,
-        purpose=args.purpose,
-    )
-    print(f"Secret '{args.namespace}/{args.name}' stored successfully.")
-    return 0
+    # Strip a single trailing newline / carriage return pair (the common case
+    # when piping from echo/printf). Internal newlines are kept intact.
+    if raw.endswith(b"\n"):
+        raw = raw[:-1]
+    if raw.endswith(b"\r"):
+        raw = raw[:-1]
+
+    value = bytearray(raw)
+    try:
+        vault = _build_vault(args)
+        vault.set_secret(
+            args.name,
+            value,
+            namespace=args.namespace,
+            agent=args.agent,
+            purpose=args.purpose,
+        )
+        print(f"Secret '{args.namespace}/{args.name}' stored successfully.")
+        return 0
+    finally:
+        from rgt_vault.crypto import zeroize_bytearray
+        zeroize_bytearray(value)
 
 
 def cmd_get(args: argparse.Namespace) -> int:
@@ -172,6 +181,52 @@ def cmd_audit(args: argparse.Namespace) -> int:
         details = entry.get("details", "")
         print(f"{ts}\t{action}\t{name}\t{details}")
     return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """RGT-55: print a one-screen summary of the vault's current state.
+
+    Outputs (in order, one per line):
+      - vault_id, key_epoch
+      - secret counts by namespace (from storage.metadata + storage.secrets)
+      - total audit row count + the most recent action/timestamp
+      - audit chain verification result (OK / TAMPERED)
+
+    Pure read; no writes, no token required. Useful for ops dashboards
+    and CI smoke tests. Exit code: 0 if the chain verifies, 2 if
+    TAMPERED, 1 on any other error.
+    """
+    vault = _build_vault(args)
+    print(f"vault_id:     {vault.vault_id}")
+    print(f"key_epoch:    {vault.key_epoch}")
+
+    # Secret counts by namespace. We do a single connection pass instead
+    # of calling list_secrets per namespace (which would be policy-gated
+    # and might return empty even when secrets exist for other agents).
+    with vault.storage._get_conn() as conn:
+        rows = conn.execute(
+            "SELECT namespace, COUNT(*) FROM secrets WHERE status = 'ACTIVE' "
+            "GROUP BY namespace ORDER BY namespace"
+        ).fetchall()
+    total = sum(n for _ns, n in rows)
+    print(f"active secrets: {total}")
+    for ns, n in rows:
+        print(f"  {ns}: {n}")
+
+    # Audit log: total count + the most recent row.
+    total_audit = vault.storage.audit_log_count()
+    print(f"audit rows:   {total_audit}")
+    with vault.storage._get_conn() as conn:
+        last = conn.execute(
+            "SELECT action, timestamp, secret_name FROM audit_logs ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    if last is not None:
+        last_action, last_ts, last_name = last
+        print(f"last action:  {last_ts}  {last_action}  {last_name or '-'}")
+
+    ok = vault.verify_audit_chain()
+    print(f"audit chain:  {'OK' if ok else 'TAMPERED'}")
+    return 0 if ok else 2
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -336,6 +391,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_au = subparsers.add_parser("audit", help="Tail the audit log")
     p_au.add_argument("--limit", type=int, default=20)
     p_au.set_defaults(func=cmd_audit)
+
+    # status (RGT-55: one-screen summary)
+    p_st = subparsers.add_parser("status", help="Print vault status (id, epoch, secret counts, audit chain)")
+    p_st.set_defaults(func=cmd_status)
 
     # init (generate the server bearer-token file)
     p_init = subparsers.add_parser("init", help="Generate the server bearer-token file")
