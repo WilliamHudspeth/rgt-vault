@@ -14,6 +14,11 @@
 #
 # Provider-specific args go under "providers:" (e.g. custom base_url).
 #
+# Per the OPUS-2 review, if env_path is set the router will source
+# this file into os.environ before building providers (so e.g. MISTRAL_API_KEY
+# is set without the caller having to source it manually).
+# env_path: ~/.config/llm-review/keys.env
+#
 # Re-run after editing:
 #   python3 scripts/llm/cli.py show-chains
 #   python3 scripts/llm/cli.py code-review --dry-run --show-chain
@@ -90,3 +95,7 @@ providers:
   # ollama:qwen2.5:7b:
   #   base_url: http://10.10.88.83:11434
   #   name: hanjo-qwen
+
+# OPUS-2: env_path is read by RouteConfig.load() and sourced into
+# os.environ at startup, so API keys don't have to be set by the caller.
+env_path: ~/.config/llm-review/keys.env

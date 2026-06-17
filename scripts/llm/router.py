@@ -62,17 +62,45 @@ class RouteConfig:
     env_path: Optional[str] = None
 
     @classmethod
-    def load(cls, path: Optional[Path] = None) -> "RouteConfig":
+    def load(cls, path: Optional[Path] = None, *, load_env: bool = True) -> "RouteConfig":
+        """Load routes.yaml. Optionally load env_path into os.environ (OPUS-2).
+
+        If load_env=True (default) AND env_path is set in yaml AND the file
+        exists, source it into os.environ before loading chains/pairs.
+        """
         path = path or DEFAULT_ROUTES_PATH
         if not path.exists():
             return cls.default()
         data = yaml.safe_load(path.read_text()) or {}
+        env_path = data.get("env_path")
+        if load_env and env_path:
+            env_file = Path(env_path).expanduser()
+            if env_file.exists():
+                # Source KEY=VALUE lines (with optional 'export ') into os.environ.
+                # Doesn't override existing keys.
+                try:
+                    for line in env_file.read_text().splitlines():
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        if line.startswith("export "):
+                            line = line[len("export "):]
+                        if "=" in line:
+                            k, _, v = line.partition("=")
+                            k = k.strip()
+                            v = v.strip()
+                            if k and k not in os.environ:
+                                os.environ[k] = v
+                except Exception as e:
+                    import sys as _sys
+                    print(f"Warning: failed to load env_path {env_file}: {e}",
+                          file=_sys.stderr)
         return cls(
             chains=data.get("chains") or {},
             pairs=data.get("pairs") or {},
             writers=data.get("writers") or {},
             provider_args=data.get("providers") or {},
-            env_path=data.get("env_path"),
+            env_path=env_path,
         )
 
     @classmethod
