@@ -397,21 +397,6 @@ class Router:
         if not specs:
             return []
 
-        def _one(spec: str) -> Reply:
-            try:
-                provider = self._get(spec)
-            except Exception as e:
-                return Reply(text="", provider=spec, model="?", error=f"build failed: {e}")
-            if not provider.is_available():
-                return Reply(text="", provider=spec, model="?", error="unavailable")
-            return provider.complete(
-                prompt,
-                system=system,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                timeout=timeout,
-            )
-
         # Use threads (providers are network-bound).
         # OPUS-3 (FIXED): enforce timeout at the executor boundary, AND
         # don't block on shutdown. The previous code used
@@ -421,9 +406,6 @@ class Router:
         # collect a timeout reply — but the with-block exit would then
         # hang waiting for the worker anyway. Use shutdown(wait=False)
         # so a hung provider can't wedge the loop.
-        specs = list(specs)
-        if not specs:
-            return []
         executor_timeout = max(1, timeout + 5)  # 5s grace beyond provider timeout
         ex = ThreadPoolExecutor(max_workers=max(1, len(specs)))
         try:
