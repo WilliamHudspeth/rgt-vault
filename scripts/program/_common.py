@@ -17,15 +17,28 @@ WORKSPACE_ID = "8a622480-5997-4491-9ff5-17e4a602aab5"
 MULTICA_API = "http://10.10.88.88:8080"
 
 
-def _token():
-    """Read the Multica PAT from the controller's config."""
-    cfg = json.load(open(Path.home() / ".multica" / "config.json"))
-    return cfg["token"]
+def _token() -> str:
+    """Read the Multica PAT from the controller's config.
+
+    Uses a context manager so the file handle doesn't leak (OPUS-100).
+    Raises FileNotFoundError if the file is missing and KeyError if the
+    'token' key isn't present.
+    """
+    cfg_path = Path.home() / ".multica" / "config.json"
+    with open(cfg_path) as f:
+        data = json.load(f)
+    if "token" not in data:
+        raise KeyError(
+            f"'token' key missing from {cfg_path}; "
+            "expected Multica PAT config"
+        )
+    return data["token"]
 
 
-def _hdr():
-    scheme = chr(66) + chr(101) + chr(97) + chr(114) + chr(101) + chr(114)
-    return scheme + " " + _token()
+def _hdr() -> str:
+    # OPUS-92: was chr(66)+chr(101)+chr(97)+chr(114)+chr(101)+chr(114)
+    # = "Bearer", exactly the banned secret-redaction pattern.
+    return "Bearer " + _token()
 
 
 def _get(path):
