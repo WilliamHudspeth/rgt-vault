@@ -7,10 +7,19 @@ task_type) to a CSV file so we can:
   - monitor the Gemini OAuth-personal quota burn rate
 
 The CSV is append-only. Safe to import from any provider.
+
+Multi-process safety (OPUS-AFK-5): healthcheck.py runs loops A/B/C
+as separate processes (per CLAUDE.md / honcho design) that all
+append to the same /tmp/rgt_llm_usage.csv. The threading.Lock here
+is per-process only — three concurrent writers can interleave rows
+once the per-line write exceeds PIPE_BUF (4 KiB on Linux). We hold
+an fcntl advisory lock around the append+header-check section so
+the file is written atomically per row across processes.
 """
 from __future__ import annotations
 
 import csv
+import fcntl
 import os
 import threading
 import time
@@ -19,22 +28,56 @@ from pathlib import Path
 # Default location. Override via RGT_USAGE_LOG env var.
 DEFAULT_LOG_PATH = Path(os.environ.get("RGT_USAGE_LOG", "/tmp/rgt_llm_usage.csv"))
 
-# Thread-safe single-writer lock for the CSV.
+# In-process serialization (cheap, always taken).
+# Cross-process serialization is via fcntl below.
 _lock = threading.Lock()
 
 
-def _ensure_header(path: Path) -> None:
-    """Create the CSV with header if it doesn't exist yet."""
-    if path.exists():
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow([
-            "ts", "provider", "model", "task_type", "spec",
-            "input_tokens", "output_tokens", "latency_ms",
-            "ok", "error",
-        ])
+def _append_row(p: Path, row: list) -> None:
+    """Append a single row to the CSV under an advisory file lock.
+
+    OPUS-AFK-5: three healthcheck loops (A/B/C) write concurrently to
+    the same CSV from separate processes. A threading.Lock only
+    guards threads within one process, so concurrent processes can
+    interleave writes and corrupt the CSV. fcntl.flock gives us
+    cross-process POSIX advisory locking.
+
+    Two passes under the lock:
+      1. If the file doesn't exist, create it with the header.
+      2. Append the row.
+    The header-check + append is a single critical section so two
+    processes can't both observe "no file" and write the header twice.
+    """
+    with _lock:  # in-process: serialize threads
+        # Open for read+write+create, append mode. text mode for csv module.
+        # newline="" is required for csv writer per Python docs.
+        with open(p, "a", newline="") as f:
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            except (OSError, AttributeError):
+                # fcntl isn't available on Windows. We accept the
+                # risk that a Windows healthcheck won't be safe; the
+                # production deployment is Linux only.
+                pass
+            try:
+                w = csv.writer(f)
+                # Header check: if we're at byte 0 (or first write to
+                # an empty file just opened in 'a' mode would have us
+                # at byte 0), write the header. We use f.tell() to
+                # detect this without an extra stat() call. The
+                # check+write+append is one critical section.
+                if f.tell() == 0:
+                    w.writerow([
+                        "ts", "provider", "model", "task_type", "spec",
+                        "input_tokens", "output_tokens", "latency_ms",
+                        "ok", "error",
+                    ])
+                w.writerow(row)
+            finally:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                except (OSError, AttributeError):
+                    pass
 
 
 def log(
@@ -50,27 +93,28 @@ def log(
     error: str = "",
     path: Path | None = None,
 ) -> None:
-    """Append one usage row. No-op if all numeric fields are 0 AND no error.
+    """Append one usage row.
 
-    Useful for failed calls where we never got a response — we still
-    want to record the attempt.
+    OPUS-AFK-5 (fix): the old docstring said "no-op if all numeric
+    fields are 0 AND no error", but the code always wrote. Either
+    the contract or the behavior was wrong. The behavior (always
+    write) is more useful — we want to see failed calls — so the
+    code stays, and the docstring is corrected.
     """
     p = path or DEFAULT_LOG_PATH
-    with _lock:
-        _ensure_header(p)
-        with open(p, "a", newline="") as f:
-            csv.writer(f).writerow([
-                time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                provider,
-                model,
-                task_type,
-                spec,
-                input_tokens,
-                output_tokens,
-                latency_ms,
-                int(ok),
-                error[:200] if error else "",
-            ])
+    p.parent.mkdir(parents=True, exist_ok=True)
+    _append_row(p, [
+        time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        provider,
+        model,
+        task_type,
+        spec,
+        input_tokens,
+        output_tokens,
+        latency_ms,
+        int(ok),
+        error[:200] if error else "",
+    ])
 
 
 def totals(path: Path | None = None) -> dict:
