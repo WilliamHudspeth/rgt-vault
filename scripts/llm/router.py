@@ -229,13 +229,21 @@ class Router:
                     model=provider.model,
                     error="dry-run: not actually called",
                 )
-            reply = provider.complete(
-                prompt,
-                system=system,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                timeout=timeout,
-            )
+            # OPUS-1: an exception inside provider.complete() (not just
+            # an ok=False reply) used to abort the whole chain. Catch
+            # unexpected exceptions, treat as a failed attempt, fall
+            # through to the next provider.
+            try:
+                reply = provider.complete(
+                    prompt,
+                    system=system,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    timeout=timeout,
+                )
+            except Exception as e:
+                attempts.append((spec, f"exception: {type(e).__name__}: {e}"))
+                continue
             if reply.ok:
                 if attempts:
                     reply.raw = reply.raw or {}
@@ -286,9 +294,31 @@ class Router:
             )
 
         # Use threads (providers are network-bound).
+        # OPUS-3: enforce timeout at the executor boundary too. The
+        # provider-level timeout may be ignored by buggy implementations;
+        # future.result(timeout=...) guarantees we don't block forever.
+        executor_timeout = max(1, timeout + 5)  # 5s grace beyond provider timeout
         with ThreadPoolExecutor(max_workers=max(1, len(specs))) as ex:
             futures = [ex.submit(_one, s) for s in specs]
-            replies = [f.result() for f in futures]
+            replies = []
+            for spec, f in zip(specs, futures):
+                try:
+                    replies.append(f.result(timeout=executor_timeout))
+                except TimeoutError:
+                    # OPUS-3: provider ignored its own timeout; we caught
+                    # it at the executor level. Must come before the
+                    # broader Exception catch (TimeoutError is a subclass).
+                    replies.append(Reply(
+                        text="", provider=spec, model="?",
+                        error=f"executor timeout after {executor_timeout}s",
+                    ))
+                except Exception as e:
+                    # An exception inside the future (shouldn't happen
+                    # now that _one catches its own, but defensively):
+                    replies.append(Reply(
+                        text="", provider=spec, model="?",
+                        error=f"future exception: {type(e).__name__}: {e}",
+                    ))
 
         # Preserve the original spec order so the caller can match
         # replies back to providers.

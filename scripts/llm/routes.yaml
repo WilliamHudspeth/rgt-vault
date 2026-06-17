@@ -33,11 +33,15 @@ chains:
     - gemini-cli
     - claude-cli
 
-  # Security / threat-model / crypto. Highest stakes -> Claude primary.
+  # Security / threat-model / crypto. Highest stakes.
+  # OPUS-19: don't auto-fall-through to a different trust class.
+  # Groq is a third-party cloud REST API (different trust class than
+  # Claude/Gemini OAuth CLI). If Claude + Gemini both fail, we should
+  # FAIL LOUD rather than silently downgrading the security review.
   security-review:
     - claude-cli
     - gemini-cli
-    - groq
+    # - groq   # intentionally NOT in the security chain (OPUS-19)
 
   # Yes/no, classification, short diagnosis. Small + free.
   fast-qa:
