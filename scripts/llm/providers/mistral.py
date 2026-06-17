@@ -10,6 +10,7 @@ from typing import Optional
 
 from ..types import Provider, Reply
 from ._http import HTTPStatusError, post_json, timer_ms
+from .. import usage as usage_tracker
 
 
 class MistralProvider(Provider):
@@ -53,6 +54,11 @@ class MistralProvider(Provider):
                 timeout=timeout,
             )
         except HTTPStatusError as e:
+            usage_tracker.log(
+                provider=self.name, model=self.model,
+                latency_ms=timer_ms(t0), ok=False,
+                error=f"HTTP {e.status}: {e.body[:200]}",
+            )
             return Reply(
                 text="",
                 provider=self.name,
@@ -65,6 +71,11 @@ class MistralProvider(Provider):
         try:
             text = resp["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as e:
+            usage_tracker.log(
+                provider=self.name, model=self.model,
+                latency_ms=latency, ok=False,
+                error=f"unexpected response shape: {e}",
+            )
             return Reply(
                 text="",
                 provider=self.name,
@@ -73,13 +84,20 @@ class MistralProvider(Provider):
                 error=f"unexpected response shape: {e}",
                 raw=resp,
             )
-        usage = resp.get("usage", {})
+        u = resp.get("usage", {})
+        in_tok = u.get("prompt_tokens", 0)
+        out_tok = u.get("completion_tokens", 0)
+        usage_tracker.log(
+            provider=self.name, model=self.model,
+            input_tokens=in_tok, output_tokens=out_tok,
+            latency_ms=latency, ok=True,
+        )
         return Reply(
             text=text,
             provider=self.name,
             model=self.model,
-            input_tokens=usage.get("prompt_tokens", 0),
-            output_tokens=usage.get("completion_tokens", 0),
+            input_tokens=in_tok,
+            output_tokens=out_tok,
             latency_ms=latency,
             raw=resp,
         )

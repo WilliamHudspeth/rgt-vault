@@ -13,6 +13,7 @@ import time
 from typing import Optional
 
 from ..types import Provider, Reply
+from .. import usage as usage_tracker
 
 
 class ClaudeCLIProvider(Provider):
@@ -57,24 +58,29 @@ class ClaudeCLIProvider(Provider):
                 env=os.environ,
             )
         except subprocess.TimeoutExpired:
+            latency = int((time.time() - t0) * 1000)
+            usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=f"timeout after {timeout}s")
             return Reply(
                 text="",
                 provider=self.name,
                 model=self.model,
-                latency_ms=int((time.time() - t0) * 1000),
+                latency_ms=latency,
                 error=f"timeout after {timeout}s",
             )
         except Exception as e:
+            latency = int((time.time() - t0) * 1000)
+            usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=f"{type(e).__name__}: {e}")
             return Reply(
                 text="",
                 provider=self.name,
                 model=self.model,
-                latency_ms=int((time.time() - t0) * 1000),
+                latency_ms=latency,
                 error=f"{type(e).__name__}: {e}",
             )
 
         latency = int((time.time() - t0) * 1000)
         if proc.returncode != 0:
+            usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=f"claude exit {proc.returncode}: {proc.stderr.strip()[:300]}")
             return Reply(
                 text="",
                 provider=self.name,
@@ -83,6 +89,7 @@ class ClaudeCLIProvider(Provider):
                 error=f"claude exit {proc.returncode}: {proc.stderr.strip()[:300]}",
             )
         # claude -p returns just the text on stdout
+        usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=True)
         return Reply(
             text=proc.stdout.strip(),
             provider=self.name,
@@ -128,24 +135,29 @@ class GeminiCLIProvider(Provider):
                 env=os.environ,
             )
         except subprocess.TimeoutExpired:
+            latency = int((time.time() - t0) * 1000)
+            usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=f"timeout after {timeout}s")
             return Reply(
                 text="",
                 provider=self.name,
                 model=self.model,
-                latency_ms=int((time.time() - t0) * 1000),
+                latency_ms=latency,
                 error=f"timeout after {timeout}s",
             )
         except Exception as e:
+            latency = int((time.time() - t0) * 1000)
+            usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=f"{type(e).__name__}: {e}")
             return Reply(
                 text="",
                 provider=self.name,
                 model=self.model,
-                latency_ms=int((time.time() - t0) * 1000),
+                latency_ms=latency,
                 error=f"{type(e).__name__}: {e}",
             )
 
         latency = int((time.time() - t0) * 1000)
         if proc.returncode != 0:
+            usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=f"gemini exit {proc.returncode}: {proc.stderr.strip()[:300]}")
             return Reply(
                 text="",
                 provider=self.name,
@@ -158,6 +170,7 @@ class GeminiCLIProvider(Provider):
         text = "\n".join(
             ln for ln in proc.stdout.splitlines() if ln.strip() and not ln.startswith("Warning:")
         ).strip()
+        usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=True)
         return Reply(
             text=text,
             provider=self.name,

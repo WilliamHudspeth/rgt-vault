@@ -12,6 +12,7 @@ import urllib.request
 from typing import Optional
 
 from ..types import Provider, Reply
+from .. import usage as usage_tracker
 
 
 class OllamaProvider(Provider):
@@ -83,19 +84,23 @@ class OllamaProvider(Provider):
                 resp = json.loads(r.read())
         except urllib.error.HTTPError as e:
             body = e.read()[:300].decode("utf-8", errors="replace")
+            latency = int((time.time() - t0) * 1000)
+            usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=f"HTTP {e.code}: {body[:200]}")
             return Reply(
                 text="",
                 provider=self.name,
                 model=self.model,
-                latency_ms=int((time.time() - t0) * 1000),
+                latency_ms=latency,
                 error=f"HTTP {e.code}: {body[:200]}",
             )
         except (urllib.error.URLError, TimeoutError, OSError) as e:
+            latency = int((time.time() - t0) * 1000)
+            usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=f"{type(e).__name__}: {e}")
             return Reply(
                 text="",
                 provider=self.name,
                 model=self.model,
-                latency_ms=int((time.time() - t0) * 1000),
+                latency_ms=latency,
                 error=f"{type(e).__name__}: {e}",
             )
 
@@ -103,6 +108,7 @@ class OllamaProvider(Provider):
         try:
             text = resp["message"]["content"]
         except (KeyError, TypeError) as e:
+            usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=f"unexpected response shape: {e}")
             return Reply(
                 text="",
                 provider=self.name,
@@ -111,12 +117,15 @@ class OllamaProvider(Provider):
                 error=f"unexpected response shape: {e}",
                 raw=resp,
             )
+        in_tok = resp.get("prompt_eval_count", 0)
+        out_tok = resp.get("eval_count", 0)
+        usage_tracker.log(provider=self.name, model=self.model, input_tokens=in_tok, output_tokens=out_tok, latency_ms=latency, ok=True)
         return Reply(
             text=text,
             provider=self.name,
             model=self.model,
-            input_tokens=resp.get("prompt_eval_count", 0),
-            output_tokens=resp.get("eval_count", 0),
+            input_tokens=in_tok,
+            output_tokens=out_tok,
             latency_ms=latency,
             raw=resp,
         )

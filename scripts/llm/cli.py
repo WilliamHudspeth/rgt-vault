@@ -104,6 +104,50 @@ def build_parser() -> argparse.ArgumentParser:
         help="Provider spec (repeatable). e.g. --provider claude-cli --provider groq",
     )
 
+    # Quota-burn mode: hammer a provider with auto-generated prompts.
+    burn = sub.add_parser(
+        "burn",
+        help="Drain a provider's quota with auto-generated prompts (AFK use)",
+    )
+    burn.add_argument(
+        "--provider",
+        default="gemini-cli",
+        help="Provider to drain (default: gemini-cli)",
+    )
+    burn.add_argument(
+        "--calls",
+        type=int,
+        default=100,
+        help="Number of calls to make (default 100)",
+    )
+    burn.add_argument(
+        "--max-tokens",
+        type=int,
+        default=2000,
+        help="Max output tokens per call (default 2000)",
+    )
+    burn.add_argument(
+        "--timeout",
+        type=int,
+        default=120,
+        help="Per-call timeout (default 120s)",
+    )
+    burn.add_argument(
+        "--topics",
+        nargs="+",
+        default=None,
+        help="List of topic seeds to rotate through; default = a built-in list",
+    )
+    burn.add_argument(
+        "--sleep",
+        type=float,
+        default=0.0,
+        help="Seconds to sleep between calls (default 0 = max throughput)",
+    )
+
+    # Usage summary: print the rolling totals from /tmp/rgt_llm_usage.csv
+    sub.add_parser("usage", help="Print usage summary from /tmp/rgt_llm_usage.csv")
+
     sub.add_parser("list-tasks", help="List known task types")
     sub.add_parser("show-chains", help="Show configured provider chains")
     sub.add_parser("show-pairs", help="Show configured 2-model review pairs")
@@ -221,6 +265,86 @@ def cmd_run(task: str, args) -> int:
 def cmd_list_tasks(_args) -> int:
     for t in TASKS:
         print(t)
+    return 0
+
+
+# Default topic seeds for quota-burn mode.
+DEFAULT_BURN_TOPICS = [
+    "explain the design trade-offs of using a content-addressable storage layer for a vault project",
+    "write a detailed threat model for an agent-based secret management system",
+    "describe the failure modes of a SQLite-based audit log under high write load",
+    "compare Ed25519 vs RSA-PSS for capability token signing in a multi-tenant environment",
+    "outline a code review checklist specifically for cryptographic primitives in Python",
+    "discuss why hash-linked audit chains are tamper-evident but not tamper-proof",
+    "explain how to safely handle private key material in a long-running service process",
+    "list common mistakes when implementing ABAC policies and how to avoid them",
+    "design a token rotation strategy that minimizes the blast radius of a leaked credential",
+    "compare the operational cost of running a local Ollama cluster vs hosted inference APIs",
+]
+
+
+def cmd_burn(args) -> int:
+    """Drain a provider's quota by hammering it with prompts."""
+    from scripts.llm.router import build_provider
+
+    try:
+        provider = build_provider(args.provider)
+    except Exception as e:
+        print(f"ERROR building provider {args.provider!r}: {e}", file=sys.stderr)
+        return 2
+
+    if not provider.is_available():
+        print(f"ERROR: provider {args.provider!r} not available", file=sys.stderr)
+        return 2
+
+    topics = args.topics or DEFAULT_BURN_TOPICS
+    print(f"Burning {args.provider}/{provider.model}: {args.calls} calls, "
+          f"max_tokens={args.max_tokens}, topics={len(topics)}", file=sys.stderr)
+
+    ok = 0
+    errs = 0
+    total_in = 0
+    total_out = 0
+    t_start = time.time()
+    for i in range(args.calls):
+        topic = topics[i % len(topics)]
+        prompt = (
+            f"You are helping drain a quota deliberately. "
+            f"Provide a thorough, detailed response (the longer the better) "
+            f"on the following topic. Include examples, edge cases, and "
+            f"practical recommendations.\n\nTopic #{i+1}: {topic}"
+        )
+        reply = provider.complete(
+            prompt, max_tokens=args.max_tokens, timeout=args.timeout,
+        )
+        if reply.ok:
+            ok += 1
+            total_in += reply.input_tokens
+            total_out += reply.output_tokens
+            print(f"[{i+1}/{args.calls}] {reply.provider}/{reply.model}  "
+                  f"in={reply.input_tokens} out={reply.output_tokens}  "
+                  f"{reply.latency_ms}ms  "
+                  f"total_in={total_in} total_out={total_out}",
+                  file=sys.stderr, flush=True)
+        else:
+            errs += 1
+            print(f"[{i+1}/{args.calls}] ERROR: {reply.error}",
+                  file=sys.stderr, flush=True)
+            time.sleep(min(5, 2 ** min(errs, 5)))
+        if args.sleep:
+            time.sleep(args.sleep)
+
+    wall = int((time.time() - t_start) * 1000)
+    print(f"\n=== BURN DONE: {ok}/{args.calls} ok, {errs} errors, "
+          f"wall={wall}ms, tokens in={total_in} out={total_out} ===",
+          file=sys.stderr)
+    return 0 if ok > 0 else 1
+
+
+def cmd_usage(_args) -> int:
+    """Print usage summary from /tmp/rgt_llm_usage.csv."""
+    from scripts.llm import usage
+    print(usage.summary())
     return 0
 
 
@@ -393,6 +517,10 @@ def main(argv=None) -> int:
         return cmd_review(args)
     if args.cmd == "fanout":
         return cmd_fanout(args)
+    if args.cmd == "burn":
+        return cmd_burn(args)
+    if args.cmd == "usage":
+        return cmd_usage(args)
     if args.cmd in TASKS:
         return cmd_run(args.cmd, args)
 
