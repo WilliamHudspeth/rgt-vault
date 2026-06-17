@@ -1,15 +1,27 @@
 import base64
 import os
-import sys
 from pathlib import Path
 from typing import Optional
 
 from .base import MasterSecretProvider
 
-if sys.platform == "win32":
-    import win32crypt
-else:
-    win32crypt = None  # type: ignore
+
+def _load_win32crypt():
+    """Import win32crypt on demand.
+
+    pywin32 ships only with the optional ``rgt-vault[windows]`` extra, so the
+    import is deferred to call time: the module must stay importable on any
+    platform (and on Windows without pywin32) so the package and its test
+    suite load cleanly. Raises a clear error only when the provider is used.
+    """
+    try:
+        import win32crypt
+    except ImportError as e:
+        raise RuntimeError(
+            "WindowsDPAPIProvider requires pywin32. "
+            "Install it with: pip install 'rgt-vault[windows]'"
+        ) from e
+    return win32crypt
 
 class WindowsDPAPIProvider(MasterSecretProvider):
     def __init__(self, blob_path: str, entropy: Optional[bytes] = None):
@@ -20,8 +32,7 @@ class WindowsDPAPIProvider(MasterSecretProvider):
             raise FileNotFoundError(f"DPAPI blob not found: {self.blob_path}")
 
     def get_secret(self) -> bytes:
-        if win32crypt is None:
-            raise RuntimeError("This provider only works on Windows.")
+        win32crypt = _load_win32crypt()
 
         with open(self.blob_path, encoding="utf-8") as f:
             b64data = f.read()
@@ -50,8 +61,7 @@ def seal_master_secret(
     output_path: str,
     entropy: Optional[bytes] = None
 ) -> None:
-    if win32crypt is None:
-        raise RuntimeError("This function only works on Windows.")
+    win32crypt = _load_win32crypt()
 
     encrypted = win32crypt.CryptProtectData(
         master_secret,
