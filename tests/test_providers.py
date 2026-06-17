@@ -137,7 +137,7 @@ class TestWindowsDPAPIProvider:
         mock_win32crypt.CryptUnprotectData.return_value = dummy_master_secret
         mock_win32crypt.CRYPTPROTECT_LOCAL_MACHINE = 4
 
-        with mock.patch("rgt_vault.providers.windows_dpapi.win32crypt", mock_win32crypt):
+        with mock.patch("rgt_vault.providers.windows_dpapi._load_win32crypt", return_value=mock_win32crypt):
             provider = WindowsDPAPIProvider(str(sealed_file))
             secret = provider.get_secret()
 
@@ -159,7 +159,7 @@ class TestWindowsDPAPIProvider:
         # CRYPTPROTECT_LOCAL_MACHINE is 4
         mock_win32crypt.CRYPTPROTECT_LOCAL_MACHINE = 4
 
-        with mock.patch("rgt_vault.providers.windows_dpapi.win32crypt", mock_win32crypt):
+        with mock.patch("rgt_vault.providers.windows_dpapi._load_win32crypt", return_value=mock_win32crypt):
             provider = WindowsDPAPIProvider(str(sealed_file))
             with pytest.raises(PermissionError, match="DPAPI decryption failed"):
                 provider.get_secret()
@@ -226,7 +226,7 @@ def test_dpapi_seal(temp_dir, dummy_master_secret):
     mock_win32crypt.CryptProtectData.return_value = b"encrypted_data"
     mock_win32crypt.CRYPTPROTECT_LOCAL_MACHINE = 4
 
-    with mock.patch("rgt_vault.providers.windows_dpapi.win32crypt", mock_win32crypt):
+    with mock.patch("rgt_vault.providers.windows_dpapi._load_win32crypt", return_value=mock_win32crypt):
         dpapi_seal(dummy_master_secret, str(output))
         assert output.exists()
         content = output.read_text()
