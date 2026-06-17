@@ -355,9 +355,12 @@ def cmd_burn(args) -> int:
 
 
 def cmd_usage(_args) -> int:
-    """Print usage summary from /tmp/rgt_llm_usage.csv."""
+    """Print usage + cost summary from /tmp/rgt_llm_usage.csv."""
     from scripts.llm import usage
+    from scripts.llm import pricing
     print(usage.summary())
+    print()
+    print(pricing.cost_report(usage.totals()))
     return 0
 
 
