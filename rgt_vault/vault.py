@@ -8,7 +8,7 @@ import threading
 import time
 from collections import defaultdict
 from collections.abc import Generator
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import keyring
 from cryptography.fernet import Fernet, InvalidToken
@@ -140,7 +140,15 @@ class VaultManager:
     def _get_aad(self, namespace: str, name: str) -> bytes:
         return f"{self.vault_id}:{namespace}:{name}".encode()
 
-    def _log_audit(self, action: str, secret_name: Optional[str] = None, details: str = "") -> None:
+    def audit(self, action: str, secret_name: Optional[str] = None, details: str = "") -> None:
+        """Append one row to the hash-chained audit log.
+
+        Public entry point. F-10: the underscore prefix used to mark this
+        as private, but the HTTP server and tests both call it; rename to
+        `audit` to make the contract explicit. The audit row is written
+        with the vault's current ``policy_hash`` so a later re-read can
+        correlate the row to the policy that was in effect.
+        """
         self.storage.log_audit(action, secret_name, details, self.policy_hash)
 
     def _validate_string_param(self, param_name: str, value: Any, max_len: int, allow_empty: bool = False):
@@ -152,21 +160,60 @@ class VaultManager:
         if len(value) > max_len:
             raise ValidationError(f"'{param_name}' exceeds the maximum allowed length of {max_len} characters.")
 
-    def set_secret(self, name: str, value: str, namespace: str = "default", agent: str = "system", purpose: str = "") -> None:
-        """Encrypts and stores a secret."""
+    def _normalize_value_param(self, param_name: str, value: Any, max_len: int) -> bytearray:
+        """Coerce a plaintext secret into a mutable ``bytearray``.
+
+        If the caller already passed a ``bytearray`` we use it directly so
+        ``set_secret`` can zeroize the caller's buffer after encryption.
+        ``str`` values are UTF-8 encoded into a new bytearray; ``bytes`` are
+        copied. Rejects wrong types, empty values, and oversized values.
+        """
+        if isinstance(value, str):
+            if not value.strip():
+                raise ValidationError(f"'{param_name}' cannot be empty or just whitespace.")
+            plaintext = bytearray(value.encode("utf-8"))
+        elif isinstance(value, bytearray):
+            if len(value) == 0:
+                raise ValidationError(f"'{param_name}' cannot be empty.")
+            plaintext = value
+        elif isinstance(value, bytes):
+            if len(value) == 0:
+                raise ValidationError(f"'{param_name}' cannot be empty.")
+            plaintext = bytearray(value)
+        else:
+            raise ValidationError(
+                f"'{param_name}' must be str, bytes, or bytearray. Got {type(value).__name__}."
+            )
+        if len(plaintext) > max_len:
+            raise ValidationError(
+                f"'{param_name}' exceeds the maximum allowed length of {max_len} bytes."
+            )
+        return plaintext
+
+    def set_secret(self, name: str, value: Union[str, bytes, bytearray], namespace: str = "default", agent: str = "system", purpose: str = "") -> None:
+        """Encrypts and stores a secret.
+
+        The plaintext ``value`` is copied into a mutable ``bytearray`` for
+        encryption and zeroized before the method returns. Callers that pass
+        a ``str`` or ``bytes`` should assume the original object is *not*
+        reliably wiped (Python strings and small bytes may be interned).
+        """
         self._validate_string_param("name", name, max_len=256)
         self._validate_string_param("namespace", namespace, max_len=128)
         self._validate_string_param("agent", agent, max_len=128)
-        self._validate_string_param("value", value, max_len=1024 * 1024) # 1MB limit
-        
-        decision = self.auth.evaluate(agent, namespace, purpose, action="write")
-        if not decision["allowed"]:
-            self._log_audit("POLICY_DENIED", name, f"Action: write, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}")
-            raise PolicyDeniedError(f"Agent '{agent}' denied write access to '{name}' ({namespace}/{purpose})")
-            
-        aad = self._get_aad(namespace, name)
-        ciphertext = encrypt(value, self.dek, aad)
-        self.storage.set_secret(namespace, name, ciphertext, 1, policy_hash=self.policy_hash)
+
+        plaintext = self._normalize_value_param("value", value, max_len=1024 * 1024)  # 1 MiB
+        try:
+            decision = self.auth.evaluate(agent, namespace, purpose, action="write")
+            if not decision["allowed"]:
+                self.audit("POLICY_DENIED", name, f"Action: write, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}")
+                raise PolicyDeniedError(f"Agent '{agent}' denied write access to '{name}' ({namespace}/{purpose})")
+
+            aad = self._get_aad(namespace, name)
+            ciphertext = encrypt(plaintext, self.dek, aad)
+            self.storage.set_secret(namespace, name, ciphertext, 1, policy_hash=self.policy_hash)
+        finally:
+            zeroize_bytearray(plaintext)
 
     def get_fingerprint(self, name: str, namespace: str = "default", version: Optional[int] = None) -> str:
         """Returns the SHA256 fingerprint of the ciphertext for debugging.
@@ -179,7 +226,7 @@ class VaultManager:
         reduction" item).
         """
         if self.storage.is_honeytoken(namespace, name):
-            self._log_audit("HONEYTOKEN_TRIGGERED", name, json.dumps({"severity": "critical", "agent": "system", "namespace": namespace, "purpose": "fingerprint"}))
+            self.audit("HONEYTOKEN_TRIGGERED", name, json.dumps({"severity": "critical", "agent": "system", "namespace": namespace, "purpose": "fingerprint"}))
             raise PermissionError(f"Honeytoken access detected: {namespace}/{name}")
 
         result = self.storage.get_secret(namespace, name, version, policy_hash=self.policy_hash)
@@ -196,16 +243,16 @@ class VaultManager:
         self._validate_string_param("purpose", purpose, max_len=256)
         
         if not self.rate_limiter.allow(agent):
-            self._log_audit("RATE_LIMITED", name, f"Agent: {agent}")
+            self.audit("RATE_LIMITED", name, f"Agent: {agent}")
             raise PermissionError(f"Rate limit exceeded for agent '{agent}'")
 
         if self.storage.is_honeytoken(namespace, name):
-            self._log_audit("HONEYTOKEN_TRIGGERED", name, json.dumps({"severity": "critical", "agent": agent, "namespace": namespace, "purpose": purpose}))
+            self.audit("HONEYTOKEN_TRIGGERED", name, json.dumps({"severity": "critical", "agent": agent, "namespace": namespace, "purpose": purpose}))
             raise PermissionError(f"Honeytoken access detected: {namespace}/{name}")
 
         decision = self.auth.evaluate(agent, namespace, purpose, action="read")
         if not decision["allowed"]:
-            self._log_audit("POLICY_DENIED", name, f"Action: read, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}")
+            self.audit("POLICY_DENIED", name, f"Action: read, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}")
             raise PolicyDeniedError(f"Agent '{agent}' denied read access to '{name}' ({namespace}/{purpose})")
         
         result = self.storage.get_secret(namespace, name, version, policy_hash=self.policy_hash)
@@ -223,12 +270,12 @@ class VaultManager:
         buffer = bytearray(plaintext_bytes)
         del plaintext_bytes 
         
-        self._log_audit("LEASE_GRANTED", name, f"Agent: {agent}")
+        self.audit("LEASE_GRANTED", name, f"Agent: {agent}")
         try:
             yield buffer
         finally:
             zeroize_bytearray(buffer)
-            self._log_audit("LEASE_RETURNED", name, f"Agent: {agent}")
+            self.audit("LEASE_RETURNED", name, f"Agent: {agent}")
 
     def execute(self, agent: str, namespace: str, purpose: str, secret_name: str, callback: Callable[[bytearray], Any]) -> Any:
         """Lease a secret and hand the *mutable buffer* to ``callback``.
@@ -247,12 +294,12 @@ class VaultManager:
     def list_secrets(self, namespace: str, agent: str, purpose: str = "") -> List[Dict[str, Any]]:
         decision = self.auth.evaluate(agent, namespace, purpose, action="read")
         if not decision["allowed"]:
-            self._log_audit("POLICY_DENIED", None, f"Action: list, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}")
+            self.audit("POLICY_DENIED", None, f"Action: list, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}")
             raise PolicyDeniedError(f"Unauthorized to access namespace '{namespace}'")
         return self.storage.list_secrets(namespace, policy_hash=self.policy_hash)
 
     def simulate(self, agent: str, namespace: str, purpose: str, action: str = "read") -> Dict[str, Any]:
-        self._log_audit("SIMULATION_RUN", None, f"Agent: {agent}, Namespace: {namespace}, Action: {action}")
+        self.audit("SIMULATION_RUN", None, f"Agent: {agent}, Namespace: {namespace}, Action: {action}")
         return self.auth.evaluate(agent, namespace, purpose, action)
 
     def explain(self, agent: str, namespace: str, purpose: str, action: str = "read") -> str:
@@ -291,7 +338,7 @@ class VaultManager:
         self.dek_manager.rewrap_dek(new_master, self.vault_id, new_epoch)
         self.key_epoch = new_epoch
 
-        self._log_audit("ROTATE", "MASTER_KEY", "Master key rotated successfully")
+        self.audit("ROTATE", "MASTER_KEY", "Master key rotated successfully")
 
     def rotate_dek(self) -> None:
         """Rotate Data Encryption Key. Slow rotation (re-encrypts all data).
@@ -323,7 +370,7 @@ class VaultManager:
         self.dek = self.dek_manager.load_dek(master_secret, self.vault_id, new_epoch)
         self.key_epoch = new_epoch
 
-        self._log_audit("ROTATE", "DEK", "Data Encryption Key rotated successfully")
+        self.audit("ROTATE", "DEK", "Data Encryption Key rotated successfully")
 
     def export_vault(self) -> bytes:
         data = self.storage.export_data()
@@ -356,7 +403,7 @@ class VaultManager:
                 "vault (same keychain.json/DEK) or re-encrypt before importing."
             )
         self.storage.import_data(data)
-        self._log_audit("IMPORT", "VAULT", "Vault imported from external data")
+        self.audit("IMPORT", "VAULT", "Vault imported from external data")
 
     def get_audit_log(self, limit: int = 100) -> List[Dict[str, Any]]:
         return self.storage.get_audit_log(limit)
@@ -388,13 +435,3 @@ class VaultManager:
                 return False
             prev_hash = entry.get("entry_hash") or ""
         return True
-
-class AgentVaultClient:
-    def __init__(self, vault_manager: VaultManager):
-        self._vault = vault_manager
-    def execute(self, agent: str, namespace: str, purpose: str, secret_name: str, callback: Callable[[bytearray], Any]) -> Any:
-        return self._vault.execute(agent, namespace, purpose, secret_name, callback)
-    @contextlib.contextmanager
-    def lease_secret(self, name: str, agent: str, namespace: str, purpose: str, version: Optional[int] = None) -> Generator[bytearray, None, None]:
-        with self._vault.lease_secret(name, agent, namespace, purpose, version) as secret_buffer:
-            yield secret_buffer

@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from rgt_vault.exceptions import DecryptionError, ValidationError
 
 
-def encrypt(data: Union[str, bytes], dek: bytes, aad: bytes) -> bytes:
+def encrypt(data: Union[str, bytes, bytearray], dek: bytes, aad: bytes) -> bytes:
     """
     Encrypt data using AES-256-GCM.
     A unique 96-bit (12-byte) nonce is generated and prepended to the ciphertext.

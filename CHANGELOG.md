@@ -5,6 +5,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security (v0.2.1 hardening pass — see [AUDIT-v3.md](AUDIT-v3.md))
+
+- **RGT-113: `VaultManager.set_secret` zeroizes the plaintext buffer
+  immediately after encryption.** The value is copied into a mutable
+  ``bytearray`` before encryption; the bytearray is wiped in a
+  ``finally`` block so policy denials and exceptions cannot leave the
+  plaintext in memory. The CLI ``set`` subcommand now reads stdin and
+  ``--value-file`` into a bytearray and zeroizes it after the call.
+- **P0-1 (v3): `MacOSKeychainProvider.seal_master_secret` no longer writes
+  the master secret to a world-readable temp file and no longer crashes
+  on non-UTF-8 random secrets.** The previous implementation used
+  `tempfile.NamedTemporaryFile(delete=False)` (default umask = `0o644`)
+  in the system temp dir, and called `master_secret.decode("utf-8")`
+  which raised `UnicodeDecodeError` on the ~99 % of random 32-byte
+  buffers that are not valid UTF-8. The seal-side fix mirrors the
+  Linux TPM fix from the v0.2.0 audit: `tempfile.mkstemp` + explicit
+  `chmod 0o600`, with the scratch dir pinned to a vault-controlled
+  location and a fail-closed `PermissionError` if `chmod` is denied.
+- **P1-1 (v3): HTTP server body-size cap.** A new
+  `_BodySizeLimitMiddleware` rejects requests whose `Content-Length`
+  exceeds 1 MiB (matching the existing 1 MiB response cap and the 1 MiB
+  cap on stored secret values) with HTTP 413 *before* the bearer-token
+  check runs, so an unauthenticated local user cannot OOM the loopback
+  server with a multi-GB POST.
+- **P2-1 (v3): `list_secrets` writes the `LIST_SECRETS` audit row
+  inside the same transaction as the listing.** v0.2.0 explicitly
+  deferred this (`P2-2`); v0.2.1 closes the gap so a crash between
+  the listing and the audit call can no longer leave a list-unlogged.
+  The audit chain stays consistent with the data view.
+
 ### Test
 - RGT-1: open a test PR to verify Multica GitHub integration auto-links to this issue.
 
