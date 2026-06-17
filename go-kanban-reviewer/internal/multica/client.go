@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -17,9 +18,26 @@ const (
 	// retain in an error. Multica error responses are small but defend
 	// against a misconfigured proxy returning a huge page.
 	maxErrorBodyBytes = 4096
+	// maxSuccessBodyBytes caps how much of a 2xx response body we read.
+	// Multica issues responses are small (KB) but defend against a
+	// misconfigured proxy returning an unbounded payload.
+	maxSuccessBodyBytes = 1 << 20 // 1 MiB
 	// defaultTimeout is the per-request timeout used by NewClient.
 	defaultTimeout = 30 * time.Second
 )
+
+// pathEscape escapes a value for safe interpolation into a URL path
+// segment. Stronger than url.PathEscape: also encodes '?' and '#',
+// which are legal in url.PathEscape output but can still confuse
+// the URL parser when the escaped value is concatenated into a path
+// that has its own query string.
+func pathEscape(s string) string {
+	return strings.NewReplacer(
+		"?", "%3F",
+		"#", "%23",
+		"/", "%2F",
+	).Replace(url.PathEscape(s))
+}
 
 // Client is a Multica API client.
 type Client struct {
@@ -69,12 +87,15 @@ func (c *Client) do(ctx context.Context, method, path string, body interface{}) 
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		return nil, fmt.Errorf("multica: HTTP %d: %s", resp.StatusCode, string(body))
 	}
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(io.LimitReader(resp.Body, maxSuccessBodyBytes))
 }
 
 // ListIssues returns up to `limit` issues in the workspace.
 func (c *Client) ListIssues(ctx context.Context, workspaceID string, limit int) ([]Issue, error) {
-	path := fmt.Sprintf("/api/issues?workspace_id=%s&limit=%d", workspaceID, limit)
+	q := url.Values{}
+	q.Set("workspace_id", workspaceID)
+	q.Set("limit", fmt.Sprintf("%d", limit))
+	path := "/api/issues?" + q.Encode()
 	raw, err := c.do(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
@@ -86,28 +107,52 @@ func (c *Client) ListIssues(ctx context.Context, workspaceID string, limit int) 
 	}
 	var bare []Issue
 	if err := json.Unmarshal(raw, &bare); err != nil {
-		return nil, fmt.Errorf("multica: parse issues: %w (body: %s)", err, string(raw[:min(200, len(raw))]))
+		return nil, fmt.Errorf("multica: parse issues: %w (body: %s)", err, snippet(raw))
 	}
 	return bare, nil
 }
 
 // GetIssue fetches a single issue by UUID.
 func (c *Client) GetIssue(ctx context.Context, workspaceID, issueID string) (*Issue, error) {
-	path := fmt.Sprintf("/api/issues/%s?workspace_id=%s", issueID, workspaceID)
+	q := url.Values{}
+	q.Set("workspace_id", workspaceID)
+	path := "/api/issues/" + pathEscape(issueID) + "?" + q.Encode()
 	raw, err := c.do(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
-	var issue Issue
-	if err := json.Unmarshal(raw, &issue); err != nil {
-		return nil, fmt.Errorf("multica: parse issue: %w", err)
+	// Reject JSON null with a clear error instead of returning a zero-value struct.
+	if len(raw) > 0 && strings.TrimSpace(string(raw)) == "null" {
+		return nil, fmt.Errorf("multica: parse issue: unexpected null body")
 	}
-	return &issue, nil
+	// Try bare Issue, then {"issue":{...}} envelope.
+	var issue Issue
+	if err := json.Unmarshal(raw, &issue); err == nil && issue.ID != "" {
+		return &issue, nil
+	}
+	var envelope struct {
+		Issue Issue `json:"issue"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err == nil && envelope.Issue.ID != "" {
+		return &envelope.Issue, nil
+	}
+	return nil, fmt.Errorf("multica: parse issue: unrecognized body: %s", snippet(raw))
+}
+
+// snippet returns a short, safe preview of body for error messages.
+func snippet(b []byte) string {
+	const max = 200
+	if len(b) > max {
+		return string(b[:max]) + "..."
+	}
+	return string(b)
 }
 
 // PostComment posts a comment to the given issue. Returns the new comment.
 func (c *Client) PostComment(ctx context.Context, workspaceID, issueID, content string) (*Comment, error) {
-	path := fmt.Sprintf("/api/issues/%s/comments?workspace_id=%s", issueID, workspaceID)
+	q := url.Values{}
+	q.Set("workspace_id", workspaceID)
+	path := "/api/issues/" + pathEscape(issueID) + "/comments?" + q.Encode()
 	raw, err := c.do(ctx, http.MethodPost, path, CommentRequest{Content: content})
 	if err != nil {
 		return nil, err
@@ -121,7 +166,9 @@ func (c *Client) PostComment(ctx context.Context, workspaceID, issueID, content 
 
 // ListComments returns all comments on the given issue.
 func (c *Client) ListComments(ctx context.Context, workspaceID, issueID string) ([]Comment, error) {
-	path := fmt.Sprintf("/api/issues/%s/comments?workspace_id=%s", issueID, workspaceID)
+	q := url.Values{}
+	q.Set("workspace_id", workspaceID)
+	path := "/api/issues/" + pathEscape(issueID) + "/comments?" + q.Encode()
 	raw, err := c.do(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
@@ -140,7 +187,9 @@ func (c *Client) ListComments(ctx context.Context, workspaceID, issueID string) 
 
 // ListProjects returns all milestone projects in the workspace.
 func (c *Client) ListProjects(ctx context.Context, workspaceID string) ([]Project, error) {
-	path := fmt.Sprintf("/api/projects?workspace_id=%s", workspaceID)
+	q := url.Values{}
+	q.Set("workspace_id", workspaceID)
+	path := "/api/projects?" + q.Encode()
 	raw, err := c.do(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
@@ -154,13 +203,4 @@ func (c *Client) ListProjects(ctx context.Context, workspaceID string) ([]Projec
 		return nil, fmt.Errorf("multica: parse projects: %w", err)
 	}
 	return bare, nil
-}
-
-// min is a tiny helper to avoid pulling in the "min" builtin for
-// older Go versions; can be removed once Go 1.21+ is guaranteed.
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

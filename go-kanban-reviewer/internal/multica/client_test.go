@@ -247,3 +247,77 @@ func TestListProjects_Success(t *testing.T) {
 		t.Errorf("got = %+v", got)
 	}
 }
+
+func TestURLEncoding_IssueIDAndWorkspaceEscaped(t *testing.T) {
+	// Use a workspace and issue ID containing characters that must be
+	// percent-encoded. If they aren't, http.NewRequest will reject the
+	// URL or the test server will see a different (truncated) path.
+	weirdWS := "ws with space"
+	weirdID := "id/with?slash&and"
+
+	var sawEscapedPath string
+	var sawRawQuery string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		// r.URL.EscapedPath() preserves the percent-encoding; r.URL.Path is decoded.
+		sawEscapedPath = r.URL.EscapedPath()
+		sawRawQuery = r.URL.RawQuery
+		if got := r.URL.Query().Get("workspace_id"); got != weirdWS {
+			t.Errorf("workspace_id = %q, want %q (raw query: %s)", got, weirdWS, r.URL.RawQuery)
+		}
+		// The dangerous characters in a path segment are '?' and '#'
+		// (which would terminate the path) and '/' (which would create
+		// extra segments). All three must be percent-encoded.
+		if !strings.Contains(sawEscapedPath, "id%2Fwith%3F") {
+			t.Errorf("EscapedPath %q does not encode id/ and ?", sawEscapedPath)
+		}
+		if strings.Contains(sawEscapedPath, "?slash") {
+			t.Errorf("EscapedPath %q contains unescaped '?slash'", sawEscapedPath)
+		}
+		// Raw query must be present (so the workspace_id made it through).
+		if !strings.Contains(sawRawQuery, "workspace_id=") {
+			t.Errorf("RawQuery %q missing workspace_id", sawRawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, `{"id":"x","workspace_id":"ws","number":1,"identifier":"X-1","title":"","description":"","status":"todo","priority":"low"}`)
+	})
+
+	if _, err := c.GetIssue(context.Background(), weirdWS, weirdID); err != nil {
+		t.Fatalf("GetIssue: %v", err)
+	}
+}
+
+func TestGetIssue_EnvelopeFallback(t *testing.T) {
+	// Some Multica endpoints return {"issue":{...}}. Make sure we accept it.
+	envelope := `{"issue":{"id":"i1","workspace_id":"ws","number":1,"identifier":"HUD-1","title":"x","description":"","status":"todo","priority":"low"}}`
+
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, envelope)
+	})
+
+	got, err := c.GetIssue(context.Background(), "ws", "i1")
+	if err != nil {
+		t.Fatalf("GetIssue: %v", err)
+	}
+	if got.ID != "i1" || got.Identifier != "HUD-1" {
+		t.Errorf("got = %+v", got)
+	}
+}
+
+func TestGetIssue_NullBody(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, "null")
+	})
+
+	_, err := c.GetIssue(context.Background(), "ws", "i1")
+	if err == nil {
+		t.Fatal("expected error on null body, got nil")
+	}
+	if !strings.Contains(err.Error(), "null") {
+		t.Errorf("error %q does not mention null", err)
+	}
+}
