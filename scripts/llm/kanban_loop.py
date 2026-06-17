@@ -70,8 +70,15 @@ def ticket_changed(ticket: dict, prev_signature: str) -> bool:
 
 
 def signature(ticket: dict) -> str:
+    """Compute a stable signature for a ticket.
+
+    NOTE (OPUS-16): we deliberately exclude `updated_at` from the
+    signature. Posting a comment to Multica bumps `updated_at` on the
+    ticket, which would otherwise cause the next pass of the kanban loop
+    to re-process (and re-comment) every ticket we just touched, forever.
+    Use content-only fields: description + labels.
+    """
     sig = {
-        "updated_at": ticket.get("updated_at"),
         "description": ticket.get("description") or "",
         "labels": sorted(label_set(ticket)),
     }
@@ -91,6 +98,19 @@ def _safe_id(resp_body: str) -> str:
         return d.get("id", "") if isinstance(d, dict) else ""
     except Exception:
         return ""
+
+
+def _backoff_minutes(fail_count: int) -> int:
+    """Exponential backoff schedule for retried tickets.
+
+    Pattern: 1, 5, 25, 120, 720, 1440 (capped at 24h).
+    """
+    schedule = [1, 5, 25, 120, 720, 1440]
+    if fail_count <= 0:
+        return 1
+    if fail_count > len(schedule):
+        return schedule[-1]
+    return schedule[fail_count - 1] if fail_count <= len(schedule) else schedule[-1]  # never reached
 
 
 def main() -> int:
@@ -125,8 +145,17 @@ def main() -> int:
         args.once = True
 
     state_path = Path(args.state)
+    # OPUS-15: reset_state must be a one-shot, not a persistent flag.
+    # If we keep it as a flag, the skip predicate (`not args.reset_state`)
+    # will never fire in --loop mode and every ticket will be re-processed.
+    # Fix: set a one-shot `reset_state_run` flag, clear reset_state after
+    # the unlink, and use reset_state_run in the skip predicate.
+    args.reset_state_run = False
     if args.reset_state and state_path.exists():
         state_path.unlink()
+        args.reset_state_run = True
+        # Clear the CLI flag so it doesn't keep triggering.
+        args.reset_state = False
     state = load_state(state_path)
     processed = state.setdefault("processed", {})
 
@@ -168,93 +197,20 @@ def main() -> int:
 
         processed_this_pass = 0
         for i in selected:
-            tid = i.get("identifier", i.get("id"))
-            full = get_issue(tid, args.workspace_id) or i
-
-            # Skip if already processed and unchanged
-            sig = signature(full)
-            prev = processed.get(tid)
-            if prev and not args.reset_state and not ticket_changed(full, prev.get("signature", "")):
-                if not args.quiet:
-                    print(f"  [skip] {tid} already processed @ {prev.get('at','?')}",
-                          file=sys.stderr)
-                continue
-
-            task = pick_task_type(full)
-            pair = router.pair_for(task)
-            prompt = build_prompt(full)
-
-            if args.dry_run:
-                print(json.dumps({
-                    "ticket": tid,
-                    "title": full.get("title"),
-                    "task": task,
-                    "labels": sorted(label_set(full)),
-                    "status": full.get("status"),
-                    "pair": pair,
-                }, indent=2))
-                continue
-
-            if not args.quiet:
-                print(f"\n  [{tid}] {task} via {pair.get('primary')} + {pair.get('secondary')}",
-                      file=sys.stderr)
-
-            specs = [s for s in (pair.get("primary"), pair.get("secondary")) if s]
-            t0 = time.time()
-            replies = router.call_parallel(
-                specs, prompt,
-                max_tokens=args.max_tokens,
-                timeout=args.timeout,
-            )
-            wall = int((time.time() - t0) * 1000)
-
-            ok = [(s, r) for s, r in replies if r.ok]
-            errs = [(s, r) for s, r in replies if not r.ok]
-
-            if not ok:
-                if not args.quiet:
-                    print(f"  [{tid}] all models failed, skipping comment post",
-                          file=sys.stderr)
-                continue
-
-            # Build synthesis comment
-            lines = [
-                f"**AFK multi-model review** (Hermes kanban_loop)",
-                f"Ticket: {tid} ({full.get('title')})",
-                f"Task type: `{task}`",
-                f"Models: {', '.join(s for s, _ in ok)}",
-                f"Wall time: {wall}ms",
-                "",
-            ]
-            for spec, r in ok:
-                lines.append(f"---\n**{spec}** ({r.provider}/{r.model}, "
-                             f"{r.latency_ms}ms, in={r.input_tokens} out={r.output_tokens}):\n")
-                lines.append(r.text)
-                lines.append("")
-            if errs:
-                lines.append("---")
-                lines.append("Errors:")
-                for spec, r in errs:
-                    lines.append(f"- {spec}: {r.error}")
-                lines.append("")
-
-            comment = "\n".join(lines)
-            status_code, resp = post_comment(full, comment, args.workspace_id)
-            if 200 <= status_code < 300:
-                if not args.quiet:
-                    print(f"  [{tid}] posted synthesis (HTTP {status_code})",
-                          file=sys.stderr)
-                processed[tid] = {
-                    "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    "signature": sig,
-                    "task": task,
-                    "models": [s for s, _ in ok],
-                    "comment_id": _safe_id(resp),
-                }
+            tid = i.get("identifier") or i.get("id") or "<unknown>"
+            # OPUS-13: wrap each ticket in try/except so one bad ticket
+            # doesn't crash the loop and lose state for everything else.
+            try:
+                _process_one_ticket(
+                    i, tid, args, router, processed,
+                    state, state_path,
+                )
                 processed_this_pass += 1
-            else:
+            except Exception as e:
+                # Don't mark as processed (so we retry next pass); but
+                # don't kill the loop. Log + continue.
                 if not args.quiet:
-                    print(f"  [{tid}] comment post failed: HTTP {status_code}: {resp[:200]}",
+                    print(f"  [{tid}] EXCEPTION: {type(e).__name__}: {e}",
                           file=sys.stderr)
 
         state["last_run"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -268,6 +224,138 @@ def main() -> int:
             return 0
 
         time.sleep(args.sleep)
+
+
+def _process_one_ticket(issue_summary, tid, args, router, processed, state, state_path):
+    """Process a single ticket: skip-if-processed, dispatch, post comment.
+
+    Extracted to enable OPUS-13 exception isolation per ticket.
+    """
+    full = get_issue(tid, args.workspace_id) or issue_summary
+
+    # OPUS-14: back off retries for tickets that have failed recently.
+    # Check the per-state-file failures JSON; skip if last attempt was
+    # within the cooldown window. Exponential: 1m, 5m, 25m, 2h, 12h.
+    failure_path = state_path.with_suffix(".failures.json")
+    failures = {}
+    if failure_path.exists():
+        try:
+            failures = json.loads(failure_path.read_text())
+        except Exception:
+            pass
+    fail_info = failures.get(tid)
+    if fail_info and not args.reset_state_run:
+        cooldown_min = _backoff_minutes(fail_info.get("count", 1))
+        last_attempt = fail_info.get("last_attempt")
+        if last_attempt:
+            try:
+                last_t = time.mktime(time.strptime(last_attempt, "%Y-%m-%dT%H:%M:%SZ"))
+                age_min = (time.time() - last_t) / 60
+                if age_min < cooldown_min:
+                    if not args.quiet:
+                        print(f"  [skip-fail] {tid} failed {fail_info['count']}x, "
+                              f"cooldown {cooldown_min}m, only {age_min:.1f}m ago",
+                              file=sys.stderr)
+                    return
+            except Exception:
+                pass
+
+    # Skip if already processed and unchanged
+    sig = signature(full)
+    prev = processed.get(tid)
+    if prev and not args.reset_state_run and not ticket_changed(full, prev.get("signature", "")):
+        if not args.quiet:
+            print(f"  [skip] {tid} already processed @ {prev.get('at','?')}",
+                  file=sys.stderr)
+        return
+
+    task = pick_task_type(full)
+    pair = router.pair_for(task)
+    prompt = build_prompt(full)
+
+    if args.dry_run:
+        print(json.dumps({
+            "ticket": tid,
+            "title": full.get("title"),
+            "task_type": task,
+            "labels": sorted(label_set(full)),
+            "status": full.get("status"),
+            "pair": pair,
+        }, indent=2))
+        return
+
+    if not args.quiet:
+        print(f"\n  [{tid}] {task} via {pair.get('primary')} + {pair.get('secondary')}",
+              file=sys.stderr)
+
+    specs = [s for s in (pair.get("primary"), pair.get("secondary")) if s]
+    t0 = time.time()
+    replies = router.call_parallel(
+        specs, prompt,
+        max_tokens=args.max_tokens,
+        timeout=args.timeout,
+    )
+    wall = int((time.time() - t0) * 1000)
+
+    ok = [(s, r) for s, r in replies if r.ok]
+    errs = [(s, r) for s, r in replies if not r.ok]
+
+    if not ok:
+        # OPUS-14: don't mark as processed; record failure so we can
+        # back off. The retry counter is stored in a sidecar failures
+        # file, not the main state file (so failure noise doesn't dirty
+        # the "successful processed" set).
+        info = failures.get(tid, {"count": 0, "last_attempt": None, "last_error": None})
+        info["count"] = info.get("count", 0) + 1
+        info["last_attempt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        info["last_error"] = errs[0][1].error if errs else "all models failed"
+        failures[tid] = info
+        failure_path.write_text(json.dumps(failures, indent=2, sort_keys=True))
+        if not args.quiet:
+            cooldown = _backoff_minutes(info["count"])
+            print(f"  [{tid}] all models failed (attempt #{info['count']}), "
+                  f"skipping comment post; cooldown {cooldown}m",
+                  file=sys.stderr)
+        return
+
+    # Build synthesis comment
+    lines = [
+        f"**AFK multi-model review** (Hermes kanban_loop)",
+        f"Ticket: {tid} ({full.get('title')})",
+        f"Task type: `{task}`",
+        f"Models: {', '.join(s for s, _ in ok)}",
+        f"Wall time: {wall}ms",
+        "",
+    ]
+    for spec, r in ok:
+        lines.append(f"---\n**{spec}** ({r.provider}/{r.model}, "
+                     f"{r.latency_ms}ms, in={r.input_tokens} out={r.output_tokens}):\n")
+        lines.append(r.text)
+        lines.append("")
+    if errs:
+        lines.append("---")
+        lines.append("Errors:")
+        for spec, r in errs:
+            lines.append(f"- {spec}: {r.error}")
+        lines.append("")
+
+    comment = "\n".join(lines)
+    status_code, resp = post_comment(full, comment, args.workspace_id)
+    if 200 <= status_code < 300:
+        if not args.quiet:
+            print(f"  [{tid}] posted synthesis (HTTP {status_code})",
+                  file=sys.stderr)
+        processed[tid] = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "signature": sig,
+            "task": task,
+            "models": [s for s, _ in ok],
+            "comment_id": _safe_id(resp),
+        }
+    else:
+        if not args.quiet:
+            print(f"  [{tid}] comment post failed: HTTP {status_code}: {resp[:200]}",
+                  file=sys.stderr)
 
 
 if __name__ == "__main__":
