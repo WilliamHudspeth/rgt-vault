@@ -40,10 +40,12 @@ def check_milestone(milestone_short, workspace_id=WORKSPACE_ID):
     if not proj:
         return [("milestone_lookup", False, f"Milestone '{milestone_short}' not found")]
 
-    # Pull all tickets in this milestone
-    issues = list_issues(workspace_id, limit=300)
-    full = [get_issue(i["identifier"], workspace_id) for i in issues]
-    full = [t for t in full if t and t.get("project_id") == proj["id"]]
+    # Pull all tickets in this milestone. Use a generous limit so a
+    # ticket ranked >200 isn't silently dropped (this was a real bug
+    # where get_issue only searched the first 200 of the response, so
+    # release_gate false-PASSed when a blocker sorted after #200).
+    issues = list_issues(workspace_id, limit=1000)
+    full = [i for i in issues if i.get("project_id") == proj["id"]]
 
     # Gate 1: No blockers
     blockers = [t for t in full if is_active(t) and "pri:blocker" in label_set(t)]
@@ -94,7 +96,10 @@ def check_milestone(milestone_short, workspace_id=WORKSPACE_ID):
 
     # Gate 5: Changelog updated — manual placeholder
     # (could check git log for [Unreleased] entries, but that's heuristic)
-    gates.append(("changelog_updated", True, "manual check required (no programmatic verification)"))
+    # OPUS-FIX: was hardcoded `True`, so the gate always reported PASS
+    # even when the changelog had never been updated. Now it reports
+    # SKIPPED so a human must explicitly override.
+    gates.append(("changelog_updated", "skipped", "manual check required (no programmatic verification)"))
 
     # Gate 6: No open blocker issues (sev:blocker OR pri:blocker, per release-security-gates.md)
     blockers = [t for t in full if is_active(t) and (
@@ -119,18 +124,18 @@ def check_milestone(milestone_short, workspace_id=WORKSPACE_ID):
 
     # Gate 8: Threat model current — manual placeholder
     # Could be automated by checking the file's mtime vs last review date
-    gates.append(("threat_model_current", True, "manual check required (no programmatic verification)"))
+    gates.append(("threat_model_current", "skipped", "manual check required (no programmatic verification)"))
 
     # Gate 9: Dependency audit — manual placeholder
     # Could be automated by running pip-audit on requirements*.txt
-    gates.append(("dependency_audit", True, "manual check required (run pip-audit)"))
+    gates.append(("dependency_audit", "skipped", "manual check required (run pip-audit)"))
 
     # Gate 10: Secret scan — manual placeholder
     # Could be automated by running gitleaks/trufflehog
-    gates.append(("secret_scan", True, "manual check required (run gitleaks)"))
+    gates.append(("secret_scan", "skipped", "manual check required (run gitleaks)"))
 
     # Gate 11: SBOM generated — manual placeholder
-    gates.append(("sbom_generated", True, "manual check required (run scripts/build_sbom.py)"))
+    gates.append(("sbom_generated", "skipped", "manual check required (run scripts/build_sbom.py)"))
 
     return gates
 
@@ -161,13 +166,22 @@ def main():
 
     overall_pass = True
     for ms, gates in all_results.items():
-        all_pass = all(g[1] for g in gates)
+        # A milestone passes only if every gate is True. "skipped" gates
+        # fail the milestone by default — the human must explicitly
+        # decide to override a skipped gate (out of scope for the
+        # automated check, but at least the gate doesn't false-PASS).
+        all_pass = all(g[1] is True for g in gates)
         if not all_pass:
             overall_pass = False
         verdict = "PASS" if all_pass else "FAIL"
         print(f"\n{ms}: {verdict}")
         for name, passed, reason in gates:
-            mark = "✓" if passed else "✗"
+            if passed is True:
+                mark = "✓"
+            elif passed == "skipped":
+                mark = "?"
+            else:
+                mark = "✗"
             print(f"  [{mark}] {name}: {reason}")
 
     print()

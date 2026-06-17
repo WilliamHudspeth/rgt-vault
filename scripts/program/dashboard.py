@@ -38,12 +38,15 @@ from _common import (
 
 
 def compute_dashboard(workspace_id=WORKSPACE_ID):
-    issues = list_issues(workspace_id, limit=300)
-    full_issues = []
-    for i in issues:
-        full = get_issue(i["identifier"], workspace_id)
-        if full:
-            full_issues.append(full)
+    issues = list_issues(workspace_id, limit=1000)
+    # The list endpoint already returns everything the dashboard
+    # computes (status, project_id, labels, identifier, priority, etc.).
+    # The old code called get_issue() per ticket, which (a) re-fetched
+    # 200 issues inside get_issue on every iteration (O(N^2) round-trips
+    # against the controller) and (b) silently dropped any ticket
+    # ranked >200 in the inner list because get_issue's limit defaulted
+    # to 200. Use the list response directly.
+    full_issues = [i for i in issues if i.get("status") or i.get("labels")]
 
     now = datetime.now(timezone.utc)
 

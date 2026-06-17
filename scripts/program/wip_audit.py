@@ -26,7 +26,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _common import list_issues, get_issue, label_set, is_active, effort_size
+from _common import list_issues, get_issue, label_set, is_active, effort_size, WORKSPACE_ID
 
 
 def member_lookup():
@@ -39,16 +39,14 @@ def member_lookup():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--json", help="Write JSON report to path")
-    parser.add_argument("--workspace-id", default="8a622480-5997-4491-9ff5-17e4a602aab5")
+    parser.add_argument("--workspace-id", default=WORKSPACE_ID)
     args = parser.parse_args()
 
-    issues = list_issues(args.workspace_id, limit=300)
-    # Hydrate with full detail
-    full_issues = []
-    for i in issues:
-        full = get_issue(i["identifier"], args.workspace_id)
-        if full:
-            full_issues.append(full)
+    issues = list_issues(args.workspace_id, limit=1000)
+    # The list endpoint already returns everything wip_audit needs
+    # (status, project_id, labels, identifier, priority, assignee).
+    # See dashboard.py for the O(N^2) + 200-truncation rationale.
+    full_issues = [i for i in issues if i.get("status") or i.get("labels")]
 
     now = datetime.now(timezone.utc)
 

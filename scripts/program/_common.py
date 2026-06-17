@@ -71,8 +71,19 @@ def list_issues(workspace_id=WORKSPACE_ID, limit=200):
 
 
 def get_issue(tid, workspace_id=WORKSPACE_ID):
-    """Fetch full ticket detail by identifier (RGT-N) or UUID."""
-    issues = list_issues(workspace_id)
+    """Fetch full ticket detail by identifier (RGT-N) or UUID.
+
+    Resolves identifier -> uuid with a single list call, then hits the
+    direct /api/issues/{uuid} endpoint.
+
+    Note: the *list* call still has a server-side limit, so if you have
+    more than `limit` (default 200) issues in the workspace, an
+    identifier that sorts after the first 200 will return None. This
+    is a server-side pagination concern; pass a higher `limit` if
+    you need to resolve old tickets. Callers like release_gate and
+    dashboard should pass a generous limit.
+    """
+    issues = list_issues(workspace_id, limit=1000)
     for i in issues:
         if i.get("identifier") == tid or i.get("id") == tid:
             tid_uuid = i["id"]
