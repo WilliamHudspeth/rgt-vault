@@ -28,24 +28,25 @@ chains:
     - mistral
     - cohere
 
-  # Architecture / design critique. Strongest reasoning available.
+  # Architecture / design critique. Gemini primary (free OAuth-personal).
   design-review:
     - gemini-cli
     - claude-cli
 
-  # Security / threat-model / crypto. Highest stakes.
+  # Security / threat-model / crypto. Highest stakes -> Claude primary.
   security-review:
     - claude-cli
     - gemini-cli
     - groq
 
-  # Yes/no, classification, short diagnosis.
+  # Yes/no, classification, short diagnosis. Small + free.
   fast-qa:
     - ollama:qwen2.5:0.5b
     - groq
     - mistral
+    - gemini-cli
 
-  # Catch-all.
+  # Catch-all. Gemini first (free quota).
   general:
     - gemini-cli
     - groq
@@ -71,7 +72,8 @@ pairs:
     primary: gemini-cli
     secondary: groq
 
-# Single big model for generation / writing tasks.
+# Single big model for generation / writing tasks. Gemini for everything
+# except security (Claude primary there).
 writers:
   code-review: gemini-cli
   design-review: gemini-cli
