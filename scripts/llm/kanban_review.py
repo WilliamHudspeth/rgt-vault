@@ -165,21 +165,28 @@ def main() -> int:
         prompt = build_prompt(full)
 
         if args.dry_run:
+            pair = router.pair_for(task)
             print(json.dumps({
                 "ticket": tid,
                 "title": full.get("title"),
                 "task_type": task,
                 "labels": sorted(label_set(full)),
                 "status": full.get("status"),
+                "pair": pair,
                 "chain": router.chain_for(task),
             }, indent=2))
             print()
             continue
 
-        print(f"[{tid}] {task} -> {router.chain_for(task)}", file=sys.stderr)
+        print(f"[{tid}] {task} review-pair -> {router.pair_for(task)}", file=sys.stderr)
+        pair = router.pair_for(task)
+        specs = [s for s in (pair.get("primary"), pair.get("secondary")) if s]
+        if not specs:
+            specs = router.chain_for(task)
+
         t0 = time.time()
-        reply = router.call(
-            task,
+        replies = router.call_parallel(
+            specs,
             prompt,
             max_tokens=args.max_tokens,
             timeout=args.timeout,
@@ -190,37 +197,56 @@ def main() -> int:
             print(json.dumps({
                 "ticket": tid,
                 "task": task,
-                "ok": reply.ok,
-                "provider": reply.provider,
-                "model": reply.model,
-                "latency_ms": reply.latency_ms,
                 "wall_ms": wall,
-                "input_tokens": reply.input_tokens,
-                "output_tokens": reply.output_tokens,
-                "text": reply.text,
-                "error": reply.error,
+                "replies": [
+                    {
+                        "spec": spec,
+                        "ok": r.ok,
+                        "provider": r.provider,
+                        "model": r.model,
+                        "latency_ms": r.latency_ms,
+                        "input_tokens": r.input_tokens,
+                        "output_tokens": r.output_tokens,
+                        "text": r.text,
+                        "error": r.error,
+                    }
+                    for spec, r in replies
+                ],
             }, indent=2))
             print()
         else:
-            print(f"\n{'='*70}\n{tid} [{task}] via {reply.provider}/{reply.model}\n{'='*70}")
-            if reply.ok:
-                print(reply.text)
-                print(f"\n# {reply.input_tokens} in / {reply.output_tokens} out, "
-                      f"{reply.latency_ms}ms (router), {wall}ms wall",
-                      file=sys.stderr)
-                # Post back as a comment
-                comment_body = (
-                    f"**Automated review via {reply.provider}/{reply.model}** "
-                    f"({reply.latency_ms}ms)\n\n{reply.text}"
-                )
-                status, resp = post_comment(full, comment_body, args.workspace_id)
+            print(f"\n{'=' * 70}\n{tid} [{task}] multi-model review\n{'=' * 70}")
+            ok_count = 0
+            for spec, r in replies:
+                if r.ok:
+                    ok_count += 1
+                    print(f"\n--- {spec} ({r.provider}/{r.model}) "
+                          f"{r.latency_ms}ms  in={r.input_tokens} out={r.output_tokens}")
+                    print(r.text)
+                else:
+                    print(f"\n--- {spec}: ERROR {r.error}")
+            print(f"\n# {ok_count}/{len(replies)} models replied, {wall}ms wall",
+                  file=sys.stderr)
+
+            # Post the synthesis back as a Multica comment
+            ok_replies = [(s, r) for s, r in replies if r.ok]
+            if ok_replies:
+                lines = [
+                    f"**Automated multi-model review ({len(ok_replies)} models)**",
+                    f"Task: {task}  |  Models: {', '.join(s for s, _ in ok_replies)}",
+                    "",
+                ]
+                for spec, r in ok_replies:
+                    lines.append(f"---\n**{spec}** ({r.provider}/{r.model}, {r.latency_ms}ms):\n")
+                    lines.append(r.text)
+                    lines.append("")
+                comment = "\n".join(lines)
+                status, resp = post_comment(full, comment, args.workspace_id)
                 if 200 <= status < 300:
-                    print(f"# posted comment (HTTP {status})", file=sys.stderr)
+                    print(f"# posted synthesis (HTTP {status})", file=sys.stderr)
                 else:
                     print(f"# comment post failed: HTTP {status}: {resp[:200]}",
                           file=sys.stderr)
-            else:
-                print(f"ERROR: {reply.error}", file=sys.stderr)
 
     return 0
 

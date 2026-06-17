@@ -195,5 +195,71 @@ class AvailableChainTests(unittest.TestCase):
         self.assertEqual(names, ["ok1", "ok2"])
 
 
+class ParallelCallTests(unittest.TestCase):
+    def test_returns_one_reply_per_spec(self):
+        a = _FakeProvider(name="a", reply=Reply(text="from-a", provider="a", model="ma"))
+        b = _FakeProvider(name="b", reply=Reply(text="from-b", provider="b", model="mb"))
+        cfg = RouteConfig(chains={})
+        router = Router(cfg)
+        with patch.object(router, "_get", side_effect=lambda s: {"a": a, "b": b}[s]):
+            replies = router.call_parallel(["a", "b"], "hi", max_tokens=10, timeout=30)
+        self.assertEqual(len(replies), 2)
+        self.assertEqual([s for s, _ in replies], ["a", "b"])
+        self.assertEqual([r.text for _, r in replies], ["from-a", "from-b"])
+
+    def test_continues_on_failure(self):
+        bad = _FakeProvider(name="bad", reply=Reply(text="", provider="bad", model="mb", error="oops"))
+        good = _FakeProvider(name="good", reply=Reply(text="ok", provider="good", model="mg"))
+        cfg = RouteConfig(chains={})
+        router = Router(cfg)
+        with patch.object(router, "_get", side_effect=lambda s: {"bad": bad, "good": good}[s]):
+            replies = router.call_parallel(["bad", "good"], "hi", max_tokens=10, timeout=30)
+        self.assertEqual(replies[0][1].error, "oops")
+        self.assertTrue(replies[1][1].ok)
+
+    def test_empty_specs_returns_empty(self):
+        router = Router(RouteConfig(chains={}))
+        self.assertEqual(router.call_parallel([], "hi"), [])
+
+
+class ReviewPairTests(unittest.TestCase):
+    def test_returns_both_replies_and_agreement(self):
+        agree_a = _FakeProvider(name="a", reply=Reply(text="no issues", provider="a", model="ma"))
+        agree_b = _FakeProvider(name="b", reply=Reply(text="looks good", provider="b", model="mb"))
+        cfg = RouteConfig(
+            pairs={TASK_CODE_REVIEW: {"primary": "a", "secondary": "b"}},
+        )
+        router = Router(cfg)
+        with patch.object(router, "_get", side_effect=lambda s: {"a": agree_a, "b": agree_b}[s]):
+            result = router.review_pair(TASK_CODE_REVIEW, "hi", max_tokens=10, timeout=30)
+        self.assertEqual(result["agreement"], "agree")
+        self.assertEqual(result["primary"][0], "a")
+        self.assertEqual(result["secondary"][0], "b")
+
+    def test_partial_agreement_on_disagreement_marker(self):
+        disagree = _FakeProvider(name="a", reply=Reply(text="However, this is wrong", provider="a", model="ma"))
+        plain = _FakeProvider(name="b", reply=Reply(text="fine", provider="b", model="mb"))
+        cfg = RouteConfig(
+            pairs={TASK_CODE_REVIEW: {"primary": "a", "secondary": "b"}},
+        )
+        router = Router(cfg)
+        with patch.object(router, "_get", side_effect=lambda s: {"a": disagree, "b": plain}[s]):
+            result = router.review_pair(TASK_CODE_REVIEW, "hi", max_tokens=10, timeout=30)
+        self.assertEqual(result["agreement"], "partial")
+
+    def test_falls_back_to_chain_when_no_pair(self):
+        only = _FakeProvider(name="only", reply=Reply(text="ok", provider="only", model="m"))
+        cfg = RouteConfig(
+            chains={TASK_CODE_REVIEW: ["only"]},
+            pairs={},
+        )
+        router = Router(cfg)
+        with patch.object(router, "_get", return_value=only):
+            result = router.review_pair(TASK_CODE_REVIEW, "hi", max_tokens=10, timeout=30)
+        self.assertEqual(result["primary"][0], "only")
+        self.assertIsNone(result["secondary"])
+        self.assertEqual(result["agreement"], "unknown")
+
+
 if __name__ == "__main__":
     unittest.main()

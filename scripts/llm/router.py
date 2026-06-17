@@ -2,10 +2,21 @@
 
 The router picks a chain of providers for each TaskType and tries them in
 order until one succeeds. The chain is configurable via routes.yaml.
+
+Two modes:
+  - call()       — sequential fallback. First success wins.
+  - call_parallel() — fan-out. Calls every provider in parallel,
+                       returns all replies. Used for 2-model cross-check.
+  - review_pair() — convenience wrapper that picks a primary + secondary
+                    provider and returns both replies.
+
+Task types and chains are in routes.yaml under "chains:" (sequential) and
+"pairs:" (2-model review).
 """
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional
@@ -29,12 +40,11 @@ DEFAULT_ROUTES_PATH = Path(__file__).parent / "routes.yaml"
 # Task types
 # ---------------------------------------------------------------------------
 
-# Canonical task types the kanban dispatch uses.
-TASK_CODE_REVIEW = "code-review"          # fast code feedback (small model ok)
-TASK_DESIGN_REVIEW = "design-review"      # deeper architecture/design critique
-TASK_SECURITY_REVIEW = "security-review"  # threat-model / crypto check
-TASK_FAST_QA = "fast-qa"                 # short yes/no or quick diagnosis
-TASK_GENERAL = "general"                 # catch-all
+TASK_CODE_REVIEW = "code-review"
+TASK_DESIGN_REVIEW = "design-review"
+TASK_SECURITY_REVIEW = "security-review"
+TASK_FAST_QA = "fast-qa"
+TASK_GENERAL = "general"
 
 
 # ---------------------------------------------------------------------------
@@ -45,11 +55,10 @@ TASK_GENERAL = "general"                 # catch-all
 class RouteConfig:
     """Parsed routes.yaml."""
 
-    # task_type -> ordered list of provider names to try
-    chains: dict = field(default_factory=dict)
-    # provider name -> kwargs to pass to its constructor
-    provider_args: dict = field(default_factory=dict)
-    # provider name -> env-var override path
+    chains: dict = field(default_factory=dict)            # task -> [spec, ...]
+    pairs: dict = field(default_factory=dict)             # task -> {"primary": spec, "secondary": spec}
+    writers: dict = field(default_factory=dict)           # task -> spec (the big model that writes/answers)
+    provider_args: dict = field(default_factory=dict)     # spec -> kwargs
     env_path: Optional[str] = None
 
     @classmethod
@@ -60,6 +69,8 @@ class RouteConfig:
         data = yaml.safe_load(path.read_text()) or {}
         return cls(
             chains=data.get("chains") or {},
+            pairs=data.get("pairs") or {},
+            writers=data.get("writers") or {},
             provider_args=data.get("providers") or {},
             env_path=data.get("env_path"),
         )
@@ -70,33 +81,48 @@ class RouteConfig:
         return cls(
             chains={
                 TASK_CODE_REVIEW: [
-                    "ollama:qwen2.5-coder:3b",   # local, free, code-tuned
-                    "groq",                       # fast, free tier
-                    "mistral",                    # fast, free tier
-                    "cohere",                     # reliable fallback
-                ],
-                TASK_DESIGN_REVIEW: [
-                    "claude-cli",                 # design critique
-                    "gemini-cli",                 # second opinion
-                ],
-                TASK_SECURITY_REVIEW: [
-                    "claude-cli",                 # deepest reasoning
-                    "gemini-cli",
-                    "groq",                       # sanity check
-                ],
-                TASK_FAST_QA: [
-                    "ollama:qwen2.5:0.5b",        # tiny, fast
-                    "groq",                       # if local fails
-                    "mistral",
-                ],
-                TASK_GENERAL: [
+                    "ollama:qwen2.5-coder:3b",
                     "groq",
                     "mistral",
-                    "ollama:qwen2.5:7b",
-                    "claude-cli",
+                    "cohere",
                 ],
+                TASK_DESIGN_REVIEW: ["gemini-cli", "claude-cli"],
+                TASK_SECURITY_REVIEW: ["gemini-cli", "claude-cli", "groq"],
+                TASK_FAST_QA: ["ollama:qwen2.5:0.5b", "groq", "mistral"],
+                TASK_GENERAL: ["groq", "mistral", "ollama:qwen2.5:7b", "gemini-cli"],
             },
-            provider_args={},
+            # 2-model review pairs. Primary does the heavy thinking, secondary
+            # cross-checks. Hermes synthesizes the final verdict.
+            pairs={
+                TASK_CODE_REVIEW: {
+                    "primary": "gemini-cli",
+                    "secondary": "ollama:qwen2.5-coder:3b",
+                },
+                TASK_DESIGN_REVIEW: {
+                    "primary": "gemini-cli",
+                    "secondary": "claude-cli",
+                },
+                TASK_SECURITY_REVIEW: {
+                    "primary": "claude-cli",
+                    "secondary": "gemini-cli",
+                },
+                TASK_FAST_QA: {
+                    "primary": "groq",
+                    "secondary": "ollama:qwen2.5:0.5b",
+                },
+                TASK_GENERAL: {
+                    "primary": "groq",
+                    "secondary": "mistral",
+                },
+            },
+            # Big models for primary generation (write tasks).
+            writers={
+                TASK_CODE_REVIEW: "gemini-cli",
+                TASK_DESIGN_REVIEW: "gemini-cli",
+                TASK_SECURITY_REVIEW: "claude-cli",
+                TASK_FAST_QA: "groq",
+                TASK_GENERAL: "gemini-cli",
+            },
         )
 
 
@@ -128,11 +154,10 @@ def build_provider(spec: str, args: Optional[dict] = None) -> Provider:
 # ---------------------------------------------------------------------------
 
 class Router:
-    """Routes a task to the first available provider in its chain."""
+    """Routes a task to providers via chain (sequential) or pair (fan-out)."""
 
     def __init__(self, config: Optional[RouteConfig] = None):
         self.config = config or RouteConfig.load()
-        # Provider cache by spec -> instance
         self._cache: dict = {}
 
     def _get(self, spec: str) -> Provider:
@@ -141,8 +166,16 @@ class Router:
             self._cache[spec] = build_provider(spec, args)
         return self._cache[spec]
 
+    # ---- chain accessors --------------------------------------------------
+
     def chain_for(self, task_type: str) -> list:
         return self.config.chains.get(task_type) or self.config.chains.get(TASK_GENERAL, [])
+
+    def pair_for(self, task_type: str) -> dict:
+        return self.config.pairs.get(task_type) or self.config.pairs.get(TASK_GENERAL, {})
+
+    def writer_for(self, task_type: str) -> str:
+        return self.config.writers.get(task_type) or self.config.writers.get(TASK_GENERAL, "groq")
 
     def available_chain(self, task_type: str) -> list:
         """Return the providers in the chain that report available."""
@@ -155,6 +188,8 @@ class Router:
             except Exception:
                 continue
         return out
+
+    # ---- core call modes --------------------------------------------------
 
     def call(
         self,
@@ -202,14 +237,12 @@ class Router:
                 timeout=timeout,
             )
             if reply.ok:
-                # Attach audit trail of skipped providers
                 if attempts:
                     reply.raw = reply.raw or {}
                     reply.raw["_router_skipped"] = attempts
                 return reply
             attempts.append((spec, reply.error or "unknown error"))
 
-        # Nothing worked
         summary = "; ".join(f"{s}: {r}" for s, r in attempts) or "no providers in chain"
         return Reply(
             text="",
@@ -217,3 +250,116 @@ class Router:
             model="<chain-exhausted>",
             error=f"all providers failed: {summary}",
         )
+
+    def call_parallel(
+        self,
+        specs: Iterable[str],
+        prompt: str,
+        *,
+        system: Optional[str] = None,
+        max_tokens: int = 600,
+        temperature: float = 0.2,
+        timeout: int = 120,
+    ) -> list:
+        """Fan out to N providers in parallel; return one Reply per spec.
+
+        Every spec is called (no early exit on success). Used for 2-model
+        cross-check where we want both opinions regardless of agreement.
+        """
+        specs = list(specs)
+        if not specs:
+            return []
+
+        def _one(spec: str) -> Reply:
+            try:
+                provider = self._get(spec)
+            except Exception as e:
+                return Reply(text="", provider=spec, model="?", error=f"build failed: {e}")
+            if not provider.is_available():
+                return Reply(text="", provider=spec, model="?", error="unavailable")
+            return provider.complete(
+                prompt,
+                system=system,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout=timeout,
+            )
+
+        # Use threads (providers are network-bound).
+        with ThreadPoolExecutor(max_workers=max(1, len(specs))) as ex:
+            futures = [ex.submit(_one, s) for s in specs]
+            replies = [f.result() for f in futures]
+
+        # Preserve the original spec order so the caller can match
+        # replies back to providers.
+        return list(zip(specs, replies))
+
+    def review_pair(
+        self,
+        task_type: str,
+        prompt: str,
+        *,
+        system: Optional[str] = None,
+        max_tokens: int = 600,
+        temperature: float = 0.2,
+        timeout: int = 120,
+    ) -> dict:
+        """Run a 2-model review (primary + secondary) for a task.
+
+        Returns {"primary": (spec, Reply), "secondary": (spec, Reply),
+                 "agreement": "agree|disagree|partial"}.
+        Agreement is a simple heuristic: both non-empty replies, no
+        obvious contradiction marker. Caller (Hermes) does the real
+        synthesis.
+        """
+        pair = self.pair_for(task_type)
+        if not pair:
+            # No pair configured — fall back to a single call.
+            only = self.chain_for(task_type)[0] if self.chain_for(task_type) else None
+            if not only:
+                return {"primary": (None, Reply(text="", provider="<none>", model="<none>", error="no providers")), "secondary": None, "agreement": "unknown"}
+            reply = self.call(task_type, prompt, system=system, max_tokens=max_tokens, temperature=temperature, timeout=timeout)
+            return {"primary": (only, reply), "secondary": None, "agreement": "unknown"}
+
+        primary_spec = pair.get("primary")
+        secondary_spec = pair.get("secondary")
+        results = self.call_parallel(
+            [s for s in (primary_spec, secondary_spec) if s],
+            prompt,
+            system=system,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout=timeout,
+        )
+        reply_by_spec = dict(results)
+
+        agreement = "unknown"
+        primary_reply = reply_by_spec.get(primary_spec)
+        secondary_reply = reply_by_spec.get(secondary_spec)
+        if primary_reply and secondary_reply and primary_reply.ok and secondary_reply.ok:
+            # Cheap agreement heuristic: do they share any obvious
+            # positive/negative marker? This is a hint, not a verdict.
+            agreement = _quick_agreement(primary_reply.text, secondary_reply.text)
+
+        return {
+            "primary": (primary_spec, primary_reply) if primary_spec else None,
+            "secondary": (secondary_spec, secondary_reply) if secondary_spec else None,
+            "agreement": agreement,
+        }
+
+
+def _quick_agreement(a: str, b: str) -> str:
+    """Heuristic: do these two short responses agree?
+
+    Looks for explicit agreement/disagreement markers. Otherwise 'partial'.
+    """
+    a_low, b_low = a.lower(), b.lower()
+    # Explicit disagreement markers (any one in EITHER reply triggers partial)
+    for marker in ("however", "but ", "disagree", "incorrect", "wrong", "actually"):
+        if marker in a_low or marker in b_low:
+            return "partial"
+    # Explicit agreement markers (need at least one SHARED marker to count as agree)
+    agree_markers = ("agree", "correct", "no issues", "looks good", "no concerns", "fine")
+    if any(m in a_low for m in agree_markers) and any(m in b_low for m in agree_markers):
+        return "agree"
+    return "partial"

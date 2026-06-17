@@ -1,50 +1,83 @@
 # Multi-LLM routing config.
 #
-# Each "task type" maps to an ordered list of provider specs. The router
-# tries them in order until one succeeds. Provider specs:
-#   groq, mistral, cohere           -> REST APIs (need keys in env)
-#   claude-cli, gemini-cli          -> local CLI binaries (OAuth auth)
-#   ollama:<model>                  -> local/remote Ollama daemon
+# Three concepts:
+#   chains:  ordered fallback list. call() picks the first that works.
+#            Used when ONE answer is enough.
+#   pairs:   {primary, secondary} for review_pair() — 2-model cross-check.
+#            Both models are called; Hermes synthesizes the verdict.
+#   writers: single big model for primary generation on a task.
 #
-# Provider-specific args can be passed under "providers:" (e.g. custom
-# base_url for a remote Ollama).
+# Provider specs:
+#   groq, mistral, cohere                -> REST APIs (need keys in env)
+#   claude-cli, gemini-cli               -> local CLI binaries (OAuth)
+#   ollama:<model>                       -> local/remote Ollama daemon
 #
-# Re-run the smoke test after editing:
-#   python3 scripts/llm/cli.py code-review --dry-run
-#   python3 scripts/llm/cli.py code-review --file path/to/code.py
+# Provider-specific args go under "providers:" (e.g. custom base_url).
+#
+# Re-run after editing:
+#   python3 scripts/llm/cli.py show-chains
+#   python3 scripts/llm/cli.py code-review --dry-run --show-chain
 
+# Sequential fallback chains. First available wins.
 chains:
-  # Fast feedback on a code change. Local code-tuned model first (free),
-  # then small hosted models (free tier), then broader fallbacks.
+  # Fast feedback on a code change. Local first (free).
   code-review:
     - ollama:qwen2.5-coder:3b
+    - gemini-cli
     - groq
     - mistral
     - cohere
 
-  # Deeper architecture / design critique. Use the strongest available.
+  # Architecture / design critique. Strongest reasoning available.
   design-review:
-    - claude-cli
     - gemini-cli
+    - claude-cli
 
-  # Security / threat-model / crypto review. High-stakes, use the best.
+  # Security / threat-model / crypto. Highest stakes.
   security-review:
     - claude-cli
     - gemini-cli
     - groq
 
-  # Yes/no, classification, short diagnosis. Cheap and fast.
+  # Yes/no, classification, short diagnosis.
   fast-qa:
     - ollama:qwen2.5:0.5b
     - groq
     - mistral
 
-  # Catch-all. Free tier first.
+  # Catch-all.
   general:
+    - gemini-cli
     - groq
     - mistral
     - ollama:qwen2.5:7b
-    - claude-cli
+
+# 2-model cross-check pairs. review_pair() calls BOTH and returns
+# both replies. Hermes synthesizes the verdict.
+pairs:
+  code-review:
+    primary: gemini-cli           # big model does the actual review
+    secondary: ollama:qwen2.5-coder:3b   # small model cross-checks
+  design-review:
+    primary: gemini-cli
+    secondary: claude-cli         # second opinion from another strong model
+  security-review:
+    primary: claude-cli           # deep reasoning for security
+    secondary: gemini-cli
+  fast-qa:
+    primary: groq
+    secondary: ollama:qwen2.5:0.5b
+  general:
+    primary: gemini-cli
+    secondary: groq
+
+# Single big model for generation / writing tasks.
+writers:
+  code-review: gemini-cli
+  design-review: gemini-cli
+  security-review: claude-cli
+  fast-qa: groq
+  general: gemini-cli
 
 providers:
   # Example: point ollama at a remote daemon (uncomment + edit model name)
