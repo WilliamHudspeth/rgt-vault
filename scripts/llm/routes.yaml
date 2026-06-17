@@ -1,0 +1,53 @@
+# Multi-LLM routing config.
+#
+# Each "task type" maps to an ordered list of provider specs. The router
+# tries them in order until one succeeds. Provider specs:
+#   groq, mistral, cohere           -> REST APIs (need keys in env)
+#   claude-cli, gemini-cli          -> local CLI binaries (OAuth auth)
+#   ollama:<model>                  -> local/remote Ollama daemon
+#
+# Provider-specific args can be passed under "providers:" (e.g. custom
+# base_url for a remote Ollama).
+#
+# Re-run the smoke test after editing:
+#   python3 scripts/llm/cli.py code-review --dry-run
+#   python3 scripts/llm/cli.py code-review --file path/to/code.py
+
+chains:
+  # Fast feedback on a code change. Local code-tuned model first (free),
+  # then small hosted models (free tier), then broader fallbacks.
+  code-review:
+    - ollama:qwen2.5-coder:3b
+    - groq
+    - mistral
+    - cohere
+
+  # Deeper architecture / design critique. Use the strongest available.
+  design-review:
+    - claude-cli
+    - gemini-cli
+
+  # Security / threat-model / crypto review. High-stakes, use the best.
+  security-review:
+    - claude-cli
+    - gemini-cli
+    - groq
+
+  # Yes/no, classification, short diagnosis. Cheap and fast.
+  fast-qa:
+    - ollama:qwen2.5:0.5b
+    - groq
+    - mistral
+
+  # Catch-all. Free tier first.
+  general:
+    - groq
+    - mistral
+    - ollama:qwen2.5:7b
+    - claude-cli
+
+providers:
+  # Example: point ollama at a remote daemon (uncomment + edit model name)
+  # ollama:qwen2.5:7b:
+  #   base_url: http://10.10.88.83:11434
+  #   name: hanjo-qwen
