@@ -92,27 +92,32 @@ class ClaudeCLIProvider(Provider):
 
         t0 = time.time()
         # OPUS-10: curated env (no API keys for other providers).
-        # OPUS-8: start_new_session=True so we can killpg on timeout.
+        # OPUS-8 (FIXED): use Popen + start_new_session=True so we can
+        # actually killpg on timeout. The old code used subprocess.run,
+        # which doesn't expose a handle, so _kill_pg() could never run
+        # and grandchildren (Node helpers under claude) leaked in a new
+        # session. We use proc.communicate(timeout=) to enforce the
+        # deadline without subprocess.run's blocked read.
+        proc = subprocess.Popen(
+            ["claude", "-p", "--model", self.model],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=_subprocess_env(),
+            start_new_session=True,
+        )
         try:
-            proc = subprocess.run(
-                ["claude", "-p", "--model", self.model],
-                input=full,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=_subprocess_env(),
-                start_new_session=True,
-            )
+            stdout, stderr = proc.communicate(input=full, timeout=timeout)
         except subprocess.TimeoutExpired:
             # OPUS-8: kill the whole process group to reap grandchildren.
-            # proc may not exist if the subprocess never even spawned
-            # (e.g. start_new_session=True fork failed); guard with a
-            # local reference.
             latency = int((time.time() - t0) * 1000)
             err = f"timeout after {timeout}s (process group killed)"
+            _kill_pg(proc)
+            # Drain pipes so the child doesn't block on a full pipe buffer.
             try:
-                _kill_pg(proc)  # type: ignore[name-defined]
-            except (NameError, UnboundLocalError):
+                proc.communicate(timeout=1)
+            except Exception:
                 pass
             usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=err)
             return Reply(
@@ -125,6 +130,10 @@ class ClaudeCLIProvider(Provider):
         except Exception as e:
             latency = int((time.time() - t0) * 1000)
             err = f"{type(e).__name__}: {e}"
+            try:
+                _kill_pg(proc)
+            except Exception:
+                pass
             usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=err)
             return Reply(
                 text="",
@@ -135,8 +144,10 @@ class ClaudeCLIProvider(Provider):
             )
 
         latency = int((time.time() - t0) * 1000)
-        # OPUS-11: scrub stderr before embedding in error/log.
-        scrubbed_stderr = _scrub(proc.stderr.strip()[:300])
+        # OPUS-11 (FIXED): scrub BEFORE truncating. The old order
+        # truncated stderr to 300 chars first, so a secret straddling
+        # the cut could leave an unmatched partial token in the output.
+        scrubbed_stderr = _scrub(stderr or "")[:300]
         if proc.returncode != 0:
             err = f"claude exit {proc.returncode}: {scrubbed_stderr}"
             usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=err)
@@ -148,7 +159,7 @@ class ClaudeCLIProvider(Provider):
                 error=err,
             )
         # OPUS-12: empty stdout with exit 0 is not a real success.
-        if not proc.stdout.strip():
+        if not (stdout or "").strip():
             err = "claude exit 0 with empty stdout (treated as failure)"
             usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=err)
             return Reply(
@@ -161,7 +172,7 @@ class ClaudeCLIProvider(Provider):
         # claude -p returns just the text on stdout
         usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=True)
         return Reply(
-            text=proc.stdout.strip(),
+            text=(stdout or "").strip(),
             provider=self.name,
             model=self.model,
             latency_ms=latency,
@@ -177,6 +188,10 @@ class GeminiCLIProvider(Provider):
 
     name = "gemini-cli"
     model = "default"  # CLI picks its own default
+
+    def __init__(self, model: Optional[str] = None):
+        if model:
+            self.model = model
 
     def is_available(self) -> bool:
         return shutil.which("gemini") is not None
@@ -197,32 +212,40 @@ class GeminiCLIProvider(Provider):
 
         t0 = time.time()
         # OPUS-10: curated env (no API keys for other providers).
-        # OPUS-8: start_new_session=True so we can killpg on timeout and
-        # reap the Node child + any forked helpers.
-        # NOTE: tried adding `--` before `full` for OPUS-21, but Gemini
-        # CLI rejects the `--` separator (prints help instead). The
-        # underlying risk (prompt starting with `-` parsed as a flag)
-        # is mitigated by `full = f"{system}\n\n{prompt}"` — the system
-        # prompt prefix prevents a hostile user prompt from ever being
-        # the first token. If system is empty and the prompt starts with
-        # `-`, we pre-pend a space so it can't be parsed as a flag.
+        # OPUS-8 (FIXED): use Popen + start_new_session=True so killpg
+        # actually runs on timeout. subprocess.run never exposed the
+        # handle. See ClaudeCLIProvider.complete for the full rationale.
+        # OPUS-21: tried `--` separator; Gemini CLI rejects it. We
+        # instead pre-pend a space if `full` starts with `-` so the
+        # prompt can never be parsed as a flag.
         safe_full = full if not full.startswith("-") else " " + full
+        # Build the argv. Pass --model when a non-default model was
+        # configured. The old code silently dropped routes.yaml's
+        # provider_args.model for Gemini and let the CLI's own default
+        # win every time.
+        argv = ["gemini", "-p", safe_full]
+        if self.model and self.model != "default":
+            argv += ["--model", self.model]
+
+        proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=_subprocess_env(),
+            start_new_session=True,
+        )
         try:
-            proc = subprocess.run(
-                ["gemini", "-p", safe_full],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=_subprocess_env(),
-                start_new_session=True,
-            )
+            stdout, stderr = proc.communicate(input=None, timeout=timeout)
         except subprocess.TimeoutExpired:
             # OPUS-8: kill the whole process group to reap grandchildren.
             latency = int((time.time() - t0) * 1000)
             err = f"timeout after {timeout}s (process group killed)"
+            _kill_pg(proc)
             try:
-                _kill_pg(proc)  # type: ignore[name-defined]
-            except (NameError, UnboundLocalError):
+                proc.communicate(timeout=1)
+            except Exception:
                 pass
             usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=err)
             return Reply(
@@ -235,6 +258,10 @@ class GeminiCLIProvider(Provider):
         except Exception as e:
             latency = int((time.time() - t0) * 1000)
             err = f"{type(e).__name__}: {e}"
+            try:
+                _kill_pg(proc)
+            except Exception:
+                pass
             usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=err)
             return Reply(
                 text="",
@@ -245,8 +272,8 @@ class GeminiCLIProvider(Provider):
             )
 
         latency = int((time.time() - t0) * 1000)
-        # OPUS-11: scrub stderr before embedding.
-        scrubbed_stderr = _scrub(proc.stderr.strip()[:300])
+        # OPUS-11 (FIXED): scrub BEFORE truncating.
+        scrubbed_stderr = _scrub(stderr or "")[:300]
         if proc.returncode != 0:
             err = f"gemini exit {proc.returncode}: {scrubbed_stderr}"
             usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=err)
@@ -258,7 +285,7 @@ class GeminiCLIProvider(Provider):
                 error=err,
             )
         # OPUS-12: empty stdout with exit 0 is not a real success.
-        if not proc.stdout.strip():
+        if not (stdout or "").strip():
             err = "gemini exit 0 with empty stdout (treated as failure)"
             usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=err)
             return Reply(
@@ -274,7 +301,7 @@ class GeminiCLIProvider(Provider):
         # with "Warning:". Now we just use stdout as-is.
         usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=True)
         return Reply(
-            text=proc.stdout.strip(),
+            text=(stdout or "").strip(),
             provider=self.name,
             model=self.model,
             latency_ms=latency,
