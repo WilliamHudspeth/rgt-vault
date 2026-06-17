@@ -79,6 +79,42 @@ class ChainConfigTests(unittest.TestCase):
             loaded = RouteConfig.load(p)
             self.assertEqual(loaded.chains, d.chains)
 
+    def test_empty_yaml_file_falls_back_to_default(self, capsys=None):
+        """A file that exists but is empty (or has no chains) must NOT
+        return an empty config that makes every call() return 'no
+        providers configured'. It must fall back to the default."""
+        with tempfile_patch() as p:
+            p.write_text("")  # totally empty
+            loaded = RouteConfig.load(p)
+        # The chains dict must be populated.
+        self.assertGreater(len(loaded.chains), 0,
+                           "empty yaml should fall back to default chains")
+        # Specifically, the default code-review chain should be present.
+        from scripts.llm.router import TASK_CODE_REVIEW
+        self.assertIn(TASK_CODE_REVIEW, loaded.chains)
+
+    def test_yaml_with_only_other_keys_falls_back(self):
+        """A yaml that has env_path or providers but no chains: same fallback."""
+        import yaml
+        with tempfile_patch() as p:
+            p.write_text(yaml.safe_dump({"providers": {"groq": {"model": "x"}}}))
+            loaded = RouteConfig.load(p)
+        from scripts.llm.router import TASK_CODE_REVIEW
+        self.assertIn(TASK_CODE_REVIEW, loaded.chains,
+                      "providers-only yaml should still get default chains")
+        # The providers section should be preserved.
+        self.assertEqual(loaded.provider_args, {"groq": {"model": "x"}})
+
+    def test_yaml_with_empty_chains_falls_back(self):
+        """A yaml that has chains: {} (explicitly empty) also falls back."""
+        import yaml
+        with tempfile_patch() as p:
+            p.write_text(yaml.safe_dump({"chains": {}}))
+            loaded = RouteConfig.load(p)
+        from scripts.llm.router import TASK_CODE_REVIEW
+        self.assertIn(TASK_CODE_REVIEW, loaded.chains,
+                      "explicit empty chains should fall back")
+
 
 def tempfile_patch():
     """Tiny helper: write to a temp yaml path and return it."""

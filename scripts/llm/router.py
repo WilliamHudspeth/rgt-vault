@@ -68,6 +68,12 @@ class RouteConfig:
 
         If load_env=True (default) AND env_path is set in yaml AND the file
         exists, source it into os.environ before loading chains/pairs.
+
+        If the file exists but contains no chains (e.g. the user created
+        an empty file, or commented out the chains block, or made a typo),
+        fall back to cls.default() rather than silently returning an
+        empty config that makes every call() return "no providers
+        configured".
         """
         path = path or DEFAULT_ROUTES_PATH
         if not path.exists():
@@ -96,8 +102,27 @@ class RouteConfig:
                     import sys as _sys
                     print(f"Warning: failed to load env_path {env_file}: {e}",
                           file=_sys.stderr)
+        chains = data.get("chains") or {}
+        if not chains:
+            # File exists but has no chains. Warn the user and fall back
+            # to the hard-coded default so the router is actually usable.
+            import sys as _sys
+            print(
+                f"Warning: {path} has no 'chains' section; "
+                f"falling back to built-in defaults. Edit the file to add "
+                f"your own chains.",
+                file=_sys.stderr,
+            )
+            fallback = cls.default()
+            return cls(
+                chains=fallback.chains,
+                pairs=data.get("pairs") or fallback.pairs,
+                writers=data.get("writers") or fallback.writers,
+                provider_args=data.get("providers") or {},
+                env_path=env_path,
+            )
         return cls(
-            chains=data.get("chains") or {},
+            chains=chains,
             pairs=data.get("pairs") or {},
             writers=data.get("writers") or {},
             provider_args=data.get("providers") or {},
