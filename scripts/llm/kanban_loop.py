@@ -58,15 +58,14 @@ def save_state(state: dict, path: Path) -> None:
 def ticket_changed(ticket: dict, prev_signature: str) -> bool:
     """Has the ticket changed since we last processed it?
 
-    Signature is a hash of (updated_at, labels, description). If any of
-    those change, we re-process.
+    MUST use the same field set as `signature()` so the comparison is
+    well-defined. See OPUS-16: updated_at is excluded because posting
+    a comment bumps it. Computing the signature with a *different* set
+    of fields than `signature()` means the two JSON strings can never
+    be equal, the function always returns True, and every ticket is
+    re-processed and re-commented on every pass.
     """
-    sig = {
-        "updated_at": ticket.get("updated_at"),
-        "description": ticket.get("description") or "",
-        "labels": sorted(label_set(ticket)),
-    }
-    return json.dumps(sig, sort_keys=True) != prev_signature
+    return signature(ticket) != prev_signature
 
 
 def signature(ticket: dict) -> str:
