@@ -24,8 +24,28 @@ from unittest import mock
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+
+
+def _import_program_module(name):
+    """Import scripts.program.<name> by file path. Works around pytest's
+    import-resolution edge cases for namespace packages without __init__.py."""
+    import importlib.util
+    mod_path = ROOT / "program" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"scripts.program.{name}", mod_path)
+    if spec is None:
+        raise ImportError(f"cannot import scripts.program.{name} from {mod_path}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[f"scripts.program.{name}"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_common = _import_program_module("_common")
+dashboard = _import_program_module("dashboard")
+wip_audit = _import_program_module("wip_audit")
+release_gate = _import_program_module("release_gate")
 
 
 # ----- _common.get_issue: direct endpoint, no truncation -----------------
@@ -33,7 +53,7 @@ sys.path.insert(0, str(ROOT))
 def test_get_issue_resolves_via_list_then_direct(monkeypatch):
     """get_issue must call list_issues(limit=1000) (not 200), then hit
     the direct /api/issues/{uuid} endpoint, not another list call."""
-    from scripts.program import _common
+    _common = sys.modules["scripts.program._common"]
 
     calls = []
 
@@ -70,7 +90,7 @@ def test_get_issue_resolves_via_list_then_direct(monkeypatch):
 
 
 def test_get_issue_unknown_returns_none(monkeypatch):
-    from scripts.program import _common
+    _common = sys.modules["scripts.program._common"]
 
     monkeypatch.setattr(
         _common, "list_issues",
@@ -83,7 +103,7 @@ def test_get_issue_unknown_returns_none(monkeypatch):
 
 def _load_release_gate():
     spec = importlib.util.spec_from_file_location(
-        "release_gate", ROOT / "release_gate.py"
+        "release_gate", ROOT / "program" / "release_gate.py"
     )
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
@@ -123,10 +143,10 @@ def test_release_gate_uses_list_response_directly(monkeypatch):
     fake_get_issue.assert_not_called()
 
     # The blocker gate must have failed.
-    no_blockers = [g for g in gates if g[0] == "no_blockers"]
-    assert no_blockers, f"no_blockers gate missing from {gates}"
-    assert no_blockers[0][1] is False
-    assert "RGT-1" in no_blockers[0][2]
+    no_blocker_issues = [g for g in gates if g[0] == "no_blocker_issues"]
+    assert no_blocker_issues, f"no_blocker_issues gate missing from {gates}"
+    assert no_blocker_issues[0][1] is False
+    assert "RGT-1" in no_blocker_issues[0][2]
 
     # All "skipped" gates must NOT be True.
     skipped = [g for g in gates if g[1] == "skipped"]
@@ -160,7 +180,7 @@ def test_release_gate_uses_generous_list_limit(monkeypatch):
 
 def test_dashboard_uses_list_response_directly(monkeypatch):
     """dashboard.compute_dashboard must NOT call get_issue per ticket."""
-    from scripts.program import dashboard
+    dashboard = sys.modules["scripts.program.dashboard"]
 
     fake_list_issues = mock.MagicMock(return_value=[
         {"id": "u-1", "identifier": "RGT-1", "project_id": "ms-1",
@@ -178,7 +198,7 @@ def test_dashboard_uses_list_response_directly(monkeypatch):
 
 
 def test_wip_audit_uses_list_response_directly(monkeypatch):
-    from scripts.program import wip_audit
+    wip_audit = sys.modules["scripts.program.wip_audit"]
 
     fake_list_issues = mock.MagicMock(return_value=[
         {

@@ -47,12 +47,19 @@ def check_milestone(milestone_short, workspace_id=WORKSPACE_ID):
     issues = list_issues(workspace_id, limit=1000)
     full = [i for i in issues if i.get("project_id") == proj["id"]]
 
-    # Gate 1: No blockers
-    blockers = [t for t in full if is_active(t) and "pri:blocker" in label_set(t)]
+    # Gate 1: No blocker issues (sev:blocker OR pri:blocker).
+    # This consolidates the old "no_blockers" (pri:blocker only) and
+    # "no_sev_blocker" (sev:blocker OR pri:blocker) gates — they were
+    # duplicates with confusing naming. The unified gate catches both
+    # severity-based and priority-based blocker tickets.
+    blockers = [t for t in full if is_active(t) and (
+        "sev:blocker" in label_set(t) or "pri:blocker" in label_set(t)
+    )]
     if blockers:
-        gates.append(("no_blockers", False, f"{len(blockers)} blocker issue(s): {[t['identifier'] for t in blockers]}"))
+        gates.append(("no_blocker_issues", False,
+                      f"{len(blockers)} blocker issue(s) open: {[t['identifier'] for t in blockers]}"))
     else:
-        gates.append(("no_blockers", True, "0 blocker issues"))
+        gates.append(("no_blocker_issues", True, "0 blocker issues"))
 
     # Gate 2: No critical security
     crit_sec = [t for t in full
@@ -101,17 +108,7 @@ def check_milestone(milestone_short, workspace_id=WORKSPACE_ID):
     # SKIPPED so a human must explicitly override.
     gates.append(("changelog_updated", "skipped", "manual check required (no programmatic verification)"))
 
-    # Gate 6: No open blocker issues (sev:blocker OR pri:blocker, per release-security-gates.md)
-    blockers = [t for t in full if is_active(t) and (
-        "sev:blocker" in label_set(t) or "pri:blocker" in label_set(t)
-    )]
-    if blockers:
-        gates.append(("no_sev_blocker", False,
-                      f"{len(blockers)} sev:blocker issue(s) open: {[t['identifier'] for t in blockers]}"))
-    else:
-        gates.append(("no_sev_blocker", True, "0 sev:blocker issues"))
-
-    # Gate 7: No open critical security (sev:critical AND security:*)
+    # Gate 6: No open critical security (sev:critical AND security:*)
     crit_sec_sev = [t for t in full
                     if is_active(t)
                     and "sev:critical" in label_set(t)

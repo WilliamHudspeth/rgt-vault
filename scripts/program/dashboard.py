@@ -93,9 +93,11 @@ def compute_dashboard(workspace_id=WORKSPACE_ID):
         t for t in review_queue if any(l.startswith("security:") for l in label_set(t))
     ]
 
-    # Lead / cycle time (last 30 days, done)
+    # Lead time (last 30 days, done): created_at -> updated_at for done tickets.
+    # Cycle time is NOT computed here — it requires status-transition timestamps
+    # (when the ticket entered in_progress) which the Multica REST API does not
+    # expose. See ROADMAP.md "Audit log noise reduction" for the data gap.
     lead_times = []
-    cycle_times = []
     review_ages = []
     for t in full_issues:
         try:
@@ -125,9 +127,9 @@ def compute_dashboard(workspace_id=WORKSPACE_ID):
         "open_critical_security": len(open_critical_security),
         "review_queue_size": len(review_queue),
         "security_review_queue_size": len(security_review_queue),
-        "average_review_age_days": round(avg_review_age, 1) if avg_review_age else None,
-        "lead_time_median_days": round(median_lead_time, 1) if median_lead_time else None,
-        "lead_time_mean_days": round(mean_lead_time, 1) if mean_lead_time else None,
+        "average_review_age_days": round(avg_review_age, 1) if avg_review_age is not None else None,
+        "lead_time_median_days": round(median_lead_time, 1) if median_lead_time is not None else None,
+        "lead_time_mean_days": round(mean_lead_time, 1) if mean_lead_time is not None else None,
         "milestone_burndown": dict(by_milestone),
         "open_blockers_detail": [t["identifier"] for t in open_blockers],
         "open_critical_security_detail": [t["identifier"] for t in open_critical_security],
