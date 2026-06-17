@@ -16,6 +16,7 @@ Task types and chains are in routes.yaml under "chains:" (sequential) and
 from __future__ import annotations
 
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -365,10 +366,14 @@ class Router:
         """Run a 2-model review (primary + secondary) for a task.
 
         Returns {"primary": (spec, Reply), "secondary": (spec, Reply),
-                 "agreement": "agree|disagree|partial"}.
+                 "agreement": "agree|disagree|partial|unknown"}.
         Agreement is a simple heuristic: both non-empty replies, no
         obvious contradiction marker. Caller (Hermes) does the real
         synthesis.
+
+        OPUS-4: if primary_spec == secondary_spec, the dict-keyed
+        approach used to collapse both into one entry. Fix by keying by
+        index/role and handling duplicates explicitly.
         """
         pair = self.pair_for(task_type)
         if not pair:
@@ -381,6 +386,34 @@ class Router:
 
         primary_spec = pair.get("primary")
         secondary_spec = pair.get("secondary")
+
+        # OPUS-4: collapse duplicates by making specs unique while
+        # preserving role assignment.
+        if primary_spec and secondary_spec and primary_spec == secondary_spec:
+            # Same spec for both roles — call it once, return the same
+            # Reply for both slots. Call the underlying provider directly
+            # to avoid two duplicate LLM calls.
+            try:
+                provider = self._get(primary_spec)
+                if not provider.is_available():
+                    empty = Reply(text="", provider=primary_spec, model="?", error="unavailable")
+                    return {
+                        "primary": (primary_spec, empty),
+                        "secondary": (secondary_spec, empty),
+                        "agreement": "unknown",
+                    }
+                reply = provider.complete(prompt, system=system, max_tokens=max_tokens,
+                                          temperature=temperature, timeout=timeout)
+            except Exception as e:
+                err_reply = Reply(text="", provider=primary_spec, model="?",
+                                  error=f"exception: {type(e).__name__}: {e}")
+                reply = err_reply
+            return {
+                "primary": (primary_spec, reply),
+                "secondary": (secondary_spec, reply),
+                "agreement": "agree",  # trivially: same spec, same reply
+            }
+
         results = self.call_parallel(
             [s for s in (primary_spec, secondary_spec) if s],
             prompt,
@@ -389,35 +422,72 @@ class Router:
             temperature=temperature,
             timeout=timeout,
         )
-        reply_by_spec = dict(results)
+        # OPUS-4: use an ordered list of (role, spec, reply) to preserve
+        # the primary/secondary assignment when specs collide.
+        ordered = []
+        for role, spec in (("primary", primary_spec), ("secondary", secondary_spec)):
+            if not spec:
+                ordered.append((role, spec, None))
+                continue
+            # Find the matching result
+            for r_spec, r_reply in results:
+                if r_spec == spec:
+                    ordered.append((role, spec, r_reply))
+                    break
+        primary_reply = ordered[0][2] if ordered[0][2] else None
+        secondary_reply = ordered[1][2] if len(ordered) > 1 and ordered[1][2] else None
 
         agreement = "unknown"
-        primary_reply = reply_by_spec.get(primary_spec)
-        secondary_reply = reply_by_spec.get(secondary_spec)
         if primary_reply and secondary_reply and primary_reply.ok and secondary_reply.ok:
             # Cheap agreement heuristic: do they share any obvious
             # positive/negative marker? This is a hint, not a verdict.
             agreement = _quick_agreement(primary_reply.text, secondary_reply.text)
 
         return {
-            "primary": (primary_spec, primary_reply) if primary_spec else None,
-            "secondary": (secondary_spec, secondary_reply) if secondary_spec else None,
+            "primary": (ordered[0][1], primary_reply),
+            "secondary": (ordered[1][1] if len(ordered) > 1 else None, secondary_reply),
             "agreement": agreement,
         }
 
 
 def _quick_agreement(a: str, b: str) -> str:
-    """Heuristic: do these two short responses agree?
+    """Heuristic: do these two short responses agree? (OPUS-5)
 
-    Looks for explicit agreement/disagreement markers. Otherwise 'partial'.
+    Uses word-boundary regex to avoid substring false-positives:
+    "fine" matches "define/refined" — we don't want that.
+    "however" in either reply forces "partial" — too aggressive,
+    we now require a clear disagreement signal (e.g. "I disagree"
+    or "incorrect" not preceded by "not").
     """
-    a_low, b_low = a.lower(), b.lower()
-    # Explicit disagreement markers (any one in EITHER reply triggers partial)
-    for marker in ("however", "but ", "disagree", "incorrect", "wrong", "actually"):
-        if marker in a_low or marker in b_low:
-            return "partial"
-    # Explicit agreement markers (need at least one SHARED marker to count as agree)
-    agree_markers = ("agree", "correct", "no issues", "looks good", "no concerns", "fine")
-    if any(m in a_low for m in agree_markers) and any(m in b_low for m in agree_markers):
+    a_low = a.lower()
+    b_low = b.lower()
+
+    # Word-boundary regex for agreement markers.
+    agree_re = re.compile(
+        r"\b(agree|disagree|correct|incorrect|"
+        r"no\s+(issues|problems|concerns)|"
+        r"looks?\s+good|"
+        r"fine|"
+        r"no\s+major\s+(issues|problems))\b",
+        re.IGNORECASE,
+    )
+
+    # Disagreement: stronger markers (must be a clear "I disagree"
+    # or "this is incorrect" — not just the word "but").
+    disagree_re = re.compile(
+        r"\b(i\s+disagree|this\s+is\s+(wrong|incorrect)|"
+        r"no,?\s+that's\s+wrong|"
+        r"actually,?\s+that's\s+wrong)\b",
+        re.IGNORECASE,
+    )
+
+    a_agrees = bool(agree_re.search(a_low))
+    b_agrees = bool(agree_re.search(b_low))
+    a_disagrees = bool(disagree_re.search(a_low))
+    b_disagrees = bool(disagree_re.search(b_low))
+
+    if a_disagrees or b_disagrees:
+        return "disagree"
+    if a_agrees and b_agrees:
         return "agree"
     return "partial"

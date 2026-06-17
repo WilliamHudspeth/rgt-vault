@@ -237,6 +237,8 @@ class ReviewPairTests(unittest.TestCase):
         self.assertEqual(result["secondary"][0], "b")
 
     def test_partial_agreement_on_disagreement_marker(self):
+        # OPUS-5: word-boundary regex now catches "this is wrong" as a
+        # clear disagreement signal and returns "disagree" (not "partial").
         disagree = _FakeProvider(name="a", reply=Reply(text="However, this is wrong", provider="a", model="ma"))
         plain = _FakeProvider(name="b", reply=Reply(text="fine", provider="b", model="mb"))
         cfg = RouteConfig(
@@ -245,7 +247,53 @@ class ReviewPairTests(unittest.TestCase):
         router = Router(cfg)
         with patch.object(router, "_get", side_effect=lambda s: {"a": disagree, "b": plain}[s]):
             result = router.review_pair(TASK_CODE_REVIEW, "hi", max_tokens=10, timeout=30)
+        self.assertEqual(result["agreement"], "disagree")
+
+    def test_word_boundary_avoid_substring_match(self):
+        # OPUS-5: substring matching used to wrongly match "fine" inside
+        # "define/refined" or similar. Word-boundary regex now avoids that.
+        # "I am fine" and "I am fine" (literal duplicate) — should agree.
+        a = _FakeProvider(name="a", reply=Reply(text="I am fine with this", provider="a", model="ma"))
+        b = _FakeProvider(name="b", reply=Reply(text="this is fine for me", provider="b", model="mb"))
+        cfg = RouteConfig(
+            pairs={TASK_CODE_REVIEW: {"primary": "a", "secondary": "b"}},
+        )
+        router = Router(cfg)
+        with patch.object(router, "_get", side_effect=lambda s: {"a": a, "b": b}[s]):
+            result = router.review_pair(TASK_CODE_REVIEW, "hi", max_tokens=10, timeout=30)
+        # Both contain the word "fine" as a full word (word-boundary match).
+        # Old substring heuristic would also match these; this is the
+        # trivial case. The interesting bug was the false-positive on
+        # "fine" inside "refined"; tested separately below.
+        self.assertEqual(result["agreement"], "agree")
+
+    def test_word_boundary_rejects_substring(self):
+        # OPUS-5: "fine" inside "refined" / "define" must NOT trigger agree.
+        # Only one reply contains the standalone word "fine" — so no
+        # shared agreement marker -> partial (or disagree if disagreement
+        # is signaled, but neither is).
+        a = _FakeProvider(name="a", reply=Reply(text="the design is refined", provider="a", model="ma"))
+        b = _FakeProvider(name="b", reply=Reply(text="this is fine", provider="b", model="mb"))
+        cfg = RouteConfig(
+            pairs={TASK_CODE_REVIEW: {"primary": "a", "secondary": "b"}},
+        )
+        router = Router(cfg)
+        with patch.object(router, "_get", side_effect=lambda s: {"a": a, "b": b}[s]):
+            result = router.review_pair(TASK_CODE_REVIEW, "hi", max_tokens=10, timeout=30)
+        # "fine" only in b. No shared marker. Result: partial.
         self.assertEqual(result["agreement"], "partial")
+
+    def test_word_boundary_agree_marker(self):
+        # Both replies use full-word "agree" markers.
+        a = _FakeProvider(name="a", reply=Reply(text="I agree, looks good", provider="a", model="ma"))
+        b = _FakeProvider(name="b", reply=Reply(text="no issues found", provider="b", model="mb"))
+        cfg = RouteConfig(
+            pairs={TASK_CODE_REVIEW: {"primary": "a", "secondary": "b"}},
+        )
+        router = Router(cfg)
+        with patch.object(router, "_get", side_effect=lambda s: {"a": a, "b": b}[s]):
+            result = router.review_pair(TASK_CODE_REVIEW, "hi", max_tokens=10, timeout=30)
+        self.assertEqual(result["agreement"], "agree")
 
     def test_falls_back_to_chain_when_no_pair(self):
         only = _FakeProvider(name="only", reply=Reply(text="ok", provider="only", model="m"))
