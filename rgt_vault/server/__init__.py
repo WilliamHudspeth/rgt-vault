@@ -21,7 +21,6 @@ Design constraints, in order of importance:
 """
 
 from .actions import ActionRegistry, register_builtin_actions
-from .app import build_app
 from .auth import TokenStore, generate_token, load_or_create_token
 
 __all__ = [
@@ -32,3 +31,13 @@ __all__ = [
     "load_or_create_token",
     "register_builtin_actions",
 ]
+
+
+def __getattr__(name: str):
+    # build_app pulls in FastAPI. Import it lazily so that importing
+    # rgt_vault.server (or .actions / .auth) does NOT require the optional
+    # [server] extra — the package's stated design contract above.
+    if name == "build_app":
+        from .app import build_app
+        return build_app
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
