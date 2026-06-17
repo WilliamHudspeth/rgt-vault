@@ -14,10 +14,27 @@ import keyring
 from cryptography.fernet import Fernet, InvalidToken
 
 from rgt_vault.auth import ABACPolicyEngine
+from rgt_vault.capabilities import (
+    CapabilityContext,
+    CapabilityRegistry,
+    register_builtin_capabilities,
+)
 from rgt_vault.crypto import decrypt, encrypt, zeroize_bytearray
-from rgt_vault.exceptions import PolicyDeniedError, SecretNotFoundError, ValidationError
+from rgt_vault.exceptions import (
+    CapabilityVersionError,
+    PolicyDeniedError,
+    SecretNotFoundError,
+    ValidationError,
+)
+from rgt_vault.hook import AuditHook, HookDecision, HookRequest, OffHook
 from rgt_vault.keychain import HardenedDEKManager, MasterSecret, run_crypto_selftest
 from rgt_vault.storage.sqlite import StorageBackend
+from rgt_vault.token import (
+    CapabilityV2Token,
+    TokenBindingError,
+    TokenError,
+    TokenVerifier,
+)
 
 
 class RateLimiter:
@@ -40,17 +57,67 @@ class RateLimiter:
             return True
 
 class VaultManager:
-    def __init__(self, db_path: Optional[str] = None, master_provider=None, policy_yaml: str = "", rate_limit: int = 100, rate_window: int = 3600):
+    def __init__(
+        self,
+        db_path: Optional[str] = None,
+        master_provider=None,
+        policy_yaml: str = "",
+        rate_limit: int = 100,
+        rate_window: int = 3600,
+        hook: Optional[AuditHook] = None,
+        capability_registry: Optional[CapabilityRegistry] = None,
+        token_verifier: Optional[TokenVerifier] = None,
+    ):
         # 1. Run cryptographic self-tests (Fail closed)
         run_crypto_selftest()
-        
+
         # 2. Init Storage
         actual_db_path = db_path or os.path.expanduser("~/.secure-vault/vault.db")
         self.storage = StorageBackend(actual_db_path)
-        
+
         self.auth = ABACPolicyEngine(policy_yaml)
         self.policy_hash = hashlib.sha256(policy_yaml.encode("utf-8")).hexdigest()[:16] if policy_yaml else ""
         self.rate_limiter = RateLimiter(max_requests=rate_limit, window_seconds=rate_window)
+
+        # Audit hook layer. Default is OffHook -- the vault behaves
+        # exactly as it did before this layer existed. Operators
+        # opt into a stricter hook at deploy time via the CLI flag
+        # or programmatic construction.
+        self.hook: AuditHook = hook if hook is not None else OffHook()
+
+        # v0.3 capability path. The registry holds every callable
+        # capability the vault can execute; the verifier is the trust
+        # anchor for v2 capability tokens. Both are pluggable so tests
+        # can pass fakes; in production the default verifier is the
+        # HMAC one, which requires a shared secret to be set via the
+        # ``RGT_VAULT_HARNESS_KEY`` env var. If no verifier is
+        # configured, ``execute_capability`` will refuse to run --
+        # capability execution MUST be authorized, and "no verifier"
+        # is a hard fail-closed state.
+        self.capability_registry: CapabilityRegistry = (
+            capability_registry if capability_registry is not None else CapabilityRegistry()
+        )
+        if not list(self.capability_registry.list()):
+            # Bootstrap the built-in capabilities on a fresh registry
+            # so ``execute_capability("secrets.echo", ...)`` works
+            # out of the box for operators wiring the system together.
+            register_builtin_capabilities(self.capability_registry)
+        self.token_verifier: Optional[TokenVerifier] = token_verifier
+
+        # The action registry backs the ``secrets.use`` bridge
+        # capability, which leases a stored secret and runs a v0.2
+        # action against it. The vault owns the registry so the
+        # bridge works in-process; the HTTP server's
+        # ``build_app`` replaces it with its own (larger) registry
+        # when the server is constructed.
+        from rgt_vault.server.actions import (
+            ActionRegistry as _AR,
+        )
+        from rgt_vault.server.actions import (
+            register_builtin_actions as _reg_actions,
+        )
+        self.action_registry: _AR = _AR()
+        _reg_actions(self.action_registry)
 
         # 3. Load Metadata & Keychain
         self.vault_id = self.storage.get_vault_id()
@@ -152,18 +219,448 @@ class VaultManager:
         if len(value) > max_len:
             raise ValidationError(f"'{param_name}' exceeds the maximum allowed length of {max_len} characters.")
 
+    def _hook_consult(
+        self,
+        operation: str,
+        agent: str,
+        namespace: str,
+        purpose: str = "",
+        secret_name: Optional[str] = None,
+        capability_token: Optional[str] = None,
+    ) -> None:
+        """Consult the audit hook and raise on deny. Records the
+        hook decision in the audit chain regardless of outcome.
+
+        Called BEFORE the ABAC engine so that a harness can veto an
+        op even if local policy would have allowed it (defense in
+        depth: harness is the outer gate, ABAC is the local gate).
+
+        This is the **legacy secret-access** hook consult path --
+        the new :meth:`execute_capability` calls a sibling
+        :meth:`_hook_consult_capability` instead. The two paths
+        share the same hook instance; only the request shape differs.
+        """
+        req = HookRequest(
+            operation=operation,
+            agent=agent,
+            namespace=namespace,
+            purpose=purpose,
+            secret_name=secret_name,
+            capability_token=capability_token,
+        )
+        resp = self.hook.pre_op_check(req)
+        # Record the hook decision. We log this separately from the
+        # ABAC decision so the audit chain shows both layers.
+        self._log_audit(
+            f"HOOK_{operation.upper()}",
+            secret_name,
+            json.dumps({
+                "hook_id": self.hook.hook_id,
+                **resp.to_audit_dict(),
+            }),
+        )
+        if resp.decision is not HookDecision.ALLOW:
+            raise PolicyDeniedError(
+                f"hook {self.hook.hook_id!r} denied {operation} for agent "
+                f"{agent!r}: {resp.reason or 'no reason given'}"
+            )
+
+    def _hook_consult_capability(
+        self,
+        *,
+        agent: str,
+        capability: str,
+        capability_version: int,
+        payload: Dict[str, Any],
+        token_metadata: Dict[str, Any],
+        capability_token: str,
+    ) -> None:
+        """Consult the audit hook on the capability path.
+
+        Builds a capability-shaped :class:`HookRequest` and runs the
+        same hook instance that backs the legacy secret-access path.
+        Hooks that only care about secret access (e.g. legacy custom
+        hooks) see the new fields as empty / "capability" operation
+        and may deny; hooks that have been updated for the capability
+        model can branch on ``req.is_capability``.
+
+        When the hook is **frozen**, this raises immediately, before
+        any token verification or capability dispatch -- matching the
+        "kill switch" semantics the spec requires for ``execute_capability``.
+        """
+        # Freeze check happens first; ``pre_op_check`` returns a
+        # FREEZE response which we then map to PolicyDeniedError
+        # below. Doing the check separately here makes the intent
+        # obvious in the audit log.
+        if self.hook.frozen:
+            self._log_audit(
+                "HOOK_CAPABILITY",
+                None,
+                json.dumps({
+                    "hook_id": self.hook.hook_id,
+                    "decision": "freeze",
+                    "reason": "vault frozen by hook",
+                    "agent": agent,
+                    "capability": capability,
+                    "capability_version": capability_version,
+                }),
+            )
+            raise PolicyDeniedError("vault frozen by hook")
+
+        req = HookRequest(
+            operation="capability",
+            agent=agent,
+            capability=capability,
+            capability_version=capability_version,
+            payload=payload,
+            token_metadata=token_metadata,
+            capability_token=capability_token,
+        )
+        resp = self.hook.pre_op_check(req)
+        self._log_audit(
+            "HOOK_CAPABILITY",
+            None,
+            json.dumps({
+                "hook_id": self.hook.hook_id,
+                "agent": agent,
+                "capability": capability,
+                "capability_version": capability_version,
+                **resp.to_audit_dict(),
+            }),
+        )
+        if resp.decision is not HookDecision.ALLOW:
+            raise PolicyDeniedError(
+                f"hook {self.hook.hook_id!r} denied capability {capability!r} "
+                f"for agent {agent!r}: {resp.reason or 'no reason given'}"
+            )
+
+    # ------------------------------------------------------------------
+    # v0.3 capability execution path
+    # ------------------------------------------------------------------
+
+    def execute_capability(
+        self,
+        capability_name: str,
+        payload: Dict[str, Any],
+        agent_id: str,
+        capability_token: str,
+        capability_version: int = 1,
+    ) -> Any:
+        """Execute a registered capability on behalf of an agent.
+
+        This is the **new primary enforcement point** of the v0.3
+        security model. The agent presents a v2 capability token
+        (issued by the harness via
+        :meth:`rgt_vault.token.HMACTokenVerifier.sign`) and the
+        vault:
+
+          1. Checks freeze state (kill switch).
+          2. Verifies the token's signature, expiration, and that
+             its ``agent_id``, ``capability``, and
+             ``capability_version`` match the request.
+          3. Enforces the token's context bindings against the
+             payload (every key the token pins must appear with the
+             same value in the payload; the payload may have extras).
+          4. Consults the configured audit hook with a
+             capability-shaped :class:`HookRequest`. Hooks that have
+             been updated for the capability model can gate per-
+             capability; legacy hooks see ``operation="capability"``
+             and may deny.
+          5. Looks up the capability handler in the registry and
+             checks the registry accepts the requested version.
+          6. Validates the payload against the handler's declared
+             ``params_schema``.
+          7. Applies the agent's rate limit.
+          8. Invokes the handler. The handler receives a
+             :class:`rgt_vault.capabilities.CapabilityContext` that
+             includes the vault, the agent id, the token id, the
+             capability name, the version, and a copy of the token's
+             claims. Secret material never crosses this boundary.
+
+        Audit chain
+        -----------
+
+        Every execution writes a single ``CAPABILITY_EXECUTED`` row
+        (or ``CAPABILITY_DENIED`` for any failure path) with the
+        agent, capability, version, hook decision, the reason
+        (free-form), and a SHA-256 of the canonical payload (so the
+        operator can correlate a row with a specific request without
+        recording the payload contents in the audit log).
+        """
+        if not isinstance(capability_name, str) or not capability_name.strip():
+            raise ValidationError("capability_name must be a non-empty string")
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            raise ValidationError("agent_id must be a non-empty string")
+        if not isinstance(capability_token, str) or not capability_token:
+            raise ValidationError("capability_token is required")
+        if not isinstance(payload, dict):
+            raise ValidationError("payload must be a dict")
+
+        # 1. Freeze check. The hook's frozen property reads the
+        # freeze file under a lock; consult it first so a frozen
+        # vault fails closed before we do any token verification
+        # (which would be wasted work and would also log a misleading
+        # "token signature invalid" if the harness can't currently
+        # reach us).
+        if self.hook.frozen:
+            self._log_audit(
+                "CAPABILITY_DENIED",
+                None,
+                json.dumps({
+                    "agent": agent_id,
+                    "capability": capability_name,
+                    "capability_version": capability_version,
+                    "reason": "vault frozen",
+                }),
+            )
+            raise PolicyDeniedError("vault frozen")
+
+        # 2. Token verification. The verifier is the trust anchor;
+        # without one configured, refuse to run.
+        if self.token_verifier is None:
+            self._log_audit(
+                "CAPABILITY_DENIED",
+                None,
+                json.dumps({
+                    "agent": agent_id,
+                    "capability": capability_name,
+                    "capability_version": capability_version,
+                    "reason": "no token verifier configured",
+                }),
+            )
+            raise ValidationError(
+                "execute_capability requires a configured token_verifier; "
+                "pass one to VaultManager(..., token_verifier=...)"
+            )
+        try:
+            tok: CapabilityV2Token = self.token_verifier.verify(capability_token)
+        except TokenError as e:
+            self._log_audit(
+                "CAPABILITY_DENIED",
+                None,
+                json.dumps({
+                    "agent": agent_id,
+                    "capability": capability_name,
+                    "capability_version": capability_version,
+                    "reason": f"token: {type(e).__name__}",
+                }),
+            )
+            raise PolicyDeniedError(f"capability token rejected: {e}") from None
+
+        # 3. Token -> request consistency.
+        if tok.agent_id != agent_id:
+            self._log_audit(
+                "CAPABILITY_DENIED",
+                None,
+                json.dumps({
+                    "agent": agent_id,
+                    "capability": capability_name,
+                    "capability_version": capability_version,
+                    "reason": "agent mismatch",
+                }),
+            )
+            raise PolicyDeniedError(
+                f"token bound to agent {tok.agent_id!r}, "
+                f"caller claimed {agent_id!r}"
+            )
+        if tok.capability != capability_name:
+            self._log_audit(
+                "CAPABILITY_DENIED",
+                None,
+                json.dumps({
+                    "agent": agent_id,
+                    "capability": capability_name,
+                    "capability_version": capability_version,
+                    "reason": "capability mismatch",
+                    "token_capability": tok.capability,
+                }),
+            )
+            raise PolicyDeniedError(
+                f"token authorizes {tok.capability!r}, "
+                f"request asked for {capability_name!r}"
+            )
+        if tok.capability_version != capability_version:
+            self._log_audit(
+                "CAPABILITY_DENIED",
+                None,
+                json.dumps({
+                    "agent": agent_id,
+                    "capability": capability_name,
+                    "capability_version": capability_version,
+                    "reason": "version mismatch",
+                    "token_version": tok.capability_version,
+                }),
+            )
+            raise PolicyDeniedError(
+                f"token capability_version={tok.capability_version}, "
+                f"request asked for {capability_version}"
+            )
+
+        # 4. Context binding. Every key the token pins must appear
+        # in the payload with the same value.
+        token_metadata = {
+            "token_id": tok.token_id,
+            "exp": tok.expires_at,
+            "context_bindings": dict(tok.context_bindings),
+        }
+        try:
+            tok.check_context(payload)
+        except TokenBindingError as e:
+            self._log_audit(
+                "CAPABILITY_DENIED",
+                None,
+                json.dumps({
+                    "agent": agent_id,
+                    "capability": capability_name,
+                    "capability_version": capability_version,
+                    "reason": f"context binding: {e}",
+                }),
+            )
+            raise
+
+        # 5. Hook consult on the capability path. The hook sees the
+        # same fields the token authorized, plus a flag in the
+        # request id so the harness can correlate.
+        self._hook_consult_capability(
+            agent=agent_id,
+            capability=capability_name,
+            capability_version=capability_version,
+            payload=payload,
+            token_metadata=token_metadata,
+            capability_token=capability_token,
+        )
+
+        # 6. Registry lookup + version check.
+        spec = self.capability_registry.get(capability_name)
+        if not spec.supports_version(capability_version):
+            self._log_audit(
+                "CAPABILITY_DENIED",
+                None,
+                json.dumps({
+                    "agent": agent_id,
+                    "capability": capability_name,
+                    "capability_version": capability_version,
+                    "reason": "version not supported by registered handler",
+                    "supported_versions": sorted(spec.supported_versions),
+                }),
+            )
+            raise CapabilityVersionError(
+                f"capability {capability_name!r} does not support version "
+                f"{capability_version}; supported: {sorted(spec.supported_versions)}"
+            )
+
+        # 7. Payload validation. Handlers do their own deep checks
+        # (e.g. URL parsing, sub-schemas) -- this is just the gate
+        # at the vault boundary.
+        try:
+            spec.validate_payload(payload)
+        except ValidationError as e:
+            self._log_audit(
+                "CAPABILITY_DENIED",
+                None,
+                json.dumps({
+                    "agent": agent_id,
+                    "capability": capability_name,
+                    "capability_version": capability_version,
+                    "reason": f"payload: {e}",
+                }),
+            )
+            raise
+
+        # 8. Rate limit. Reuse the existing in-process limiter; a
+        # future refactor can split capability and secret-access
+        # limits into separate buckets, but the threat model is the
+        # same: an agent hammering the vault should be throttled
+        # before the handler runs.
+        if not self.rate_limiter.allow(agent_id):
+            self._log_audit(
+                "CAPABILITY_DENIED",
+                None,
+                json.dumps({
+                    "agent": agent_id,
+                    "capability": capability_name,
+                    "capability_version": capability_version,
+                    "reason": "rate limited",
+                }),
+            )
+            raise PermissionError(f"Rate limit exceeded for agent {agent_id!r}")
+
+        # 9. Execute. The context exposes the vault, the agent id,
+        # the token id, and the token metadata. Secret material is
+        # never put on the context -- handlers that need a secret
+        # lease it themselves via the vault's existing primitives.
+        ctx = CapabilityContext(
+            vault=self,
+            agent_id=agent_id,
+            token_id=tok.token_id,
+            capability=capability_name,
+            capability_version=capability_version,
+            token_metadata=token_metadata,
+        )
+        # Canonical payload hash: same shape the token is signed over,
+        # so an operator verifying the chain can reproduce it.
+        context_hash = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        ).hexdigest()[:16]
+        try:
+            result = spec.handler(payload, ctx)
+        except Exception as e:
+            # Handlers are operator code; an unhandled exception is a
+            # server fault, not an auth failure. We log it with a
+            # sanitized reason (class name only) and re-raise -- the
+            # caller's exception type is preserved so they can react
+            # appropriately.
+            self._log_audit(
+                "CAPABILITY_FAILED",
+                None,
+                json.dumps({
+                    "agent": agent_id,
+                    "capability": capability_name,
+                    "capability_version": capability_version,
+                    "reason": f"handler: {type(e).__name__}",
+                    "context_hash": context_hash,
+                }),
+            )
+            raise
+
+        self._log_audit(
+            "CAPABILITY_EXECUTED",
+            None,
+            json.dumps({
+                "agent": agent_id,
+                "capability": capability_name,
+                "capability_version": capability_version,
+                "hook": self.hook.hook_id,
+                "allowed": True,
+                "context_hash": context_hash,
+            }),
+        )
+        return result
+
     def set_secret(self, name: str, value: str, namespace: str = "default", agent: str = "system", purpose: str = "") -> None:
-        """Encrypts and stores a secret."""
+        """Encrypts and stores a secret.
+
+        .. deprecated::
+            Legacy secret-access API. New code should register a
+            capability that wraps secret operations (see
+            :func:`rgt_vault.capabilities.register_builtin_capabilities`
+            for ``secrets.use``) and call :meth:`execute_capability`.
+            This method will continue to work through the v0.3 cycle
+            and is removed in v0.4.
+        """
         self._validate_string_param("name", name, max_len=256)
         self._validate_string_param("namespace", namespace, max_len=128)
         self._validate_string_param("agent", agent, max_len=128)
         self._validate_string_param("value", value, max_len=1024 * 1024) # 1MB limit
-        
+
+        # Hook fires BEFORE ABAC. The harness is the outer gate.
+        self._hook_consult("write", agent, namespace, purpose, secret_name=name)
+
         decision = self.auth.evaluate(agent, namespace, purpose, action="write")
         if not decision["allowed"]:
             self._log_audit("POLICY_DENIED", name, f"Action: write, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}")
             raise PolicyDeniedError(f"Agent '{agent}' denied write access to '{name}' ({namespace}/{purpose})")
-            
+
         aad = self._get_aad(namespace, name)
         ciphertext = encrypt(value, self.dek, aad)
         self.storage.set_secret(namespace, name, ciphertext, 1, policy_hash=self.policy_hash)
@@ -178,6 +675,9 @@ class VaultManager:
         fingerprints (deliberately, per the ROADMAP "Audit log noise
         reduction" item).
         """
+        # Note: ``get_fingerprint`` does NOT consult the hook, because
+        # the fingerprint leaks no plaintext. Operators who want
+        # even fingerprint reads gated can wrap the call themselves.
         if self.storage.is_honeytoken(namespace, name):
             self._log_audit("HONEYTOKEN_TRIGGERED", name, json.dumps({"severity": "critical", "agent": "system", "namespace": namespace, "purpose": "fingerprint"}))
             raise PermissionError(f"Honeytoken access detected: {namespace}/{name}")
@@ -194,7 +694,12 @@ class VaultManager:
         self._validate_string_param("agent", agent, max_len=128)
         self._validate_string_param("namespace", namespace, max_len=128)
         self._validate_string_param("purpose", purpose, max_len=256)
-        
+
+        # Hook fires BEFORE rate limit + ABAC. The harness is the
+        # outer gate; it can lock out an agent before the local
+        # rate limiter even records the request.
+        self._hook_consult("read", agent, namespace, purpose, secret_name=name)
+
         if not self.rate_limiter.allow(agent):
             self._log_audit("RATE_LIMITED", name, f"Agent: {agent}")
             raise PermissionError(f"Rate limit exceeded for agent '{agent}'")
@@ -245,13 +750,19 @@ class VaultManager:
             return callback(secret_buffer)
 
     def list_secrets(self, namespace: str, agent: str, purpose: str = "") -> List[Dict[str, Any]]:
+        self._hook_consult("list", agent, namespace, purpose)
         decision = self.auth.evaluate(agent, namespace, purpose, action="read")
         if not decision["allowed"]:
             self._log_audit("POLICY_DENIED", None, f"Action: list, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}")
             raise PolicyDeniedError(f"Unauthorized to access namespace '{namespace}'")
         return self.storage.list_secrets(namespace, policy_hash=self.policy_hash)
 
+    def revoke_secret(self, namespace: str, name: str, agent: str = "system") -> None:
+        self._hook_consult("revoke", agent, namespace, secret_name=name)
+        self.storage.revoke_secret(namespace, name, policy_hash=self.policy_hash)
+
     def simulate(self, agent: str, namespace: str, purpose: str, action: str = "read") -> Dict[str, Any]:
+        self._hook_consult("simulate", agent, namespace, purpose)
         self._log_audit("SIMULATION_RUN", None, f"Agent: {agent}, Namespace: {namespace}, Action: {action}")
         return self.auth.evaluate(agent, namespace, purpose, action)
 
@@ -261,9 +772,6 @@ class VaultManager:
         rule = decision.get("matched_rule")
         rule_str = json.dumps(rule) if rule else "None"
         return f"Access: {res}\nReason: {decision['reason']}\nMatched Rule: {rule_str}"
-
-    def revoke_secret(self, namespace: str, name: str) -> None:
-        self.storage.revoke_secret(namespace, name, policy_hash=self.policy_hash)
 
     def rotate_master_key(self) -> None:
         """Rotate master key. Fast rotation (no data re-encryption).
@@ -285,6 +793,10 @@ class VaultManager:
                 "``rotate_dek()`` instead."
             )
 
+        # Hook consult. Rotation is an administrative op -- only an
+        # operator identity should typically be allowed.
+        self._hook_consult("rotate", "system", "_admin", "rotate_master_key")
+
         new_master = self._normalize_master(self.master_provider.rotate_secret())
         new_epoch = self.storage.increment_key_epoch()
 
@@ -301,6 +813,9 @@ class VaultManager:
         crash mid-rotation leaves either the old DEK or the new DEK in
         effect; never a mix.
         """
+        # Hook consult.
+        self._hook_consult("rotate", "system", "_admin", "rotate_dek")
+
         new_dek_manager = HardenedDEKManager(self.dek_manager.keychain_path + ".new")
         new_epoch = self.storage.increment_key_epoch()
         master_secret = self._normalize_master(self.master_provider.get_secret())

@@ -76,3 +76,21 @@ class VaultImportError(VaultError):
     stdlib ``ImportError``.
     """
     pass
+
+
+class CapabilityNotFoundError(VaultError):
+    """Raised when ``execute_capability`` is called with a capability name
+    that is not registered in the :class:`rgt_vault.capabilities.CapabilityRegistry`.
+
+    Mapped to HTTP 404 by the FastAPI exception handler.
+    """
+    pass
+
+
+class CapabilityVersionError(VaultError):
+    """Raised when the token's ``capability_version`` is not supported
+    by the registered handler for that capability name.
+
+    Mapped to HTTP 400 by the FastAPI exception handler.
+    """
+    pass
