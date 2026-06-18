@@ -58,6 +58,70 @@ class MasterSecretUnavailableError(VaultError):
     """
     pass
 
+
+# ---------------------------------------------------------------------------
+# Token errors (re-exported from rgt_vault.token for convenience)
+# ---------------------------------------------------------------------------
+
+
+class TokenError(VaultError):
+    """Base exception for all token-related errors."""
+    pass
+
+
+class TokenExpiredError(TokenError):
+    """Raised when the token's ``expires_at`` is in the past."""
+    pass
+
+
+class TokenSignatureError(TokenError):
+    """Raised when the HMAC signature is invalid."""
+    pass
+
+
+class TokenMalformedError(TokenError):
+    """Raised when the envelope is structurally invalid."""
+    pass
+
+
+class TokenVersionError(TokenError):
+    """Raised when the envelope version is not supported."""
+    pass
+
+
+class TokenBindingError(TokenError):
+    """Raised when a context binding does not match."""
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Capability errors (re-exported from rgt_vault.capabilities for convenience)
+# ---------------------------------------------------------------------------
+
+
+class CapabilityError(VaultError):
+    """Base exception for all capability-related errors."""
+    pass
+
+
+class CapabilityNotFoundError(CapabilityError):
+    """Raised when ``execute_capability`` references an unregistered capability."""
+    pass
+
+
+class CapabilityVersionError(CapabilityError):
+    """Raised when the requested capability version is not supported."""
+    pass
+
+
+class CapabilityExecutionError(CapabilityError):
+    """Raised when a capability handler raises an exception.
+
+    The original exception is chained in ``__cause__`` for debug logs,
+    but the public message is sanitised (never contains secret material).
+    """
+    pass
+
 class RotateNotSupportedError(VaultError):
     """Raised when ``rotate_master_key`` is called on a provider that does not
     support automated master-secret rotation (e.g. DPAPI/TPM, where

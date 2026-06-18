@@ -477,4 +477,124 @@ def test_get_warns_about_stdout(monkeypatch, tmp_path, policy_file):
     ])
     assert rc == 0
     assert "WARNING" in err
+    assert "--outfile" in err
     assert "zeroization" in err.lower()
+
+
+# ------------------------------------------------------------------
+# RGT-115: cmd_get --outfile (zeroization-safe path)
+# ------------------------------------------------------------------
+
+def test_get_outfile_writes_secret(monkeypatch, tmp_path, policy_file):
+    """--outfile PATH writes the secret to PATH."""
+    db = tmp_path / "v.db"
+    out = tmp_path / "secret.out"
+    _run_cli_inproc(
+        monkeypatch,
+        [
+            "--db", str(db), "--policy", str(policy_file),
+            "set", "K", "-",
+            "--namespace", "default", "--agent", "cli", "--purpose", "",
+        ],
+        stdin_payload=b"super-secret-value\n",
+    )
+    rc, out_log, err = _run_cli_inproc(monkeypatch, [
+        "--db", str(db), "--policy", str(policy_file),
+        "get", "K",
+        "--namespace", "default", "--agent", "cli", "--purpose", "test",
+        "--outfile", str(out),
+    ])
+    assert rc == 0
+    assert "super-secret-value" not in out_log
+
+
+def test_get_outfile_contains_secret(monkeypatch, tmp_path, policy_file):
+    """Patches _zeroize_file to a no-op so we can read the file content."""
+    from rgt_vault import cli as cli_mod
+
+    db = tmp_path / "v.db"
+    out = tmp_path / "secret.out"
+    _run_cli_inproc(
+        monkeypatch,
+        [
+            "--db", str(db), "--policy", str(policy_file),
+            "set", "K2", "-",
+            "--namespace", "default", "--agent", "cli", "--purpose", "",
+        ],
+        stdin_payload=b"exact-value\n",
+    )
+    monkeypatch.setattr(cli_mod, "_zeroize_file", lambda _p: None)
+
+    rc, out_log, err = _run_cli_inproc(monkeypatch, [
+        "--db", str(db), "--policy", str(policy_file),
+        "get", "K2",
+        "--namespace", "default", "--agent", "cli", "--purpose", "test",
+        "--outfile", str(out),
+    ])
+    assert rc == 0
+    assert out.read_bytes() == b"exact-value"
+
+
+def test_get_outfile_no_warning(monkeypatch, tmp_path, policy_file):
+    """--outfile mode does NOT emit the stdout zeroization-bypass warning."""
+    from rgt_vault import cli as cli_mod
+
+    db = tmp_path / "v.db"
+    out = tmp_path / "secret.out"
+    _run_cli_inproc(
+        monkeypatch,
+        [
+            "--db", str(db), "--policy", str(policy_file),
+            "set", "K3", "-",
+            "--namespace", "default", "--agent", "cli", "--purpose", "",
+        ],
+        stdin_payload=b"no-warning\n",
+    )
+    monkeypatch.setattr(cli_mod, "_zeroize_file", lambda _p: None)
+
+    rc, out_log, err = _run_cli_inproc(monkeypatch, [
+        "--db", str(db), "--policy", str(policy_file),
+        "get", "K3",
+        "--namespace", "default", "--agent", "cli", "--purpose", "test",
+        "--outfile", str(out),
+    ])
+    assert rc == 0
+    assert "WARNING" not in err
+    assert "zeroization" not in err.lower()
+
+
+def test_get_outfile_removes_file(monkeypatch, tmp_path, policy_file):
+    """After the vault call completes, the --outfile is removed."""
+    db = tmp_path / "v.db"
+    out = tmp_path / "secret.out"
+    _run_cli_inproc(
+        monkeypatch,
+        [
+            "--db", str(db), "--policy", str(policy_file),
+            "set", "K4", "-",
+            "--namespace", "default", "--agent", "cli", "--purpose", "",
+        ],
+        stdin_payload=b"gone-soon\n",
+    )
+    rc, out_log, err = _run_cli_inproc(monkeypatch, [
+        "--db", str(db), "--policy", str(policy_file),
+        "get", "K4",
+        "--namespace", "default", "--agent", "cli", "--purpose", "test",
+        "--outfile", str(out),
+    ])
+    assert rc == 0
+    assert not out.exists()
+
+
+def test_get_outfile_nonexistent_secret(monkeypatch, tmp_path, policy_file):
+    """When the vault call fails, --outfile does NOT leave a partial file."""
+    db = tmp_path / "v.db"
+    out = tmp_path / "ghost.out"
+    rc, out_log, err = _run_cli_inproc(monkeypatch, [
+        "--db", str(db), "--policy", str(policy_file),
+        "get", "GHOST",
+        "--namespace", "default", "--agent", "cli", "--purpose", "test",
+        "--outfile", str(out),
+    ])
+    assert rc != 0
+    assert not out.exists()

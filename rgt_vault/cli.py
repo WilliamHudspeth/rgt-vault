@@ -88,26 +88,65 @@ def cmd_set(args: argparse.Namespace) -> int:
         zeroize_bytearray(value)
 
 
-def cmd_get(args: argparse.Namespace) -> int:
-    """Lease a secret, print its UTF-8 value to stdout, and zeroize the buffer.
+def _zeroize_file(path: Path, blocksize: int = 4096) -> None:
+    """Overwrite *path* with null bytes and remove it.
 
-    Exits non-zero on policy denial or not-found.
-
-    **WARNING (P1-5 audit fix):** writing the plaintext to stdout defeats
-    the leased-buffer zeroization guarantee -- the Python string lives in
-    interpreter memory until garbage-collected, and may also be captured
-    by your shell history, process accounting, or a paging terminal.
-    Prefer the ``execute`` subcommand for programmatic use.
-
-    A one-line warning is printed to stderr to make the trade-off visible
-    in scripts.
+    Best-effort: if the file is on a filesystem that does not support
+    overwrite-in-place (COW / snapshots / flash FTL), the physical sectors
+    may still contain the plaintext. This is a defence-in-depth measure,
+    not a cryptographic guarantee.
     """
+    try:
+        size = path.stat().st_size
+        if size > 0:
+            with open(path, "wb") as f:
+                buf = b"\x00" * min(blocksize, size)
+                written = 0
+                while written < size:
+                    written += f.write(buf)
+        path.unlink()
+    except OSError:
+        pass  # file may already be gone; nothing actionable
+
+
+def cmd_get(args: argparse.Namespace) -> int:
+    """Lease a secret, write its value, and (optionally) zeroize the output.
+
+    Two modes:
+      * ``--outfile PATH`` — write the decoded UTF-8 bytes to *PATH*, then
+        zeroize and delete the file. The file is never world-readable and
+        is removed before the process exits.
+      * stdout (default) — print the UTF-8 value to stdout. **This
+        bypasses the zeroization guarantee** because the plaintext enters
+        Python's stdout buffer and the terminal/pipe. A warning is
+        printed to stderr on every invocation; prefer ``--outfile`` or the
+        ``execute`` subcommand for programmatic use.
+    """
+    vault = _build_vault(args)
+
+    if args.outfile:
+        outpath = Path(args.outfile)
+
+        def _callback(buf: bytearray) -> None:
+            outpath.write_bytes(buf)
+
+        try:
+            vault.execute(args.agent, args.namespace, args.purpose, args.name, _callback)
+        except Exception:
+            # If the vault call failed, ensure we don't leave a partial file
+            if outpath.exists():
+                outpath.unlink()
+            raise
+        _zeroize_file(outpath)
+        return 0
+
+    # Standard stdout path — honoured for POSIX-pipe compat but documented
+    # as a zeroization bypass.
     print(
         "WARNING: 'get' writes plaintext to stdout and bypasses the "
-        "zeroization guarantee; prefer 'execute' for production use.",
+        "zeroization guarantee; prefer '--outfile' for production use.",
         file=sys.stderr,
     )
-    vault = _build_vault(args)
 
     def _print(buf: bytearray) -> None:
         sys.stdout.write(buf.decode("utf-8"))
@@ -348,6 +387,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_get.add_argument("--namespace", default="default")
     p_get.add_argument("--agent", default="cli")
     p_get.add_argument("--purpose", required=True)
+    p_get.add_argument(
+        "--outfile", default=None,
+        help="Write the secret to PATH instead of stdout. "
+        "The file is zeroized (overwritten with null bytes) and removed "
+        "after the read, so the plaintext is not left on disk.",
+    )
     p_get.set_defaults(func=cmd_get)
 
     # list

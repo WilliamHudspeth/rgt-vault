@@ -15,7 +15,21 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from rgt_vault.auth import ABACPolicyEngine
 from rgt_vault.crypto import decrypt, encrypt, zeroize_bytearray
-from rgt_vault.exceptions import PolicyDeniedError, SecretNotFoundError, ValidationError
+from rgt_vault.exceptions import (
+    PolicyDeniedError,
+    SecretNotFoundError,
+    ValidationError,
+    CapabilityError,
+    CapabilityNotFoundError,
+    CapabilityVersionError,
+    CapabilityExecutionError,
+    TokenError,
+    TokenExpiredError,
+    TokenSignatureError,
+    TokenMalformedError,
+    TokenVersionError,
+    TokenBindingError,
+)
 from rgt_vault.keychain import HardenedDEKManager, MasterSecret, run_crypto_selftest
 from rgt_vault.storage.sqlite import StorageBackend
 
@@ -40,7 +54,8 @@ class RateLimiter:
             return True
 
 class VaultManager:
-    def __init__(self, db_path: Optional[str] = None, master_provider=None, policy_yaml: str = "", rate_limit: int = 100, rate_window: int = 3600):
+    def __init__(self, db_path: Optional[str] = None, master_provider=None, policy_yaml: str = "", rate_limit: int = 100, rate_window: int = 3600,
+                 capability_registry=None, token_verifier=None):
         # 1. Run cryptographic self-tests (Fail closed)
         run_crypto_selftest()
         
@@ -85,6 +100,30 @@ class VaultManager:
             
         # 4. Migrate Legacy Secrets (v2 Fernet -> v3 AES-256-GCM)
         self._migrate_legacy_secrets()
+
+        # 5. Capability system (v0.3+)
+        # The master_secret is loaded above, so we can derive a deterministic
+        # HMAC key for the default token verifier.
+        from rgt_vault.capabilities import CapabilityRegistry, _register_builtins
+        from rgt_vault.token import HMACTokenVerifier
+
+        if capability_registry is not None:
+            self.capability_registry = capability_registry
+        else:
+            self.capability_registry = CapabilityRegistry()
+            _register_builtins(self.capability_registry)
+
+        if token_verifier is not None:
+            self.token_verifier = token_verifier
+        else:
+            # Derive a deterministic HMAC key from the master secret.
+            # This avoids extra storage in keychain.json for v0.3.
+            h = hashlib.sha256(master_secret.value)
+            self.token_verifier = HMACTokenVerifier(h.digest())
+
+        self.capability_rate_limiter = RateLimiter(
+            max_requests=200, window_seconds=3600,
+        )
 
     def _migrate_legacy_secrets(self) -> None:
         """Upgrades dek_version=0 secrets to AESGCM.
@@ -290,6 +329,127 @@ class VaultManager:
             raise ValidationError("The provided callback must be a callable object.")
         with self.lease_secret(secret_name, agent, namespace, purpose) as secret_buffer:
             return callback(secret_buffer)
+
+    def execute_capability(
+        self,
+        capability_name: str,
+        payload: Dict[str, Any],
+        agent_id: str,
+        capability_token: bytes,
+    ) -> Any:
+        """Execute a registered capability with full 9-step preflight.
+
+        Steps (fail-closed at every step):
+
+        1. Freeze check (v0.4 stub — currently a no-op pass-through)
+        2. Verify ``capability_token`` signature and expiry
+        3. Agent match: ``token.agent_id == agent_id``
+        4. Capability match: ``token.capability == capability_name``
+        5. Version match: registry supports ``token.capability_version``
+        6. Context binding check: token bindings match payload
+        7. Payload validation against capability's ``params_schema``
+        8. Rate limit (capability bucket, separate from secret-access bucket)
+        9. Run handler, audit result
+
+        On success, audits ``CAPABILITY_EXECUTED`` with a hash of the
+        canonical payload (no plaintext in audit rows).
+        """
+        # Step 1 — Freeze check (v0.4 stub)
+        # TODO: consult a registered FrozenHook when the hook layer lands.
+
+        # Step 2 — Verify token
+        try:
+            token = self.token_verifier.verify(capability_token)
+        except TokenError as e:
+            self.audit("CAPABILITY_DENIED", None,
+                       f"token_error: {type(e).__name__}: {e}")
+            raise
+
+        # Step 3 — Agent match
+        if token.agent_id != agent_id:
+            self.audit("CAPABILITY_DENIED", None,
+                       f"agent_mismatch: token={token.agent_id!r} != caller={agent_id!r}")
+            raise CapabilityError(
+                f"Capability token agent ({token.agent_id!r}) does not match "
+                f"caller agent ({agent_id!r})"
+            )
+
+        # Step 4 — Capability match
+        if token.capability != capability_name:
+            self.audit("CAPABILITY_DENIED", None,
+                       f"capability_mismatch: token={token.capability!r} != "
+                       f"requested={capability_name!r}")
+            raise CapabilityNotFoundError(
+                f"Token grants capability {token.capability!r}, "
+                f"not {capability_name!r}"
+            )
+
+        # Step 5 — Version check
+        spec = self.capability_registry.get(capability_name)
+        if not self.capability_registry.supports_version(capability_name, token.capability_version):
+            self.audit("CAPABILITY_DENIED", None,
+                       f"version_mismatch: requested v{token.capability_version}, "
+                       f"supported {spec.supported_versions}")
+            raise CapabilityVersionError(
+                f"Capability {capability_name!r} does not support version "
+                f"v{token.capability_version}; supported: {spec.supported_versions}"
+            )
+
+        # Step 6 — Context binding check
+        try:
+            from rgt_vault.token import check_context
+            check_context(token, payload)
+        except TokenBindingError as e:
+            self.audit("CAPABILITY_DENIED", None, f"binding_error: {e}")
+            raise
+
+        # Step 7 — Payload validation
+        try:
+            spec.validate_payload(payload)
+        except ValidationError as e:
+            self.audit("CAPABILITY_DENIED", None, f"validation_error: {e}")
+            raise
+
+        # Step 8 — Rate limit (capability bucket)
+        if not self.capability_rate_limiter.allow(agent_id):
+            self.audit("CAPABILITY_RATE_LIMITED", None,
+                       f"agent={agent_id} capability={capability_name}")
+            raise CapabilityError(
+                f"Rate limit exceeded for capability {capability_name!r} on {agent_id!r}"
+            )
+
+        # Step 9 — Run handler
+        from rgt_vault.capabilities import CapabilityContext
+
+        ctx = CapabilityContext(
+            vault=self,
+            agent_id=agent_id,
+            capability=capability_name,
+            token_id=token.token_id,
+            token_metadata={
+                "capability_version": token.capability_version,
+                "context_bindings": token.context_bindings,
+            },
+        )
+        try:
+            result = spec.handler(ctx, payload)
+        except Exception as e:
+            self.audit("CAPABILITY_FAILED", None,
+                       f"capability={capability_name} agent={agent_id} "
+                       f"error={type(e).__name__}")
+            raise CapabilityExecutionError(
+                f"Capability {capability_name!r} execution failed"
+            ) from e
+
+        # Success — audit with payload hash (no plaintext)
+        payload_hash = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()[:16]
+        self.audit("CAPABILITY_EXECUTED", None,
+                   f"capability={capability_name} v{token.capability_version} "
+                   f"agent={agent_id} token={token.token_id[:8]} "
+                   f"payload_hash={payload_hash}")
+        return result
 
     def list_secrets(self, namespace: str, agent: str, purpose: str = "") -> List[Dict[str, Any]]:
         decision = self.auth.evaluate(agent, namespace, purpose, action="read")

@@ -13,6 +13,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ``finally`` block so policy denials and exceptions cannot leave the
   plaintext in memory. The CLI ``set`` subcommand now reads stdin and
   ``--value-file`` into a bytearray and zeroizes it after the call.
+- **RGT-115: ``cmd_get`` gains ``--outfile`` so callers can avoid the
+  stdout zeroization bypass.** When ``--outfile PATH`` is provided, the
+  secret is written to *PATH* and the file is zeroized (overwritten with
+  null bytes) and removed after ``vault.execute`` returns. The stdout
+  mode (default) still works with the existing P1-5 warning; the
+  warning now points at ``--outfile`` instead of ``execute``.
+- **RGT-114: Capability execution layer (v0.3).** New ``rgt_vault/token.py``
+  with ``CapabilityV2Token``, ``HMACTokenVerifier``, ``Ed25519TokenVerifier``
+  stub, and ``check_context``. New ``rgt_vault/capabilities.py`` with
+  ``CapabilityRegistry``, ``CapabilitySpec``, built-in ``secrets.echo`` and
+  ``secrets.use``. ``VaultManager.execute_capability()`` implements the full
+  9-step preflight. 21 token tests + 20 capability tests + 10 integration
+  tests.
 - **P0-1 (v3): `MacOSKeychainProvider.seal_master_secret` no longer writes
   the master secret to a world-readable temp file and no longer crashes
   on non-UTF-8 random secrets.** The previous implementation used
