@@ -12,11 +12,10 @@
 >   fixes. The Python line will be **archived 6 months after v0.3.0 ships**.
 > - **Why:** the [v0.3 capability-based execution layer](go/) (RGT-128,
 >   RGT-166) is fundamentally a Go architecture; reimplementing it in Python
->   would lock in tech debt. See [`ROADMAP.md`](ROADMAP.md) §"Strategic
->   direction — Go rewrite" and [`docs/architecture/agentic-patterns-and-go-migration.md`](docs/architecture/agentic-patterns-and-go-migration.md)
->   for the full rationale and cutover plan.
+>   would lock in tech debt. See [`EOL.md`](EOL.md) for the full migration
+>   plan and the 2026-12-22 EOL date.
 >
-> Tracked by RGT-164 (maintenance mode notice) → RGT-165 (EOL archive notice).
+> Tracked by RGT-164 (maintenance mode notice) → RGT-165 (EOL archive notice; see [`EOL.md`](EOL.md) for the full migration plan and 2026-12-22 EOL date).
 
 A local-first secrets manager designed for autonomous AI systems. It combines
 AES-256-GCM encryption, Argon2id key derivation, ABAC authorization, secret

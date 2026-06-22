@@ -19,6 +19,37 @@ See `CAPABILITY_SECURITY.md`, `MIGRATION_GUIDE.md`, and
   path with a cutover plan (RGT-161 → RGT-165). Tracked by RGT-165 for
   the eventual EOL archive notice 6 months after v0.3.0 ships.
 
+### End-of-life notice (RGT-165)
+
+- **`EOL.md` published at the repo root (RGT-165).** Sets the Python
+  line's EOL date at **2026-12-22** (6-month soak from the maintenance
+  notice on 2026-06-22). Documents the migration path, the
+  [crypto parity gaps](EOL.md#crypto-parity-gaps) that the Go line must
+  close before `v0.3.0` ships, and the "what users should do today"
+  table (pin to `v0.2.x`; plan to migrate to the Go line once
+  crypto-integration and persistence land).
+- **Go line version bumped from `0.2.0` → `0.3.0`** in
+  `go/internal/server/handlers/handlers.go` HealthCheck response. The
+  Go line is now on its own version track (`0.3.x+`), distinct from
+  the Python `0.2.x` line. (Bumped to `0.3.0`, not `1.0.0`, because
+  the Store still doesn't encrypt-at-rest and the keychain manager
+  is not yet ported from Python; `v1.0.0` should be reserved for a
+  tagged release that closes those gaps.)
+- **Top-level `README.md` maintenance banner now links to `EOL.md`**
+  so the EOL date is reachable from the repo root, not just from the
+  Go line's README.
+- **What this PR does NOT do** (intentionally — these are terminal-state
+  ops that the user should approve explicitly):
+  - The repo is **not yet archived** on GitHub. Archiving is
+    irreversible and the Go line is not yet production-ready; the EOL
+    date is 6 months out, so there's time.
+  - **No `v0.3.0` git tag** has been created. Tagging should happen
+    once Store crypto integration lands (RGT-145 / RGT-146).
+  - The RGT-165 ticket's referenced doc
+    `docs/architecture/agentic-patterns-and-go-migration.md` does not
+    exist in the repo; the new `EOL.md` is the canonical reference
+    until the architecture doc is regenerated.
+
 ### Added
 
 - **v2 capability tokens** in `rgt_vault/token.py`. JSON payload
