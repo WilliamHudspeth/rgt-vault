@@ -9,6 +9,16 @@ Status: in-progress on the `audit-hook-layer` branch. Not merged.
 See `CAPABILITY_SECURITY.md`, `MIGRATION_GUIDE.md`, and
 `BRANCH_SUMMARY.md` for the full design.
 
+### Maintenance mode (Go-migration cutover, RGT-164)
+
+- **Python line is now in maintenance mode (RGT-164).** The top-level
+  `README.md` carries a prominent banner stating that the Python v0.2.x
+  line receives bugfixes and security patches only; all new feature work
+  lands in the [Go rewrite](go/) (`rgt-vault-server`, v0.3.0). The Go
+  side now ships its own `go/README.md` declaring it the primary install
+  path with a cutover plan (RGT-161 → RGT-165). Tracked by RGT-165 for
+  the eventual EOL archive notice 6 months after v0.3.0 ships.
+
 ### Added
 
 - **v2 capability tokens** in `rgt_vault/token.py`. JSON payload
