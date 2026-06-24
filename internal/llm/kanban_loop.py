@@ -16,11 +16,11 @@ Routing (delegated to Router.pair_for):
   fast-qa        -> groq + ollama-0.5b cross-check
 
 Usage:
-  python3 scripts/llm/kanban_loop.py --dry-run                 # plan only
-  python3 scripts/llm/kanban_loop.py --once                    # one pass
-  python3 scripts/llm/kanban_loop.py --once --limit 5          # cap batch size
-  python3 scripts/llm/kanban_loop.py --once --milestone v0.2.0 # scope to milestone
-  python3 scripts/llm/kanban_loop.py --reset-state            # reprocess all
+  python3 internal/llm/kanban_loop.py --dry-run                 # plan only
+  python3 internal/llm/kanban_loop.py --once                    # one pass
+  python3 internal/llm/kanban_loop.py --once --limit 5          # cap batch size
+  python3 internal/llm/kanban_loop.py --once --milestone v0.2.0 # scope to milestone
+  python3 internal/llm/kanban_loop.py --reset-state            # reprocess all
 """
 
 from __future__ import annotations
@@ -33,9 +33,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.llm.kanban_review import build_prompt, pick_task_type, post_comment
-from scripts.llm.router import Router
-from scripts.program._common import WORKSPACE_ID, get_issue, label_set, list_issues
+from internal.llm.kanban_review import build_prompt, pick_task_type, post_comment
+from internal.llm.router import Router
+from internal.program._common import WORKSPACE_ID, get_issue, label_set, list_issues
 
 DEFAULT_STATE_PATH = Path("/tmp/rgt_kanban_loop_state.json")
 
@@ -166,7 +166,7 @@ def main() -> int:
         # the project's id by its title prefix)
         milestone_project_id = None
         if args.milestone:
-            from scripts.program._common import list_projects
+            from internal.program._common import list_projects
 
             projects = list_projects(args.workspace_id)
             for p_obj in projects:
