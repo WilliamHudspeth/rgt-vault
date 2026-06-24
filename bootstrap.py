@@ -118,7 +118,10 @@ def main() -> None:
   Start the MCP server (for AI agents / Claude Desktop):
     {python} python/server/mcp_server.py
 
-  Run the tests:
+  Run tests (fast — parallel, skips slow fuzz suite):
+    {python} -m pytest -m "not fuzz"
+
+  Run full test suite including fuzz/Hypothesis tests:
     {python} -m pytest
 
   Simulate a policy decision:
