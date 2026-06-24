@@ -10,27 +10,88 @@ RGT Vault is a capability-based security boundary that lets AI agents perform ap
 
 RGT Vault solves this by keeping secrets securely inside the vault. Instead of requesting a secret, an agent requests a *capability*. The vault evaluates the policy, executes the approved capability on behalf of the agent, and returns the result. This dramatically limits the blast radius of compromised agents and eliminates secret exposure.
 
-## How It Works
+## Before vs. After
 
+**Traditional Secret Access**
 ```text
 Agent
   ↓
-Requests Capability (e.g., "github.read_repo")
+Receives GitHub Token
   ↓
-Vault Evaluates Policy & Executes Action
+Calls GitHub API
   ↓
-Returns Result
+Can perform any action allowed by that token
 ```
 
-The underlying secret never leaves the vault.
+**Capability-Based Access**
+```text
+Agent
+  ↓
+Requests github.read_repo
+  ↓
+Vault verifies policy
+  ↓
+Vault performs action internally
+  ↓
+Returns repository data
+
+Secret never leaves the vault.
+```
+
+## Who Is This For?
+
+RGT Vault is designed for teams building:
+
+- AI agents
+- MCP servers
+- Autonomous workflows
+- Multi-agent systems
+- LLM-powered internal tools
+
+If your application never grants credentials to autonomous systems, a traditional secrets manager may be sufficient.
+
+## What Makes This Different?
+
+Traditional secret managers focus on protecting *secrets*. RGT Vault focuses on protecting *secret usage*.
+
+| Traditional Vault | RGT Vault |
+|------------------|------------|
+| Returns secrets | Executes capabilities |
+| Secret reaches caller | Secret stays inside vault |
+| Access control around retrieval | Access control around execution |
+| Designed for applications | Designed for autonomous agents |
+
+## What Does a Capability Look Like?
+
+**Traditional**
+```python
+token = get_secret("github_token")
+github.get_repo(token, "org/repo")
+```
+
+**RGT Vault**
+```python
+vault.execute_capability(
+    "github.read_repo",
+    {
+        "repo": "org/repo"
+    }
+)
+```
+*Result: Repository metadata returned. GitHub token never exposed.*
 
 ## Key Features
 
-* **Capability Execution Layer:** Agents invoke actions, not secrets.
-* **Local-First Security:** Powered by secure local storage (TPM, macOS Keychain, Windows DPAPI).
-* **Zero Secret Exposure:** Memory-hardened execution environments for capabilities.
-* **Granular Policies:** Attribute-based access control (ABAC) for strict scoping.
-* **Audit Trails:** Immutable, cryptographically signed execution logs.
+* **✓ Capability-Based Execution**
+  Execute approved actions without exposing credentials.
+* **✓ Local-First Secret Storage**
+  Uses platform-native secure storage where available.
+* **✓ Fine-Grained Authorization**
+  Capability tokens and ABAC policies limit what agents can do.
+* **✓ Auditable Operations**
+  Every capability execution is recorded and traceable.
+* **✓ Agent-Oriented Security Model**
+  Designed specifically for autonomous systems and LLM agents.
 
 ## Quick Start
 
@@ -51,13 +112,21 @@ rgt-vault policy create github.read_repo --allow-agent "my-agent"
 rgt-vault mcp start
 ```
 
-## Architecture
+## Security Goals
 
-RGT Vault explicitly separates the capability execution model from the underlying cryptographic storage. For a layered explanation of how the system processes requests, see the [Architecture Overview](docs/architecture/overview.md).
+RGT Vault is designed to reduce the impact of:
 
-## Security Model
+- Credential leakage
+- Prompt injection
+- Tool misuse
+- Excessive agent permissions
+- Agent compromise
 
-The security model assumes the agent is entirely untrusted. For detailed analysis of the threat landscape and mitigation strategies, read the [Threat Model](docs/concepts/threat-model.md).
+It is not designed to defend against:
+
+- Full host compromise
+- Kernel compromise
+- Physical attacks
 
 ## Documentation
 
@@ -71,4 +140,16 @@ The security model assumes the agent is entirely untrusted. For detailed analysi
 
 ## Status
 
-RGT Vault is currently in active development.
+Current State: **Security Preview**
+
+Recommended for:
+- Evaluation
+- Prototyping
+- Security research
+
+Not yet recommended for:
+- Production secret storage
+- High-assurance environments
+
+The **Go implementation** is the primary development line (v0.3.x+).
+The **Python implementation** remains in maintenance mode (EOL: 2026-12-22).
