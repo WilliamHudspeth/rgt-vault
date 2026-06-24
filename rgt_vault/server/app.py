@@ -123,7 +123,7 @@ def build_app(
         """
         token_id = token_store.verify(authorization)  # raises ServerAuthError -> 401
         client = request.client.host if request.client else "?"
-        vault._log_audit(
+        vault.audit(
             "HTTP_API",
             None,
             f"token={token_id} ip={client} {request.method} {request.url.path}",

@@ -86,6 +86,12 @@ class VaultManager:
         # 4. Migrate Legacy Secrets (v2 Fernet -> v3 AES-256-GCM)
         self._migrate_legacy_secrets()
 
+
+    def _check_freeze_signal(self) -> None:
+        freeze_file = os.path.expanduser("~/.config/rgt-vault/freeze")
+        if os.path.exists(freeze_file):
+            raise VaultFrozenError("Vault is frozen due to active kill switch.")
+
     def _migrate_legacy_secrets(self) -> None:
         """Upgrades dek_version=0 secrets to AESGCM.
 
@@ -286,6 +292,7 @@ class VaultManager:
         ``buf.decode()``), that copy is the caller's responsibility and is NOT
         covered by the vault's zeroization guarantee.
         """
+        self._check_freeze_signal()
         if not callable(callback):
             raise ValidationError("The provided callback must be a callable object.")
         with self.lease_secret(secret_name, agent, namespace, purpose) as secret_buffer:
