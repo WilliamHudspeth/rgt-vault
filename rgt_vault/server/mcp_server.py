@@ -19,9 +19,8 @@ log = logging.getLogger("rgt-vault-mcp")
 # The vault instance will be retrieved dynamically when tools are called,
 # or we can assume it's created here for the MCP server.
 def get_vault() -> VaultManager:
-    policy = ABACPolicyEngine(policy_yaml="rules: []")
-    vault = VaultManager(auth=policy)
-    vault._hooks.append(LogRedactionHook())
+    vault = VaultManager(policy_yaml="rules: []")
+    vault.hook = LogRedactionHook()  # type: ignore
     return vault
 
 
@@ -34,7 +33,7 @@ async def vault_execute(
     agent_id: str,
     capability_id: str,
     version: str = "1.0",
-    parameters: dict[str, Any] = None,
+    parameters: dict[str, Any] | None = None,
     ctx: Context = None,
 ) -> dict[str, Any]:
     """

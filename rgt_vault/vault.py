@@ -258,7 +258,7 @@ class VaultManager:
             namespace=namespace,
             purpose=purpose,
             secret_name=secret_name,
-            capability_token=capability_token,
+            capability_token=capability_token or "",
         )
         resp = self.hook.pre_op_check(req)
         # Record the hook decision. We log this separately from the
@@ -329,7 +329,7 @@ class VaultManager:
             capability_version=capability_version,
             payload=payload,
             token_metadata=token_metadata,
-            capability_token=capability_token,
+            capability_token=capability_token or "",
         )
         resp = self.hook.pre_op_check(req)
         self._log_audit(
@@ -416,7 +416,7 @@ class VaultManager:
             raise ValidationError("capability_name must be a non-empty string")
         if not isinstance(agent_id, str) or not agent_id.strip():
             raise ValidationError("agent_id must be a non-empty string")
-        if not bypass_verification and (not isinstance(capability_token, str) or not capability_token):
+        if not bypass_verification and (not isinstance(capability_token or "", str) or not capability_token):
             raise ValidationError("capability_token is required")
         if not isinstance(payload, dict):
             raise ValidationError("payload must be a dict")
@@ -465,6 +465,8 @@ class VaultManager:
                     "execute_capability requires a configured token_verifier; "
                     "pass one to VaultManager(..., token_verifier=...)"
                 )
+            if capability_token is None:
+                raise ValidationError("capability_token is required")
             try:
                 tok: CapabilityV2Token = self.token_verifier.verify(capability_token)
             except TokenError as e:
@@ -564,7 +566,7 @@ class VaultManager:
             capability_version=capability_version,
             payload=payload,
             token_metadata=token_metadata,
-            capability_token=capability_token,
+            capability_token=capability_token or "",
         )
 
         # 6. Registry lookup + version check.

@@ -390,7 +390,7 @@ class CapabilityToken:
         sig = _sign(payload, b"")  # placeholder; replaced when serialized
         body = base64.urlsafe_b64encode(payload).rstrip(b"=")
         sig_b64 = base64.urlsafe_b64encode(sig).rstrip(b"=")
-        return body + b"." + sig_b64
+        return (body + b"." + sig_b64).decode("utf-8")
 
     def covers(self, *, operation: str, namespace: str) -> bool:
         """True iff this token covers the requested operation+namespace."""
@@ -460,7 +460,7 @@ class TwoFactorHook(AuditHook):
         # the capability path use it. Constructed lazily so importing
         # the hook layer does not pull in token.py at import time
         # (preserves the existing "import hook.py" test surface).
-        self._v2_verifier = None  # type: ignore[var-annotated]
+        self._v2_verifier = None
 
     def _get_v2_verifier(self):
         """Lazy import to keep the hook import surface narrow."""
@@ -675,7 +675,7 @@ class TwoFactorHook(AuditHook):
             if len(self._seen) >= self._max_cache:
                 # Drop the oldest half.
                 half = self._max_cache // 2
-                for k in sorted(self._seen, key=self._seen.get)[:half]:
+                for k in sorted(self._seen, key=lambda x: self._seen[x] if self._seen.get(x) is not None else 0)[:half]:
                     self._seen.pop(k, None)
             if token_id in self._seen:
                 return HookResponse(
@@ -750,7 +750,7 @@ class WebhookHook(AuditHook):
             headers["Authorization"] = f"Bearer {self.bearer_token}"
         rq = urllib.request.Request(self.url, data=data, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(rq, timeout=self.timeout_seconds) as resp:
+            with urllib.request.urlopen(rq, timeout=self.timeout_seconds) as resp:  # nosec B310
                 raw = resp.read(64 * 1024)
         except urllib.error.URLError as e:
             return HookResponse(

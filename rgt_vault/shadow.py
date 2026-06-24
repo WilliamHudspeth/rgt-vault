@@ -47,7 +47,7 @@ def _http(method: str, url: str, token: str, body: Optional[dict], timeout: floa
 
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
+        with urllib.request.urlopen(req, timeout=timeout) as response:  # nosec B310
             return response.status, response.read()
     except urllib.error.HTTPError as e:
         # e.read() reads the error body. e.code contains the status.
@@ -106,7 +106,7 @@ class ShadowWriter:
             try:
                 data = json.loads(resp_bytes.decode("utf-8"))
             except Exception as json_err:
-                reason = f"Failed to parse GET response JSON: {json_err} (raw: {resp_bytes})"
+                reason = f"Failed to parse GET response JSON: {json_err} (raw: {resp_bytes.decode('utf-8', errors='replace')})"
                 self._add_divergence("set", namespace, name, reason)
                 return False
 
