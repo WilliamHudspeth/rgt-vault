@@ -8,11 +8,13 @@ import threading
 import time
 from collections import defaultdict
 from collections.abc import Generator
-from typing import Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from rgt_vault.approval import ApprovalGate
 
 import keyring
 from cryptography.fernet import Fernet, InvalidToken
-
 from rgt_vault.auth import ABACPolicyEngine
 from rgt_vault.capabilities import (
     CapabilityContext,
@@ -69,6 +71,7 @@ class VaultManager:
         capability_registry: Optional[CapabilityRegistry] = None,
         token_verifier: Optional[TokenVerifier] = None,
         shadow_writer: Optional["ShadowWriter"] = None,
+        approval_gate: Optional["ApprovalGate"] = None,
     ):
         # 1. Run cryptographic self-tests (Fail closed)
         run_crypto_selftest()
@@ -111,6 +114,13 @@ class VaultManager:
         # identical when shadowing is off. Python is always the source of
         # truth; shadow failures are recorded as divergences, never raised.
         self.shadow: ShadowWriter = shadow_writer if shadow_writer is not None else NullShadowWriter()
+
+        # Optional live human-in-the-loop approval gate. Default approves
+        # everything so library/test callers behave exactly as before; the
+        # daemon wires an ApprovalBroker that blocks on operator decisions.
+        from rgt_vault.approval import AutoAllowGate
+
+        self.approval_gate: "ApprovalGate" = approval_gate if approval_gate is not None else AutoAllowGate()
 
         # The action registry backs the ``secrets.use`` bridge
         # capability, which leases a stored secret and runs a v0.2
@@ -703,12 +713,26 @@ class VaultManager:
         return b
 
     def set_secret(
-        self, name: str, value: Any, namespace: str = "default", agent: str = "system", purpose: str = ""
+        self,
+        name: str,
+        value: Any,
+        namespace: str = "default",
+        agent: str = "system",
+        purpose: str = "",
+        note: str = "",
+        require_2fa: bool = False,
     ) -> None:
-        """Encrypts and stores a secret."""
+        """Encrypts and stores a secret.
+
+        ``note`` is short human metadata (shown next to the title in the TUI);
+        it is stored in the clear and must never contain the secret value.
+        ``require_2fa`` flags the secret so the approval broker demands a TOTP
+        code before any agent can lease it.
+        """
         self._validate_string_param("name", name, max_len=256)
         self._validate_string_param("namespace", namespace, max_len=128)
         self._validate_string_param("agent", agent, max_len=128)
+        self._validate_string_param("note", note, max_len=512, allow_empty=True)
 
         plaintext = self._normalize_value_param("value", value, max_len=1024 * 1024)
 
@@ -726,7 +750,15 @@ class VaultManager:
 
             aad = self._get_aad(namespace, name)
             ciphertext = encrypt(plaintext, self.dek, aad)
-            self.storage.set_secret(namespace, name, ciphertext, 1, policy_hash=self.policy_hash)
+            self.storage.set_secret(
+                namespace,
+                name,
+                ciphertext,
+                1,
+                policy_hash=self.policy_hash,
+                note=note,
+                require_2fa=require_2fa,
+            )
         finally:
             zeroize_bytearray(plaintext)
 
@@ -801,6 +833,32 @@ class VaultManager:
                 f"Action: read, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}",
             )
             raise PolicyDeniedError(f"Agent '{agent}' denied read access to '{name}' ({namespace}/{purpose})")
+
+        # Live approval gate. Runs AFTER static policy passes and BEFORE the
+        # secret is read/decrypted, so a human (or the auto-allow default)
+        # authorizes the actual unseal. Fail-closed: a denied/timed-out
+        # request never touches ciphertext.
+        from rgt_vault.approval import ApprovalRequest
+
+        gate_decision = self.approval_gate.consult(
+            ApprovalRequest(
+                agent=agent,
+                namespace=namespace,
+                secret_name=name,
+                purpose=purpose,
+                action="read",
+                require_2fa=self.storage.requires_2fa(namespace, name),
+            )
+        )
+        if not gate_decision.allowed:
+            self._log_audit(
+                "APPROVAL_DENIED",
+                name,
+                f"Agent: {agent}, Namespace: {namespace}, Reason: {gate_decision.reason}",
+            )
+            raise PolicyDeniedError(
+                f"Agent '{agent}' approval denied for '{name}' ({namespace}/{purpose}): {gate_decision.reason}"
+            )
 
         result = self.storage.get_secret(namespace, name, version, policy_hash=self.policy_hash)
         if not result:

@@ -200,6 +200,8 @@ class StorageBackend:
         dek_version: int,
         secret_id: Optional[str] = None,
         policy_hash: str = "",
+        note: str = "",
+        require_2fa: bool = False,
     ) -> None:
         checksum = hashlib.sha256(ciphertext).hexdigest()
         now = _utcnow_iso()
@@ -233,10 +235,10 @@ class StorageBackend:
 
                 cursor.execute(
                     """
-                    INSERT INTO secrets (secret_id, namespace, name, version, ciphertext, checksum, created_at, updated_at, status, dek_version)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
+                    INSERT INTO secrets (secret_id, namespace, name, version, ciphertext, checksum, created_at, updated_at, status, dek_version, note, require_2fa)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?)
                 """,
-                    (secret_id, namespace, name, next_version, ciphertext, checksum, now, now, dek_version),
+                    (secret_id, namespace, name, next_version, ciphertext, checksum, now, now, dek_version, note, 1 if require_2fa else 0),
                 )
 
                 # P2-4 audit fix: write the audit entry inside the same
@@ -355,7 +357,7 @@ class StorageBackend:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT secret_id, name, version, created_at, updated_at, status
+                SELECT secret_id, name, version, created_at, updated_at, status, note, require_2fa
                 FROM secrets
                 WHERE namespace = ? AND status = 'ACTIVE'
             """,
@@ -373,11 +375,25 @@ class StorageBackend:
                         "created_at": row[3],
                         "updated_at": row[4],
                         "status": row[5],
+                        # Title-safe metadata: never includes the secret value.
+                        "note": row[6],
+                        "require_2fa": bool(row[7]),
                     }
                 )
 
         self.log_audit("LIST_SECRETS", None, f"Listed {len(secrets)} secrets in {namespace}", policy_hash)
         return secrets
+
+    def requires_2fa(self, namespace: str, name: str) -> bool:
+        """Return True if the active secret is flagged for TOTP at approval time."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT require_2fa FROM secrets WHERE namespace = ? AND name = ? AND status = 'ACTIVE' LIMIT 1",
+                (namespace, name),
+            )
+            row = cursor.fetchone()
+            return bool(row[0]) if row else False
 
     def add_honeytoken(self, namespace: str, name: str) -> None:
         with self._get_conn() as conn:
