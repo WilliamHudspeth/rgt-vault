@@ -59,6 +59,7 @@ class VaultManager:
         
         # We store keychain.json next to the DB
         keychain_path = os.path.join(os.path.dirname(actual_db_path), "keychain.json")
+        self._hooks = []
         
         from rgt_vault.providers import create_platform_provider
         self.master_provider = master_provider or create_platform_provider()
@@ -312,6 +313,88 @@ class VaultManager:
         finally:
             zeroize_bytearray(buffer)
             self.audit("LEASE_RETURNED", name, f"Agent: {agent}")
+
+
+    def _safe_hook(self, hook, name: str, *args, **kwargs):
+        try:
+            getattr(hook, name)(*args, **kwargs)
+        except Exception as exc:
+            try:
+                hook.on_hook_error(name, exc)
+            except Exception:
+                pass
+
+    def execute_capability(
+        self,
+        agent_id: str,
+        capability_id: str,
+        version: str = "1.0",
+        parameters: dict = None,
+        *,
+        nonce: bytes = None,
+    ):
+        import time
+        from rgt_vault.hooks.audit import RequestContext
+        
+        parameters = dict(parameters or {})
+        nonce = nonce or os.urandom(16)
+        ctx = RequestContext(
+            agent_id=agent_id,
+            capability_id=capability_id,
+            version=version,
+            timestamp_ns=time.time_ns(),
+            nonce=nonce,
+        )
+
+        request_payload = {"parameters": parameters, "version": version}
+
+        # 1. fire on_capability_request for all hooks
+        for h in self._hooks:
+            self._safe_hook(h, "on_capability_request", ctx, request_payload)
+
+        # 2. policy check
+        authorized = False
+        lease_ttl = 300
+        error = None
+        success = False
+        result = None
+
+        try:
+            # We map capability_id to the policy action.
+            # In ABACPolicyEngine, it expects agent, namespace, purpose, action
+            namespace = parameters.get("namespace", "*")
+            purpose = parameters.get("purpose", "")
+            decision = self.auth.evaluate(agent_id, namespace, purpose, capability_id)
+            authorized = decision["allowed"]
+            
+            if not authorized:
+                error = "policy_denied"
+                raise PermissionError(f"Agent {agent_id} not authorized for {capability_id} v{version}: {decision.get('reason')}")
+
+            # 3. fire grant
+            for h in self._hooks:
+                self._safe_hook(h, "on_capability_grant", ctx, lease_ttl)
+
+            # 4. execute
+            # (stub implementation of capabilities since there is no registry yet)
+            capability = getattr(self, f"_cap_{capability_id}", None)
+            if capability:
+                result = capability(ctx, parameters)
+            else:
+                # If no specific capability method exists, just return success for now
+                result = {"status": "executed", "capability": capability_id}
+            
+            success = True
+            return result
+
+        except Exception as exc:
+            if error is None:
+                error = f"{exc.__class__.__name__}: {exc}"
+            raise
+        finally:
+            # 4b. always fire complete — even on auth failure
+            for h in self._hooks:
+                self._safe_hook(h, "on_capability_complete", ctx, success, error)
 
     def execute(self, agent: str, namespace: str, purpose: str, secret_name: str, callback: Callable[[bytearray], Any]) -> Any:
         """Lease a secret and hand the *mutable buffer* to ``callback``.
