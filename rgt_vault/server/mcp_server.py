@@ -5,7 +5,6 @@ from typing import Any
 
 from fastmcp import Context, FastMCP
 
-from rgt_vault.auth import ABACPolicyEngine
 from rgt_vault.hooks.log_redaction import LogRedactionHook
 
 # rgt-vault internals

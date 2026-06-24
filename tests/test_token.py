@@ -203,9 +203,9 @@ def test_malformed_envelope_raises_token_malformed():
 def test_non_string_input_raises_token_malformed():
     v = HMACTokenVerifier(SECRET)
     with pytest.raises(TokenMalformedError):
-        v.verify(None)  # type: ignore[arg-type]
+        v.verify(None)
     with pytest.raises(TokenMalformedError):
-        v.verify(b"some.bytes")  # type: ignore[arg-type]
+        v.verify(b"some.bytes")
 
 
 def test_invalid_base64_raises_token_malformed():
@@ -274,7 +274,7 @@ def test_short_secret_rejected():
 
 def test_non_bytes_secret_rejected():
     with pytest.raises(ValidationError):
-        HMACTokenVerifier("not-bytes")  # type: ignore[arg-type]
+        HMACTokenVerifier("not-bytes")
 
 
 # ---------------------------------------------------------------------

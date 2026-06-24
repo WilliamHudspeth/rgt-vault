@@ -139,8 +139,8 @@ class _FakeShadow(ShadowWriter):
 
     def __init__(self, fail: bool = False):
         self.fail = fail
-        self.sets = []
-        self.revokes = []
+        self.sets: list = []
+        self.revokes: list = []
         self._divergences = []
         self._lock = threading.Lock()
 

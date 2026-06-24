@@ -38,8 +38,8 @@ def post_json(
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read())
     except urllib.error.HTTPError as e:
-        body = e.read()[:500].decode("utf-8", errors="replace")
-        raise HTTPStatusError(e.code, body) from e
+        err_body = e.read()[:500].decode("utf-8", errors="replace")
+        raise HTTPStatusError(e.code, err_body) from e
     except urllib.error.URLError as e:
         raise HTTPStatusError(0, f"URLError: {e.reason}") from e
 

@@ -9,6 +9,7 @@ killpg on timeout, scrub before trunc, --model on gemini.
 import os
 import subprocess
 import time
+import typing
 from pathlib import Path
 
 import pytest
@@ -22,7 +23,7 @@ def _make_fake_binary(path: Path, body: str) -> None:
     path.chmod(0o755)
 
 
-def _force_which(name: str, body: str) -> "callable":
+def _force_which(name: str, body: str) -> "typing.Callable":
     """Create a fake binary named `name` on PATH and patch shutil.which.
 
     `name` is the binary name (e.g. "gemini"); `body` is the bash body

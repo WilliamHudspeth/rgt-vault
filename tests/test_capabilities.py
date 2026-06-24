@@ -152,7 +152,7 @@ def test_registry_empty_name_rejected():
 def test_registry_non_callable_handler_rejected():
     r = CapabilityRegistry()
     with pytest.raises(ValueError):
-        r.register("foo.bar", "not-callable")  # type: ignore[arg-type]
+        r.register("foo.bar", "not-callable")
 
 
 def test_registry_supports_version_check():
