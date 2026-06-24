@@ -20,6 +20,7 @@ from rgt_vault.capabilities import (
     register_builtin_capabilities,
 )
 from rgt_vault.crypto import decrypt, encrypt, zeroize_bytearray
+from rgt_vault.shadow import NullShadowWriter, ShadowWriter
 from rgt_vault.exceptions import (
     CapabilityVersionError,
     PolicyDeniedError,
@@ -67,6 +68,7 @@ class VaultManager:
         hook: Optional[AuditHook] = None,
         capability_registry: Optional[CapabilityRegistry] = None,
         token_verifier: Optional[TokenVerifier] = None,
+        shadow_writer: Optional["ShadowWriter"] = None,
     ):
         # 1. Run cryptographic self-tests (Fail closed)
         run_crypto_selftest()
@@ -103,6 +105,12 @@ class VaultManager:
             # out of the box for operators wiring the system together.
             register_builtin_capabilities(self.capability_registry)
         self.token_verifier: Optional[TokenVerifier] = token_verifier
+
+        # RGT-161 dual-write: optional shadow writer mirrors set/revoke to a
+        # co-located Go server. Default is a disabled no-op so behaviour is
+        # identical when shadowing is off. Python is always the source of
+        # truth; shadow failures are recorded as divergences, never raised.
+        self.shadow: ShadowWriter = shadow_writer if shadow_writer is not None else NullShadowWriter()
 
         # The action registry backs the ``secrets.use`` bridge
         # capability, which leases a stored secret and runs a v0.2
@@ -662,8 +670,27 @@ class VaultManager:
             raise PolicyDeniedError(f"Agent '{agent}' denied write access to '{name}' ({namespace}/{purpose})")
 
         aad = self._get_aad(namespace, name)
-        ciphertext = encrypt(value, self.dek, aad)
+        # NOTE: the original `value` str remains in CPython's interned string pool —
+        # zeroizing it would require ctypes hacks; this is a known Python limitation.
+        value_buf = bytearray(value.encode("utf-8"))
+        try:
+            ciphertext = encrypt(value_buf, self.dek, aad)
+        finally:
+            zeroize_bytearray(value_buf)
         self.storage.set_secret(namespace, name, ciphertext, 1, policy_hash=self.policy_hash)
+
+        # RGT-161 dual-write: mirror to the Go shadow server AFTER the
+        # authoritative Python write. A NullShadowWriter (the default) makes
+        # this a no-op and emits no audit rows, so the disabled path is
+        # unchanged. A failure here is logged as a divergence and never
+        # propagates -- Python has already committed the source-of-truth write.
+        if self.shadow.enabled:
+            ok = self.shadow.mirror_set(namespace, name, value, agent=agent, purpose=purpose)
+            self._log_audit(
+                "SHADOW_WRITE" if ok else "SHADOW_DIVERGENCE",
+                name,
+                json.dumps({"op": "set", "namespace": namespace}),
+            )
 
     def get_fingerprint(self, name: str, namespace: str = "default", version: Optional[int] = None) -> str:
         """Returns the SHA256 fingerprint of the ciphertext for debugging.
@@ -760,6 +787,15 @@ class VaultManager:
     def revoke_secret(self, namespace: str, name: str, agent: str = "system") -> None:
         self._hook_consult("revoke", agent, namespace, secret_name=name)
         self.storage.revoke_secret(namespace, name, policy_hash=self.policy_hash)
+
+        # RGT-161 dual-write: mirror the revoke to the Go shadow server.
+        if self.shadow.enabled:
+            ok = self.shadow.mirror_revoke(namespace, name)
+            self._log_audit(
+                "SHADOW_WRITE" if ok else "SHADOW_DIVERGENCE",
+                name,
+                json.dumps({"op": "revoke", "namespace": namespace}),
+            )
 
     def simulate(self, agent: str, namespace: str, purpose: str, action: str = "read") -> Dict[str, Any]:
         self._hook_consult("simulate", agent, namespace, purpose)
@@ -877,6 +913,31 @@ class VaultManager:
         return self.storage.get_audit_log(limit)
 
     def verify_audit_chain(self) -> bool:
+        """Verify the integrity of the audit log hash chain.
+
+        Walks every row in audit_logs in sequence order and recomputes the
+        SHA-256 chain hash from (prev_hash, timestamp, action, secret_name,
+        details, policy_hash). Returns True only if every link matches the
+        stored value.
+
+        Detects: insertion of rows between existing entries, modification of
+        any audited field on any row, and deletion of rows from the middle of
+        the chain.
+
+        Does NOT detect a root-level offline replacement: a user with
+        filesystem access can copy vault.db, truncate audit_logs, rebuild a
+        fresh internally-consistent chain from scratch, and replace the file.
+        verify_audit_chain() will return True because the chain is valid — it
+        cannot distinguish a legitimate chain from a fabricated one with no
+        prior history.
+
+        Production hardening: persist the current tail hash out-of-band after
+        every write — for example, to the OS keychain via the platform
+        secret-store provider, a TPM NV counter, or an append-only remote
+        syslog sink. On verification, compare the stored tail hash against the
+        external anchor before trusting the chain. See SECURITY.md §Audit Chain
+        Limitations.
+        """
         # P1-1 audit fix: an empty log is NOT "OK" -- a vault with no
         # audit entries is suspicious (the DB may have been wiped, or
         # the vault may never have been used, or the audit table may

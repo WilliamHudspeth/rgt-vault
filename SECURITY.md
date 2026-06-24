@@ -65,6 +65,36 @@ Under the assumptions above:
   `vault_id` and DEK; they can only be restored into the same vault (same
   `keychain.json`). Import refuses payloads from a different vault.
 
+## Audit Chain Limitations
+
+- **What the chain verifies.** Every audit record includes a SHA-256 hash that
+  incorporates the previous record's hash, timestamp, action, secret name,
+  detail payload, and policy hash. This makes it detectable if any row is
+  inserted, deleted from the middle, or modified after the fact.
+
+- **Root-level offline replacement is not detected.** A user with root or
+  direct filesystem access can copy `vault.db`, truncate `audit_logs`, write
+  a fresh chain that is internally consistent, and replace the file.
+  `verify_audit_chain()` will return `True` — the chain is valid, but the
+  entire prior history has been silently discarded.
+
+- **Why this is acceptable for personal deployments.** rgt-vault is designed
+  for single-user, personal-machine use. An attacker with root access already
+  has full control of the secrets themselves; the audit log is not the
+  meaningful security boundary in that threat model.
+
+- **What a hardened deployment should do.** After every audit write, persist
+  the current tail hash to a second, independent storage location not
+  co-located with `vault.db`. Suitable anchors include the OS keychain (via
+  the platform secret-store provider), a TPM NV counter (survives OS
+  reinstall), or an append-only remote syslog sink. On verification, the
+  stored tail hash must match the external anchor before the chain is trusted.
+
+- **No cryptographic signing.** The chain provides tamper-evidence, not
+  non-repudiation. It does not prove who performed an action, only that the
+  recorded sequence has not been altered since it was written by a process
+  with write access to the DB.
+
 ## Reporting a vulnerability
 
 Please report security issues **privately**. Do not open a public issue for
