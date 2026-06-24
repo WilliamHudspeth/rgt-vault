@@ -138,6 +138,19 @@ It is not designed to defend against:
 | [Guides](docs/guides/) | API usage, policies, and migration |
 | [Reference](docs/reference/) | CLI and configuration references |
 
+## Windows Users
+
+Windows Smart App Control may block the installer because the binary
+is not code-signed (certificates cost ~$300/yr, not justified for a
+proof of concept).
+
+To run it: right-click the `.exe` → Properties → check **Unblock** → OK,
+then run normally. Or in the SmartScreen dialog click **More info** →
+**Run anyway**.
+
+This is standard for unsigned open-source tools. All source is in this
+repo if you prefer to build from source.
+
 ## Status
 
 Current State: **Security Preview**
