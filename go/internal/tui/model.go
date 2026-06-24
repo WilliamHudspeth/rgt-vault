@@ -24,6 +24,7 @@ type Client interface {
 	VerifyAudit() bool
 	ListSecrets(namespace string) ([]SecretInfo, error)
 	Rotate(target string) error
+	GetAuditLog(limit int) ([]AuditEntry, error)
 }
 
 type loadedMsg struct {
@@ -50,6 +51,7 @@ const (
 	modeHelp
 	modeSearch
 	modeConfirm
+	modeAudit
 )
 
 // Model holds the TUI state.
@@ -79,9 +81,33 @@ type Model struct {
 	// We copy the FINGERPRINT, not plaintext — the TUI never holds the secret value.
 	clipboard        Clipboard
 	clipboardTimeout time.Duration
+
+	// RGT-41: Live Audit Log Streamer
+	auditEntries []AuditEntry
 }
 
 // totpTickCmd arms a one-second tick that emits totpTickMsg.
+
+type auditTickMsg time.Time
+
+type auditLoadMsg struct {
+	entries []AuditEntry
+	err     error
+}
+
+func auditTickCmd() tea.Cmd {
+	return tea.Tick(time.Second*2, func(t time.Time) tea.Msg {
+		return auditTickMsg(t)
+	})
+}
+
+func (m Model) loadAuditCmd() tea.Cmd {
+	return func() tea.Msg {
+		entries, err := m.client.GetAuditLog(100)
+		return auditLoadMsg{entries: entries, err: err}
+	}
+}
+
 func totpTickCmd() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
 		return totpTickMsg(t)
@@ -171,6 +197,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "clipboard cleared"
 		return m, nil
 
+	case auditTickMsg:
+		if m.mode == modeAudit {
+			return m, tea.Batch(m.loadAuditCmd(), auditTickCmd())
+		}
+		return m, nil
+
+	case auditLoadMsg:
+		m.auditEntries = msg.entries
+		if msg.err != nil {
+			m.status = "audit error: " + msg.err.Error()
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		switch m.mode {
 		case modeDashboard:
@@ -200,6 +239,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "vault locked"
 				return m, tea.Quit
 
+			case "a":
+				m.mode = modeAudit
+				m.status = "streaming audit log..."
+				return m, tea.Batch(m.loadAuditCmd(), auditTickCmd())
 			case "t":
 				// Toggle the namespace tree view.
 				m.treeView = !m.treeView
@@ -217,6 +260,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						})
 					}
 				}
+			}
+
+		case modeAudit:
+			switch msg.String() {
+			case "q", "ctrl+c":
+				return m, tea.Quit
+			case "esc", "a":
+				m.mode = modeDashboard
+				m.status = ""
+				return m, nil
 			}
 
 		case modeHelp:
@@ -314,12 +367,49 @@ func (m Model) View() string {
 		sb.WriteString("  r        Rotate master key\n")
 		sb.WriteString("  P        Panic lock & exit\n")
 		sb.WriteString("  t        Toggle tree view\n")
+		sb.WriteString("  a        Live audit log stream\n")
 		sb.WriteString("  c        Copy fingerprint to clipboard\n")
 		sb.WriteString("  ?        Show help\n")
 		sb.WriteString("  q/ctrl+c Quit\n")
 		sb.WriteString("  up/k     Move cursor up\n")
 		sb.WriteString("  down/j   Move cursor down\n\n")
 		sb.WriteString("Press any key to return...\n")
+		return sb.String()
+	}
+
+	if m.mode == modeAudit {
+		var sb strings.Builder
+		sb.WriteString(headerStyle.Render("Live Audit Log Stream") + "\n\n")
+		if len(m.auditEntries) == 0 {
+			sb.WriteString("  (no audit entries)\n")
+		} else {
+			displayCount := m.height - 10
+			if displayCount < 5 {
+				displayCount = 5
+			}
+			start := len(m.auditEntries) - displayCount
+			if start < 0 {
+				start = 0
+			}
+			for _, entry := range m.auditEntries[start:] {
+				// Trim long details
+				detail := entry.Detail
+				if len(detail) > 40 {
+					detail = detail[:37] + "..."
+				}
+				// Format: HH:MM:SS | EVENT | PRINCIPAL | DETAIL
+				tStr := entry.Timestamp
+				if len(tStr) >= 19 {
+					tStr = tStr[11:19] // Extract HH:MM:SS from RFC3339
+				}
+				line := fmt.Sprintf("%-8s | %-15s | %-10s | %s", tStr, entry.Event, entry.Principal, detail)
+				sb.WriteString(normalStyle.Render(line) + "\n")
+			}
+		}
+		sb.WriteString("\n[a/esc] back | [q] quit\n")
+		if m.status != "" {
+			sb.WriteString("\n" + m.status)
+		}
 		return sb.String()
 	}
 
@@ -377,7 +467,7 @@ func (m Model) View() string {
 
 	var footerParts []string
 	if m.mode == modeDashboard {
-		footerParts = append(footerParts, "[/] search", "[r] rotate", "[P] panic-lock", "[t] tree", "[c] copy", "[?] help", "[q] quit")
+		footerParts = append(footerParts, "[/] search", "[r] rotate", "[a] audit", "[P] panic-lock", "[t] tree", "[c] copy", "[?] help", "[q] quit")
 	} else if m.mode == modeSearch {
 		footerParts = append(footerParts, "[esc] cancel search", "[enter] keep filter")
 	} else if m.mode == modeConfirm {

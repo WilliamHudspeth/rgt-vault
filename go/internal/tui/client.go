@@ -101,6 +101,40 @@ func (c *HTTPClient) ListSecrets(namespace string) ([]SecretInfo, error) {
 	return infos, nil
 }
 
+
+type AuditEntry struct {
+	Timestamp string `json:"timestamp"`
+	Event     string `json:"event"`
+	Principal string `json:"principal"`
+	Detail    string `json:"detail"`
+	Hash      string `json:"hash"`
+}
+
+type auditLogResponse struct {
+	Entries []AuditEntry `json:"entries"`
+}
+
+func (c *HTTPClient) GetAuditLog(limit int) ([]AuditEntry, error) {
+	u := fmt.Sprintf("%s/v1/audit?limit=%d", c.baseURL, limit)
+	req, err := c.newReq(http.MethodGet, u, "")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get audit: unexpected status %d", resp.StatusCode)
+	}
+	var res auditLogResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+	return res.Entries, nil
+}
+
 func (c *HTTPClient) Rotate(target string) error {
 	body, err := json.Marshal(map[string]string{"target": target})
 	if err != nil {

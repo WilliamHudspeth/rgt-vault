@@ -58,6 +58,13 @@ The Go server is currently an **in-memory** store. The next milestone replaces
 this with the SQLite-backed `VaultManager` ported from Python
 (`rgt_vault/storage/sqlite.py`).
 
+## TUI Dashboard (rgt-vault-tui)
+
+The Go implementation includes a full-featured terminal UI built with Charmbracelet `bubbletea` (`internal/tui/`).
+- **Dashboard Mode**: Browse secrets, view namespaces via a tree-view (`t`), filter via fuzzy search (`/`), and copy fingerprints to the clipboard (`c`).
+- **Live Audit Log Stream**: Press `a` from the dashboard to open a real-time view of vault activity streaming directly from the server.
+- **Master Key Rotation**: Safely trigger a master key rotation (`r`) with confirmation.
+
 ## Run the tests
 
 ```bash

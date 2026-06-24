@@ -141,6 +141,7 @@ func (f *fakeClientTOTP) ListSecrets(namespace string) ([]SecretInfo, error) {
 	}, nil
 }
 func (f *fakeClientTOTP) Rotate(target string) error { return nil }
+func (f *fakeClientTOTP) GetAuditLog(limit int) ([]AuditEntry, error) { return nil, nil }
 
 // ---------------------------------------------------------------------------
 // fakeClientTree — returns three secrets with path-like names
@@ -158,6 +159,7 @@ func (f *fakeClientTree) ListSecrets(namespace string) ([]SecretInfo, error) {
 	}, nil
 }
 func (f *fakeClientTree) Rotate(target string) error { return nil }
+func (f *fakeClientTree) GetAuditLog(limit int) ([]AuditEntry, error) { return nil, nil }
 
 // ---------------------------------------------------------------------------
 // teatest: TOTP countdown appears in output

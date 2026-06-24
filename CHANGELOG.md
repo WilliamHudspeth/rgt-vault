@@ -3,6 +3,11 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **TUI Live Audit Log Streamer**: Added a real-time audit log viewer to the Go TUI (`modeAudit`). Press `a` from the dashboard to stream audit events directly from the server.
+
 ## [0.3.0] — 2026-06-24
 
 Status: Capability security refactor merged to master.

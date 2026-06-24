@@ -32,6 +32,10 @@ func (f *fakeClient) Rotate(target string) error {
 	return nil
 }
 
+func (f *fakeClient) GetAuditLog(limit int) ([]AuditEntry, error) {
+	return []AuditEntry{}, nil
+}
+
 // readOutput drains all currently available bytes from the reader.
 func readOutput(r io.Reader) string {
 	var buf bytes.Buffer
@@ -189,6 +193,45 @@ func TestQuit(t *testing.T) {
 		teatest.WithCheckInterval(50*time.Millisecond),
 	)
 
+	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
+}
+
+// TestAuditModeToggle verifies that 'a' opens the Live Audit Log Stream.
+func TestAuditModeToggle(t *testing.T) {
+	fake := &fakeClient{}
+	tm := teatest.NewTestModel(
+		t,
+		New(fake, "default"),
+		teatest.WithInitialTermSize(80, 24),
+	)
+
+	// Wait for load
+	teatest.WaitFor(
+		t,
+		tm.Output(),
+		func(bts []byte) bool {
+			return strings.Contains(string(bts), "online")
+		},
+		teatest.WithDuration(3*time.Second),
+		teatest.WithCheckInterval(50*time.Millisecond),
+	)
+
+	// Open audit log stream
+	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+
+	teatest.WaitFor(
+		t,
+		tm.Output(),
+		func(bts []byte) bool {
+			return strings.Contains(string(bts), "Live Audit Log Stream")
+		},
+		teatest.WithDuration(3*time.Second),
+		teatest.WithCheckInterval(50*time.Millisecond),
+	)
+
+	// Dismiss and quit
+	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
 	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
 }
