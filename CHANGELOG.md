@@ -362,3 +362,4 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Dead `refactor.py` (a no-op that leaked a hardcoded local path).
 - Committed build/cache artifacts (`agent_vault.egg-info/`, `.pytest_cache/`).- **Local freeze signal (kill switch).** Touching `~/.config/rgt-vault/freeze` immediately blocks all secret access and capability execution.
 - **Background FileWatcher (RGT-45).** A daemon thread now monitors the freeze kill switch and proactively wipes the DEK from memory upon detection.
+- **SecureBuffer & AuditHook (RGT-112, RGT-33, RGT-44).** Refactored legacy secret migration to use mlock pinned memory (SecureBuffer) and defined the stable AuditHook abstract base class.

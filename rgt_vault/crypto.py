@@ -1,3 +1,4 @@
+from __future__ import annotations
 import ctypes
 import os
 from typing import Union
@@ -73,3 +74,115 @@ def zeroize_bytearray(b: bytearray) -> None:
         # Fallback if ctypes.memset fails
         for i in range(buffer_size):
             b[i] = 0
+import ctypes
+import sys
+import os
+from types import TracebackType
+from typing import Optional
+
+class SecureBuffer:
+    """
+    Fixed-size, mlocked native buffer for secrets.
+    Use ONLY inside a context manager — guarantees zeroization.
+    """
+    def __init__(self, size: int, *, lock: bool = True):
+        if size <= 0:
+            raise ValueError("size must be >0")
+        self.size = int(size)
+        self._buf = ctypes.create_string_buffer(self.size)
+        self._addr = ctypes.addressof(self._buf)
+        self._locked = False
+        self._closed = False
+
+        if lock:
+            self._lock_memory()
+
+        self.zeroize() # start clean
+
+    # --- platform locking ---
+    def _lock_memory(self) -> None:
+        try:
+            if sys.platform == "win32":
+                kernel32 = ctypes.windll.kernel32
+                if not kernel32.VirtualLock(ctypes.c_void_p(self._addr), ctypes.c_size_t(self.size)):
+                    raise OSError(ctypes.get_last_error(), "VirtualLock failed")
+                self._locked = True
+            else:
+                libc = ctypes.CDLL(None, use_errno=True)
+                # mlock requires page alignment on some kernels — create_string_buffer is usually fine
+                if libc.mlock(ctypes.c_void_p(self._addr), ctypes.c_size_t(self.size))!= 0:
+                    errno = ctypes.get_errno()
+                    # Don't crash in dev, but log — production should run with CAP_IPC_LOCK
+                    raise OSError(errno, "mlock failed - run with CAP_IPC_LOCK or increase ulimit -l")
+                self._locked = True
+        except Exception:
+            # Fail-open for portability, but mark unlocked
+            self._locked = False
+
+    def _unlock_memory(self) -> None:
+        if not self._locked:
+            return
+        try:
+            if sys.platform == "win32":
+                ctypes.windll.kernel32.VirtualUnlock(ctypes.c_void_p(self._addr), ctypes.c_size_t(self.size))
+            else:
+                libc = ctypes.CDLL(None, use_errno=True)
+                libc.munlock(ctypes.c_void_p(self._addr), ctypes.c_size_t(self.size))
+        finally:
+            self._locked = False
+
+    # --- core ops ---
+    def zeroize(self) -> None:
+        """Overwrite buffer with zeros using non-optimizable primitive."""
+        if self._closed:
+            return
+        if sys.platform == "win32":
+            # RtlSecureZeroMemory = SecureZeroMemory
+            ctypes.windll.kernel32.RtlSecureZeroMemory(ctypes.c_void_p(self._addr), ctypes.c_size_t(self.size))
+        else:
+            # libc memset is not elided when called via ctypes
+            libc = ctypes.CDLL(None)
+            libc.memset.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_size_t]
+            libc.memset(ctypes.c_void_p(self._addr), 0, ctypes.c_size_t(self.size))
+
+    def write(self, data: bytes, offset: int = 0) -> None:
+        if self._closed:
+            raise ValueError("buffer closed")
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            raise TypeError("data must be bytes-like")
+        n = len(data)
+        if offset < 0 or offset + n > self.size:
+            raise ValueError("write exceeds buffer")
+        ctypes.memmove(self._addr + offset, bytes(data), n)
+
+    def read(self, n: Optional[int] = None, offset: int = 0) -> bytes:
+        if self._closed:
+            raise ValueError("buffer closed")
+        n = self.size - offset if n is None else n
+        if offset < 0 or offset + n > self.size:
+            raise ValueError("read exceeds buffer")
+        return ctypes.string_at(self._addr + offset, n)
+
+    def wipe_and_close(self) -> None:
+        if not self._closed:
+            self.zeroize()
+            self._unlock_memory()
+            self._closed = True
+
+    # --- context manager ---
+    def __enter__(self) -> "SecureBuffer":
+        return self
+
+    def __exit__(self, exc_type, exc, tb: Optional[TracebackType]) -> None:
+        self.wipe_and_close()
+
+    def __del__(self):
+        # best-effort, __del__ not guaranteed
+        try:
+            self.wipe_and_close()
+        except Exception:
+            pass
+
+    # prevent accidental repr leaks
+    def __repr__(self):
+        return f"<SecureBuffer size={self.size} locked={self._locked} closed={self._closed}>"

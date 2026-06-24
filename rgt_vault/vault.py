@@ -128,16 +128,31 @@ class VaultManager:
             if dek_version != 0:
                 # Already migrated; leave it.
                 return ciphertext, dek_version
-            try:
-                plaintext = old_fernet.decrypt(ciphertext)
-            except InvalidToken:
-                # Corrupted legacy row -- preserve as-is, log it. The audit
-                # chain is unaffected because the rewrite is atomic and this
-                # row's ciphertext+checksum remain unchanged.
-                return ciphertext, dek_version
-            aad = self._get_aad(namespace, name)
-            new_ciphertext = encrypt(plaintext, self.dek, aad)
-            return new_ciphertext, 1
+            
+            from rgt_vault.crypto import SecureBuffer, zeroize_bytearray
+            
+            with SecureBuffer(len(ciphertext)) as buf:
+                buf.write(ciphertext)
+                try:
+                    plaintext = old_fernet.decrypt(buf.read())
+                except InvalidToken:
+                    # Corrupted legacy row -- preserve as-is, log it.
+                    return ciphertext, dek_version
+                    
+                aad = self._get_aad(namespace, name)
+                new_ciphertext = encrypt(plaintext, self.dek, aad)
+                
+                # Best-effort zeroize of the intermediate plaintext
+                if isinstance(plaintext, (bytes, bytearray)):
+                    try:
+                        import ctypes
+                        libc = ctypes.CDLL(None)
+                        libc.memset.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_size_t]
+                        libc.memset(id(plaintext) + 32, 0, len(plaintext))
+                    except Exception:
+                        pass
+                
+                return new_ciphertext, 1
 
         self.storage.bulk_rewrite_active_secrets(_rewrite)
 
