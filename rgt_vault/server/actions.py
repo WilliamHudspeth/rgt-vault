@@ -254,9 +254,43 @@ def _action_openai_chat(secret_buf: bytearray, params: Dict[str, Any], *, regist
     messages = params.get("messages")
     if not model or not isinstance(model, str):
         raise ActionExecutionError("'model' is required and must be a string.")
-    if not messages or not isinstance(messages, list):
+    if not isinstance(messages, list):
         raise ActionExecutionError("'messages' is required and must be a list.")
-    body = json.dumps({"model": model, "messages": messages}).encode("utf-8")
+    if len(messages) == 0:
+        raise ActionExecutionError("'messages' must not be empty.")
+    for i, msg in enumerate(messages):
+        if not isinstance(msg, dict):
+            raise ActionExecutionError(
+                f"'messages[{i}]' must be a JSON object with 'role' and 'content' keys."
+            )
+        role = msg.get("role")
+        content = msg.get("content")
+        if not isinstance(role, str) or not role:
+            raise ActionExecutionError(
+                f"'messages[{i}].role' is required and must be a non-empty string."
+            )
+        if not isinstance(content, (str, list)):
+            raise ActionExecutionError(
+                f"'messages[{i}].content' is required and must be a string or list."
+            )
+    max_tokens = params.get("max_tokens")
+    temperature = params.get("temperature")
+    if max_tokens is not None:
+        if not isinstance(max_tokens, int) or isinstance(max_tokens, bool):
+            raise ActionExecutionError("'max_tokens' must be an integer if provided.")
+        if max_tokens <= 0 or max_tokens > 1_000_000:
+            raise ActionExecutionError("'max_tokens' must be an integer between 1 and 1,000,000.")
+    if temperature is not None:
+        if not isinstance(temperature, (int, float)) or isinstance(temperature, bool):
+            raise ActionExecutionError("'temperature' must be a number if provided.")
+        if temperature < 0.0 or temperature > 2.0:
+            raise ActionExecutionError("'temperature' must be between 0.0 and 2.0 inclusive.")
+    body_dict: Dict[str, Any] = {"model": model, "messages": messages}
+    if max_tokens is not None:
+        body_dict["max_tokens"] = max_tokens
+    if temperature is not None:
+        body_dict["temperature"] = temperature
+    body = json.dumps(body_dict).encode("utf-8")
     base_url_raw = params.get("base_url", "https://api.openai.com")
     if not isinstance(base_url_raw, str):
         raise ActionExecutionError("'base_url' must be a string if provided.")
@@ -335,7 +369,7 @@ def register_builtin_actions(registry: ActionRegistry) -> None:
                 "The leased secret is sent as a Bearer token. Returns the "
                 "upstream response (status, headers, body_text)."
             ),
-            params_schema=["model", "messages", "base_url"],
+            params_schema=["model", "messages", "base_url", "max_tokens", "temperature"],
         )
     )
     registry.register(

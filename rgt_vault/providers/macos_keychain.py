@@ -38,11 +38,12 @@ def seal_master_secret(
     account_name: str,
     updatable: bool = False
 ) -> None:
-    with tempfile.NamedTemporaryFile(mode="w", delete=False) as tmp:
-        tmp.write(master_secret.decode("utf-8") if isinstance(master_secret, bytes) else master_secret)
-        tmp_path = tmp.name
-
+    # mkstemp creates the file with 0o600 (owner read/write only), avoiding
+    # the world-readable exposure that NamedTemporaryFile has on permissive umasks.
+    fd, tmp_path = tempfile.mkstemp()
     try:
+        with os.fdopen(fd, "w") as tmp:
+            tmp.write(master_secret.decode("utf-8") if isinstance(master_secret, bytes) else master_secret)
         cmd = [
             "security", "add-generic-password",
             "-s", service_name,
@@ -52,7 +53,6 @@ def seal_master_secret(
         ]
         if updatable:
             cmd.append("-U")
-
         subprocess.run(cmd, check=True)
     finally:
         os.unlink(tmp_path)

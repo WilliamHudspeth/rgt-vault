@@ -30,6 +30,22 @@ flowchart LR
 ```
 
 
+> ## ⚠️ NOT WIRED — "rgtp-protocol" two-signal pattern
+>
+> The original architecture brief and `docs/audits/2026-06-17-clarity-of-vision.md`
+> §F-1 (RGT-130) describe a two-signal access pattern that would have rgt-vault
+> runtime calls be mediated by an `rgtp-protocol.Proxy` component. **That
+> component does not exist in the current codebase** — no `rgtp-protocol/`
+> directory, no `rgtp` imports, and no runtime path through it. All current
+> access flows go directly through `VaultManager.lease_secret()` as shown
+> in the access-path diagram above.
+>
+> Status: **deferred** (RGT-130, option c). The concept is preserved here for
+> historical reference; the v0.3.0 Go rewrite (RGT-128, RGT-166) is the
+> place where any new mediation surface should land, not a Python-side
+> retrofit. The Python v0.2.x line is in maintenance mode (RGT-164) and
+> will not gain a new rgtp module.
+
 ## 1. Cryptographic Primitives
 The vault leverages industry-standard, authenticated encryption and robust key derivation functions:
 - **AES-256-GCM**: Primary encryption for all secrets at rest. Provides Authenticated Encryption with Associated Data (AEAD).

@@ -43,6 +43,38 @@ production-readiness audit.
   `pytest`, `ruff`, and a wheel-build smoke test.
 - **Foreign keys / referential integrity** across `secrets`/`audit_logs`.
 
+## Done in v0.3 (capability security refactor on `audit-hook-layer`)
+
+The "Under consideration" items below this section are now
+implemented on the `audit-hook-layer` branch and land in v0.3.
+Not merged yet — see `BRANCH_SUMMARY.md` for the review.
+
+- **Per-agent tokens.** Replaced the v0.2 namespace-scoped
+  capability tokens with action-scoped v2 tokens (one token
+  = one capability + context bindings). `TokenVerifier` ABC
+  with `HMACTokenVerifier` v1 implementation; `Ed25519TokenVerifier`
+  is a stub for future deployment.
+- **Egress-proxy model.** `VaultManager.execute_capability` is
+  the new primary enforcement point. The vault leases the
+  secret, runs the action handler inside the vault, and
+  returns only the result. Plaintext never crosses the
+  boundary. The `secrets.use` bridge capability wires the v0.2
+  `ActionRegistry` into the new path for backwards
+  compatibility.
+- **Capability registry.** `CapabilityRegistry` is the single
+  point of dispatch; capability names are first-class
+  entities. New code registers a capability and calls
+  `execute_capability`; no more giant if/elif blocks.
+- **Hook layer refactor.** `HookRequest` carries the new
+  capability fields; hooks branch on `req.is_capability`.
+  `TwoFactorHook` dispatches v1 vs v2 tokens. `WebhookHook`
+  no longer has a `soar` mode — SOAR products integrate
+  through `webhook` mode.
+- **HTTP surface.** `POST /v1/capabilities/execute` and
+  `GET /v1/capabilities`. Bearer-token gated, the same
+  exception-to-HTTP-status mapping, the same exception
+  sanitization as the v0.2 `/use` endpoint.
+
 ## Under consideration
 
 - Pluggable storage backends (Postgres) for multi-process deployments.
@@ -52,6 +84,12 @@ production-readiness audit.
   outbound call itself for arbitrary registered upstreams (request templating),
   keeping plaintext off localhost entirely. Per-agent tokens (rather than one
   shared token) would land alongside it.
+- **MCP server** so MCP-compatible agent frameworks (Claude Desktop,
+  Cursor, VS Code, Continue, Roo, Cline) can consume the vault
+  without a custom integration. The capability surface is the
+  natural API boundary for MCP tools.
+- **Redaction middleware** so agent frameworks that log tool I/O
+  don't leak secrets into their own logs.
 
 ## Strategic direction — Go rewrite + capability model
 

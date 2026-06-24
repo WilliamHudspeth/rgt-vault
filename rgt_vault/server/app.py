@@ -31,6 +31,8 @@ except ModuleNotFoundError as e:  # pragma: no cover - exercised only without ex
 from rgt_vault.exceptions import (
     ActionExecutionError,
     ActionNotFoundError,
+    CapabilityNotFoundError,
+    CapabilityVersionError,
     PolicyDeniedError,
     SecretNotFoundError,
     ServerAuthError,
@@ -70,6 +72,21 @@ class SimulateBody(BaseModel):
     action: str = "read"
 
 
+class ExecuteCapabilityBody(BaseModel):
+    """Body for the ``/v1/capabilities/execute`` endpoint.
+
+    The ``capability_token`` is a v2 token string issued by the harness
+    (typically via :class:`rgt_vault.token.HMACTokenVerifier`). The
+    ``agent_id`` is the caller's identity claim; the vault compares it
+    to the token's ``agent_id`` field and refuses on mismatch.
+    """
+    capability: str
+    agent_id: str
+    capability_token: str
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    capability_version: int = 1
+
+
 # VaultError subclass -> HTTP status. PermissionError (honeytoken / rate limit)
 # is handled separately because it is a builtin, not a VaultError.
 _STATUS_MAP = {
@@ -77,6 +94,8 @@ _STATUS_MAP = {
     PolicyDeniedError: 403,
     SecretNotFoundError: 404,
     ActionNotFoundError: 404,
+    CapabilityNotFoundError: 404,
+    CapabilityVersionError: 400,
     ValidationError: 400,
     ActionExecutionError: 500,
     VaultError: 400,  # catch-all base, matched last via MRO walk
@@ -259,6 +278,85 @@ def build_app(
     @app.post("/v1/policy/simulate")
     def policy_simulate(request: Request, body: SimulateBody, token_id: str = Depends(require_token)) -> Dict[str, Any]:
         return vault.simulate(body.agent, body.namespace, body.purpose, body.action)
+
+    @app.post("/v1/capabilities/execute")
+    def execute_capability(
+        request: Request,
+        body: ExecuteCapabilityBody,
+        token_id: str = Depends(require_token),
+    ) -> Dict[str, Any]:
+        """Execute a registered capability on behalf of the named agent.
+
+        The endpoint is the v0.3 primary surface for capability-based
+        work. The legacy ``/v1/secrets/{ns}/{name}/use`` path remains
+        available for backwards compatibility; new integrations should
+        register a capability and call this endpoint.
+
+        Failure modes
+        -------------
+
+        * 401: missing or invalid bearer token.
+        * 400: malformed body, missing verifier on the server, or
+          ``CapabilityVersionError`` (the requested version is not
+          supported by the registered handler).
+        * 403: the capability token failed signature/expiry/binding
+          checks, the hook denied the call, or the vault is frozen.
+        * 404: the capability name is not registered.
+        * 500: the handler raised an unhandled exception (the
+          response body is sanitized; the full traceback is in the
+          server log).
+        """
+        try:
+            result = vault.execute_capability(
+                capability_name=body.capability,
+                payload=body.payload,
+                agent_id=body.agent_id,
+                capability_token=body.capability_token,
+                capability_version=body.capability_version,
+            )
+        except (ValidationError, CapabilityVersionError):
+            # Both map to 400 via the exception handler below.
+            raise
+        except (PolicyDeniedError, CapabilityNotFoundError):
+            # Map cleanly to 403 / 404. The exception handler below
+            # converts these; we re-raise so the structured error
+            # response reaches the client.
+            raise
+        except Exception:
+            # Handler exceptions are server faults. Log the full
+            # traceback server-side; tell the client only the class
+            # name so a misuse of an action's exception text can never
+            # leak a secret value.
+            logger.exception(
+                "capability %r raised an unhandled exception; details suppressed from response",
+                body.capability,
+            )
+            raise ActionExecutionError(
+                f"capability {body.capability!r} failed; see server logs for details"
+            )
+        return {"ok": True, "capability": body.capability, "result": result}
+
+    @app.get("/v1/capabilities")
+    def list_capabilities(token_id: str = Depends(require_token)) -> Dict[str, Any]:
+        """List the registered capabilities and the versions each one supports.
+
+        The endpoint is intentionally read-only: it does NOT expose the
+        handler bodies or any secret material. An operator can use it
+        to verify that the harness's view of the registry matches the
+        vault's.
+        """
+        specs = vault.capability_registry.list()
+        return {
+            "capabilities": [
+                {
+                    "name": s.name,
+                    "description": s.description,
+                    "supported_versions": sorted(s.supported_versions),
+                    "params_schema": list(s.params_schema),
+                }
+                for s in specs
+            ]
+        }
 
     return app
 

@@ -3,7 +3,203 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [Unreleased] — Capability security refactor (branch: `audit-hook-layer`)
+
+Status: in-progress on the `audit-hook-layer` branch. Not merged.
+See `CAPABILITY_SECURITY.md`, `MIGRATION_GUIDE.md`, and
+`BRANCH_SUMMARY.md` for the full design.
+
+### Maintenance mode (Go-migration cutover, RGT-164)
+
+- **Python line is now in maintenance mode (RGT-164).** The top-level
+  `README.md` carries a prominent banner stating that the Python v0.2.x
+  line receives bugfixes and security patches only; all new feature work
+  lands in the [Go rewrite](go/) (`rgt-vault-server`, v0.3.0). The Go
+  side now ships its own `go/README.md` declaring it the primary install
+  path with a cutover plan (RGT-161 → RGT-165). Tracked by RGT-165 for
+  the eventual EOL archive notice 6 months after v0.3.0 ships.
+
+### End-of-life notice (RGT-165)
+
+- **`EOL.md` published at the repo root (RGT-165).** Sets the Python
+  line's EOL date at **2026-12-22** (6-month soak from the maintenance
+  notice on 2026-06-22). Documents the migration path, the
+  [crypto parity gaps](EOL.md#crypto-parity-gaps) that the Go line must
+  close before `v0.3.0` ships, and the "what users should do today"
+  table (pin to `v0.2.x`; plan to migrate to the Go line once
+  crypto-integration and persistence land).
+- **Go line version bumped from `0.2.0` → `0.3.0`** in
+  `go/internal/server/handlers/handlers.go` HealthCheck response. The
+  Go line is now on its own version track (`0.3.x+`), distinct from
+  the Python `0.2.x` line. (Bumped to `0.3.0`, not `1.0.0`, because
+  the Store still doesn't encrypt-at-rest and the keychain manager
+  is not yet ported from Python; `v1.0.0` should be reserved for a
+  tagged release that closes those gaps.)
+- **Top-level `README.md` maintenance banner now links to `EOL.md`**
+  so the EOL date is reachable from the repo root, not just from the
+  Go line's README.
+- **What this PR does NOT do** (intentionally — these are terminal-state
+  ops that the user should approve explicitly):
+  - The repo is **not yet archived** on GitHub. Archiving is
+    irreversible and the Go line is not yet production-ready; the EOL
+    date is 6 months out, so there's time.
+  - **No `v0.3.0` git tag** has been created. Tagging should happen
+    once Store crypto integration lands (RGT-145 / RGT-146).
+  - The RGT-165 ticket's referenced doc
+    `docs/architecture/agentic-patterns-and-go-migration.md` does not
+    exist in the repo; the new `EOL.md` is the canonical reference
+    until the architecture doc is regenerated.
+
+### Added
+
+- **v2 capability tokens** in `rgt_vault/token.py`. JSON payload
+  (`agent_id`, `capability`, `capability_version`,
+  `context_bindings`, `exp`), HMAC-SHA256 signed, base64url
+  envelope. Wire format versioned (`v: 2`) so future format
+  versions can be detected and rejected by older verifiers.
+- **`TokenVerifier` ABC** with `sign` and `verify`. The
+  `HMACTokenVerifier` is the v1 implementation (shared secret
+  trust anchor, min 32 bytes). `Ed25519TokenVerifier` is an
+  architectural stub (`NotImplementedError`) for future
+  deployment; the abstraction is in place so call sites do not
+  change when Ed25519 verification lands.
+- **`CapabilityRegistry`** in `rgt_vault/capabilities.py`.
+  `register(name, handler, supported_versions, params_schema)`,
+  `get`, `has`, `list`, `unregister`. Re-registration refuses
+  loudly. Built-in capabilities registered automatically on a
+  fresh `VaultManager`: `secrets.echo` (diagnostic) and
+  `secrets.use` (lease a stored secret and run a v0.2 action
+  against it — bridge for backwards compatibility).
+- **`VaultManager.execute_capability(capability_name, payload,
+  agent_id, capability_token, capability_version=1)`** — the new
+  primary enforcement point. Pre-flight: freeze → token verify →
+  agent/capability/version match → context binding → hook
+  consult (capability path) → registry + version → payload
+  validation → rate limit → handler invocation. All checks
+  fail-closed. Writes `CAPABILITY_EXECUTED` /
+  `CAPABILITY_DENIED` / `CAPABILITY_FAILED` audit rows that
+  participate in the same hash chain as legacy rows.
+- **`POST /v1/capabilities/execute`** HTTP endpoint. Body:
+  `{capability, agent_id, capability_token, payload,
+  capability_version}`. Bearer-token gated. 4xx/5xx mappings
+  documented in the endpoint docstring and in
+  `CAPABILITY_SECURITY.md`. Handler exceptions are sanitized
+  the same way `/use` does.
+- **`GET /v1/capabilities`** HTTP endpoint. Read-only listing
+  of the registered capabilities (name, description, supported
+  versions, params schema). No handler bodies or secret
+  material exposed.
+- **Capability-shaped `HookRequest`** in `rgt_vault/hook.py`.
+  New fields (`capability`, `capability_version`, `payload`,
+  `token_metadata`) on the existing `HookRequest` dataclass;
+  legacy secret-access calls still produce the old shape.
+  `req.is_capability` is the canonical branch point.
+- **TwoFactorHook v1/v2 token dispatch.** `TwoFactorHook.consult`
+  peeks the payload's `v` field and dispatches to `_consult_v1`
+  (legacy namespace-scoped tokens) or `_consult_v2` (new
+  capability-scoped tokens). The shared secret and the
+  replay-protection cache are shared between the two paths.
+- **Capability audit row in the hash chain.** Every
+  `execute_capability` call writes a `CAPABILITY_EXECUTED` row
+  with `agent`, `capability`, `capability_version`, `hook`,
+  `context_hash` (sha256 of the canonical payload, 16 chars).
+  `context_hash` lets an operator correlate a row with a
+  specific request without recording the payload contents.
+
+### Changed
+
+- **`VaultManager` constructor** takes two new optional
+  parameters: `capability_registry` (defaults to a fresh
+  registry with built-ins registered) and `token_verifier`
+  (defaults to `None`; `execute_capability` raises if not
+  configured — fail closed).
+- **`VaultManager` now owns an `action_registry`.** The v0.2
+  `ActionRegistry` (with `openai_chat`, `http_get_with_auth`,
+  `http_post_with_auth`, `echo`) is built into the vault so
+  the `secrets.use` bridge works in-process. The HTTP
+  server's `build_app` may replace it with a larger registry.
+- **`HookRequest`** extended with the new capability fields.
+  Existing custom hooks that ignore the new fields continue
+  to work for legacy secret-access calls. Hooks that want to
+  gate the capability path branch on `req.is_capability`.
+- **Webhook envelope** is uniform across both paths;
+  capability requests add `capability`, `capability_version`,
+  `payload`, and `token_metadata` fields.
+
+### Deprecated
+
+- **`VaultManager.set_secret`** docstring now carries a
+  `.. deprecated::` directive pointing operators at the
+  capability path. The method still works; it is removed in
+  v0.4.
+- **`VaultManager.lease_secret`** and **`VaultManager.execute`**
+  are similarly marked in their docstrings. New code should
+  register a capability and call `execute_capability`.
+
+### Removed
+
+- **`hook_from_config({"mode": "soar"})`** raises
+  `ValidationError`. The `soar` mode is no longer accepted.
+  SOAR products integrate through `webhook` mode (stand up a
+  small fronting service that translates the SOAR's response
+  shape to the vault's `{"decision": "allow"|"deny"|"freeze"}`
+  JSON).
+- **`WebhookHook(mode=...)`** parameter is gone. The hook
+  always operates in the (only) webhook mode.
+
+### Fixed
+
+- **Duplicate `revoke_secret` method on `VaultManager`**
+  (pre-existing bug; the second definition shadowed the
+  hook-consulting one). Removed the dead second definition.
+
+### Security
+
+- **Default deny on the capability path.** A vault constructed
+  with no `token_verifier` refuses every `execute_capability`
+  call with `ValidationError("execute_capability requires a
+  configured token_verifier; ...")`. Operators must
+  intentionally wire a verifier.
+- **Context binding enforcement.** Every key the token pins
+  must appear in the request payload with the same value.
+  A token with `context_bindings={"repo": "org/research"}`
+  cannot be replayed against `{"repo": "org/PRODUCTION"}`.
+- **Capability token replay protection.** `TwoFactorHook` (when
+  configured) records the `token_id` (sha256 of the canonical
+  payload) and refuses the same token twice. Bounded LRU;
+  same trade-off as v0.2.
+- **Capability audit rows never include plaintext secrets.**
+  The `context_hash` is a sha256 of the canonical payload
+  (so an operator can correlate without recording the
+  payload contents), and the row never includes the secret
+  material or the raw capability token.
+- **Freeze (kill switch) applies to the capability path.**
+  `execute_capability` checks `self.hook.frozen` before any
+  token verification — a frozen vault refuses every
+  capability call immediately, and the `freeze_file` +
+  USR1 signal + admin-endpoint mechanisms from v0.2 all
+  work without modification.
+
+### Tests
+
+- **`tests/test_token.py`** (20 tests): verifier unit tests
+  (round-trip, expiration, signature tampering, context
+  binding, malformed envelopes, HMAC vs wrong secret, Ed25519
+  stub, error hierarchy).
+- **`tests/test_capabilities.py`** (31 tests): registry +
+  `execute_capability` unit tests (happy path, agent/cap/
+  version mismatch, expired token, signature failure, context
+  binding, payload validation, rate limit, handler exception
+  path, freeze, hook consults, legacy compat, `secrets.use`
+  bridge).
+- **`tests/test_capability_integration.py`** (12 tests):
+  end-to-end through the HTTP surface (auth, body, token,
+  4xx mappings, registry listing), webhook hook integration
+  with a stub harness, `soar` mode rejection, freeze file
+  blocking capability execution, audit chain integrity
+  across capability + legacy rows.
+
+193 passed, 4 skipped in 149.65s (130 pre-existing + 63 new).
 
 ### Security (v0.2.1 hardening pass — see [AUDIT-v3.md](AUDIT-v3.md))
 

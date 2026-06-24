@@ -1,0 +1,80 @@
+version: 2
+
+project_name: rgt-vault-go
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: rgt-vault
+    main: ./cmd/rgt-vault
+    binary: rgt-vault
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+sboms:
+  - artifacts: archive
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+  groups:
+    - title: Features
+      regexp: '^feat(\(.+\))??: .+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^fix(\(.+\))??: .+$'
+      order: 1
+    - title: Others
+      order: 999
+
+release:
+  github:
+    draft: true
+    prerelease: auto
+  footer: |
+    Note: The Python line (rgt-vault 0.2.x) remains supported for 6 months.
+
+# signs:
+#   # Requires COSIGN signing keys
+#   - artifacts: checksum
+#     args: ["sign-blob", "--key", "cosign.key", "--output-signature", "${signature}", "${artifact}"]
+
+# brews:
+#   # Requires HOMEBREW_TAP_GITHUB_TOKEN
+#   - repository:
+#       owner: WilliamHudspeth
+#       name: homebrew-tap
+#     directory: Formula
