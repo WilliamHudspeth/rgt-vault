@@ -12,6 +12,7 @@ Welcome to the `rgt-vault` documentation. This directory has been reorganized to
 - [Root SECURITY.md](../SECURITY.md)
 
 ## 📖 Guides
+- [Usage Guide (CLI, Python API, Policies)](guides/usage.md)
 - [Installation Guide](guides/install.md)
 - [MCP Integration](guides/mcp.md)
 - [Migration Guide (v0.2 -> v0.3)](guides/migration.md)
