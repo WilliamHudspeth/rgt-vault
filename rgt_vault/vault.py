@@ -371,6 +371,8 @@ class VaultManager:
                 error = "policy_denied"
                 raise PermissionError(f"Agent {agent_id} not authorized for {capability_id} v{version}: {decision.get('reason')}")
 
+            lease_ttl = getattr(self.auth, "get_lease_ttl", lambda a, c: 300)(agent_id, capability_id)
+
             # 3. fire grant
             for h in self._hooks:
                 self._safe_hook(h, "on_capability_grant", ctx, lease_ttl)

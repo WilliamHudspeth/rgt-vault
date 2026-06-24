@@ -364,3 +364,5 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Background FileWatcher (RGT-45).** A daemon thread now monitors the freeze kill switch and proactively wipes the DEK from memory upon detection.
 - **SecureBuffer & AuditHook (RGT-112, RGT-33, RGT-44).** Refactored legacy secret migration to use mlock pinned memory (SecureBuffer) and defined the stable AuditHook abstract base class.
 - **Audit Hooks & Redaction (RGT-114, RGT-28).** execute_capability is now wrapped in a strict policy enforcer, and LogRedactionHook strips all secrets from agent memory logs.
+- **TTL-based Capability Leases (RGT-29).** ABAC policies now support a `ttl` field for execute grants, controlling the lifetime of the capability authorization.
+- **MCP Server (RGT-27).** Added a Model Context Protocol (MCP) server that securely wraps VaultManager and exposes capabilities as LLM tools.

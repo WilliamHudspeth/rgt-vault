@@ -54,6 +54,34 @@ class ABACPolicyEngine:
         else:
             return {"allowed": False, "reason": "No matching allow rule (default deny)", "matched_rule": None}
 
+    def get_lease_ttl(self, agent: str, capability_name: str) -> int:
+        """
+        RGT-29: parse policy for optional ttl.
+        Matching order: exact agent+action > wildcard agent.
+        Defaults to 300 seconds.
+        """
+        candidates = []
+        for r in self.rules:
+            # capability_name maps to 'action' in our rules
+            if r.get("action") != capability_name and r.get("action") != "*":
+                continue
+            if r.get("agent") not in (agent, "*", None):
+                continue
+            candidates.append(r)
+
+        # most specific first (exact agent first, exact action first)
+        candidates.sort(key=lambda r: (
+            r.get("agent") != agent,
+            r.get("action") != capability_name,
+        ))
+
+        if candidates and "ttl" in candidates[0]:
+            try:
+                return max(1, int(candidates[0]["ttl"]))
+            except (ValueError, TypeError):
+                pass
+        return 300 # safe default
+
     def _matches(self, rule: Dict[str, Any], agent: str, namespace: str, purpose: str, action: str) -> bool:
         """
         Helper to determine if a rule matches the provided attributes.
