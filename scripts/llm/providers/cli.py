@@ -15,8 +15,8 @@ import subprocess
 import time
 from typing import Optional
 
-from ..types import Provider, Reply
 from .. import usage as usage_tracker
+from ..types import Provider, Reply
 
 
 def _subprocess_env() -> dict:

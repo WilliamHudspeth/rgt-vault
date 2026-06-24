@@ -14,8 +14,8 @@ import time
 import urllib.error
 import urllib.request
 
-from ..types import Provider, Reply
 from .. import usage as usage_tracker
+from ..types import Provider, Reply
 from . import _http
 
 

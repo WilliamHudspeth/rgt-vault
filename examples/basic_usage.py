@@ -4,11 +4,11 @@ Uses KeyringProvider (cross-platform OS keyring) so it runs out of the box.
 For production, seal the master secret with a platform provider (DPAPI/TPM).
 """
 
-import tempfile
 import os
+import tempfile
 
-from rgt_vault.vault import VaultManager
 from rgt_vault.keychain import KeyringProvider
+from rgt_vault.vault import VaultManager
 
 
 def mock_llm_call(key_buf: bytearray):

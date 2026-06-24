@@ -1,5 +1,3 @@
-import tempfile
-import textwrap
 import pytest
 
 from rgt_vault.auth import ABACPolicyEngine

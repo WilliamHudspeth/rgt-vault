@@ -7,8 +7,8 @@ your own; do not treat the committed sample numbers as guarantees.
 
 import os
 import sys
-import time
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

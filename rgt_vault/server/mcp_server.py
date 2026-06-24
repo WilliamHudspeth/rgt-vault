@@ -1,14 +1,15 @@
 from __future__ import annotations
-import os
+
 import logging
 from typing import Any
 
-from fastmcp import FastMCP, Context
+from fastmcp import Context, FastMCP
+
+from rgt_vault.auth import ABACPolicyEngine
+from rgt_vault.hooks.log_redaction import LogRedactionHook
 
 # rgt-vault internals
 from rgt_vault.vault import VaultManager
-from rgt_vault.auth import ABACPolicyEngine
-from rgt_vault.hooks.log_redaction import LogRedactionHook
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("rgt-vault-mcp")

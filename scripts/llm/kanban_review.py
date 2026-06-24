@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -30,15 +29,13 @@ from pathlib import Path
 # Allow running as a script without install
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.program._common import list_issues, get_issue, WORKSPACE_ID
 from scripts.llm.router import (
-    Router,
     TASK_CODE_REVIEW,
     TASK_DESIGN_REVIEW,
     TASK_SECURITY_REVIEW,
-    TASK_FAST_QA,
-    TASK_GENERAL,
+    Router,
 )
+from scripts.program._common import WORKSPACE_ID, get_issue, list_issues
 
 
 def label_set(ticket: dict) -> set:
@@ -58,7 +55,7 @@ def pick_task_type(ticket: dict) -> str:
     """Decide which router task type to use for a ticket."""
     labels = label_set(ticket)
     # Security-critical first
-    if "comp:crypto" in labels or any(l.startswith("security:") for l in labels) or "pri:blocker" in labels:
+    if "comp:crypto" in labels or any(lbl.startswith("security:") for lbl in labels) or "pri:blocker" in labels:
         return TASK_SECURITY_REVIEW
     # Architecture / design
     if "effort:L" in labels or "effort:XL" in labels or "type:design" in labels:
@@ -87,8 +84,8 @@ def build_prompt(ticket: dict) -> str:
 
 def post_comment(ticket: dict, body: str, workspace_id: str) -> tuple:
     """Post a comment to Multica. Returns (status, body)."""
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     url = f"http://10.10.88.88:8080/api/issues/{ticket['id']}/comments?workspace_id={workspace_id}"
     cfg_path = Path.home() / ".multica" / "config.json"

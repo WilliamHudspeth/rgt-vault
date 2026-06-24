@@ -23,11 +23,11 @@ Usage:
 import argparse
 import json
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _common import list_issues, get_issue, label_set, is_active, effort_size, WORKSPACE_ID
+from _common import WORKSPACE_ID, is_active, label_set, list_issues
 
 
 def member_lookup():

@@ -1,8 +1,7 @@
 """Offline tests for stream.py — parse logic only, no real network calls."""
 
-import json
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from scripts.llm.stream import stream_ollama, stream_openai_chat
 

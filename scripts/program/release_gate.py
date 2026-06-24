@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _common import list_issues, get_issue, label_set, list_projects, is_active, WORKSPACE_ID
+from _common import WORKSPACE_ID, is_active, label_set, list_issues, list_projects
 
 
 def check_milestone(milestone_short, workspace_id=WORKSPACE_ID):
@@ -77,8 +77,8 @@ def check_milestone(milestone_short, workspace_id=WORKSPACE_ID):
         t
         for t in full
         if is_active(t)
-        and any(l.startswith("security:") for l in label_set(t))
-        and any(l in ("pri:critical", "pri:blocker") for l in label_set(t))
+        and any(lbl.startswith("security:") for lbl in label_set(t))
+        and any(lbl in ("pri:critical", "pri:blocker") for lbl in label_set(t))
     ]
     if crit_sec:
         gates.append(
@@ -99,7 +99,7 @@ def check_milestone(milestone_short, workspace_id=WORKSPACE_ID):
         if t["status"] != "done":
             continue
         labels = label_set(t)
-        if any(l.startswith("security:") for l in labels) and "review:security" not in labels:
+        if any(lbl.startswith("security:") for lbl in labels) and "review:security" not in labels:
             dod_failures.append(t["identifier"])
     if dod_failures:
         gates.append(
@@ -112,7 +112,7 @@ def check_milestone(milestone_short, workspace_id=WORKSPACE_ID):
     sec_no_review = []
     for t in full:
         labels = label_set(t)
-        if any(l.startswith("security:") for l in labels) and t["status"] != "done":
+        if any(lbl.startswith("security:") for lbl in labels) and t["status"] != "done":
             if "review:security" not in labels:
                 sec_no_review.append(t["identifier"])
     if sec_no_review:
@@ -137,7 +137,7 @@ def check_milestone(milestone_short, workspace_id=WORKSPACE_ID):
     crit_sec_sev = [
         t
         for t in full
-        if is_active(t) and "sev:critical" in label_set(t) and any(l.startswith("security:") for l in label_set(t))
+        if is_active(t) and "sev:critical" in label_set(t) and any(lbl.startswith("security:") for lbl in label_set(t))
     ]
     if crit_sec_sev:
         gates.append(

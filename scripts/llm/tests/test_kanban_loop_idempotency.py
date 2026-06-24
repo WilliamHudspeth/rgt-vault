@@ -7,11 +7,7 @@ set as signature() so equality is well-defined.
 """
 
 import importlib.util
-import json
 from pathlib import Path
-
-import pytest
-
 
 # Import the module under test. It lives in scripts/llm/kanban_loop.py,
 # which is a standalone script with `if __name__ == "__main__":` at the

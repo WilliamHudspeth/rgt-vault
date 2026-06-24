@@ -20,7 +20,6 @@ from rgt_vault.capabilities import (
     register_builtin_capabilities,
 )
 from rgt_vault.crypto import decrypt, encrypt, zeroize_bytearray
-from rgt_vault.shadow import NullShadowWriter, ShadowWriter
 from rgt_vault.exceptions import (
     CapabilityVersionError,
     PolicyDeniedError,
@@ -29,6 +28,7 @@ from rgt_vault.exceptions import (
 )
 from rgt_vault.hook import AuditHook, HookDecision, HookRequest, OffHook
 from rgt_vault.keychain import HardenedDEKManager, MasterSecret, run_crypto_selftest
+from rgt_vault.shadow import NullShadowWriter, ShadowWriter
 from rgt_vault.storage.sqlite import StorageBackend
 from rgt_vault.token import (
     CapabilityV2Token,

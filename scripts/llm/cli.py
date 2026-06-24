@@ -25,14 +25,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.llm.router import (
-    Router,
     TASK_CODE_REVIEW,
     TASK_DESIGN_REVIEW,
-    TASK_SECURITY_REVIEW,
     TASK_FAST_QA,
     TASK_GENERAL,
+    TASK_SECURITY_REVIEW,
+    Router,
 )
-
 
 TASKS = [
     TASK_CODE_REVIEW,
@@ -377,8 +376,7 @@ def cmd_burn(args) -> int:
 
 def cmd_usage(_args) -> int:
     """Print usage + cost summary from /tmp/rgt_llm_usage.csv."""
-    from scripts.llm import usage
-    from scripts.llm import pricing
+    from scripts.llm import pricing, usage
 
     print(usage.summary())
     print()
@@ -388,7 +386,6 @@ def cmd_usage(_args) -> int:
 
 def cmd_stream(args) -> int:
     """Stream a prompt to a provider."""
-    from scripts.llm.router import build_provider
     from scripts.llm.stream import stream_ollama, stream_openai_chat
 
     prompt = read_prompt(args)

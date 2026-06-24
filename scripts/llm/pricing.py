@@ -13,9 +13,6 @@ To get a usage cost report:
 
 from __future__ import annotations
 
-from typing import Optional
-
-
 # Per-token USD prices. Keys: provider spec or model name.
 # Prices are USD per 1 token (not per 1k). Multiply by 1M for per-1M.
 PRICES = {

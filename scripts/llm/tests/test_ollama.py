@@ -11,11 +11,7 @@ Fixes:
 """
 
 import json
-import threading
 import urllib.error
-
-import pytest
-
 
 # ----- is_available: tolerant match -----------------------------------
 
@@ -118,7 +114,7 @@ def test_complete_success(monkeypatch):
 def test_complete_valueerror_on_non_json(monkeypatch):
     """A malformed JSON body must not crash the loop — it should return
     a failed Reply. (OPUS-104: previously uncaught.)"""
-    from scripts.llm.providers import ollama, _http
+    from scripts.llm.providers import _http, ollama
 
     def fake_post_json(url, body, *, headers=None, timeout=30):
         raise _http.HTTPStatusError(0, "non-JSON response: b'not json'")
@@ -133,7 +129,7 @@ def test_complete_valueerror_on_non_json(monkeypatch):
 def test_complete_timeout(monkeypatch):
     """A timeout must be reported as a failed Reply, not crash the loop.
     (OPUS-102: previously escaped through the catch block.)"""
-    from scripts.llm.providers import ollama, _http
+    from scripts.llm.providers import _http, ollama
 
     def fake_post_json(url, body, *, headers=None, timeout=30):
         raise _http.HTTPStatusError(0, f"timeout after {timeout}s")
@@ -146,7 +142,7 @@ def test_complete_timeout(monkeypatch):
 
 
 def test_complete_http_error(monkeypatch):
-    from scripts.llm.providers import ollama, _http
+    from scripts.llm.providers import _http, ollama
 
     def fake_post_json(url, body, *, headers=None, timeout=30):
         raise _http.HTTPStatusError(404, "model not found")

@@ -27,17 +27,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.program._common import list_issues, get_issue, WORKSPACE_ID, label_set
+from scripts.llm.kanban_review import build_prompt, pick_task_type, post_comment
 from scripts.llm.router import Router
-from scripts.llm.kanban_review import pick_task_type, build_prompt, post_comment
-
+from scripts.program._common import WORKSPACE_ID, get_issue, label_set, list_issues
 
 DEFAULT_STATE_PATH = Path("/tmp/rgt_kanban_loop_state.json")
 
@@ -327,7 +325,7 @@ def _process_one_ticket(issue_summary, tid, args, router, processed, state, stat
 
     # Build synthesis comment
     lines = [
-        f"**AFK multi-model review** (Hermes kanban_loop)",
+        "**AFK multi-model review** (Hermes kanban_loop)",
         f"Ticket: {tid} ({full.get('title')})",
         f"Task type: `{task}`",
         f"Models: {', '.join(s for s, _ in ok)}",

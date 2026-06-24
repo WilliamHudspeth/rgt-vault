@@ -12,15 +12,15 @@ recorded as a divergence — NEVER raised — so the primary Python operation al
 succeeds even if the Go server is down or mid-crash.
 """
 
-import os
 import json
+import os
 import threading
-import urllib.request
 import urllib.error
 import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional, List, Tuple
+from typing import List, Optional, Tuple
 
 
 @dataclass

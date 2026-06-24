@@ -4,8 +4,8 @@ Offline. Uses a temp CSV path so the global /tmp/rgt_llm_usage.csv
 is never touched.
 """
 
-import unittest
 import tempfile
+import unittest
 from pathlib import Path
 
 from scripts.llm import usage
@@ -75,8 +75,8 @@ class UsageLogTests(unittest.TestCase):
     def test_header_written_once_under_concurrent_processes(self):
         """OPUS-AFK-5: under multi-process concurrent writers, the header
         must be written exactly once and every row must be intact."""
-        import multiprocessing as mp
         import csv as _csv
+        import multiprocessing as mp
 
         def worker(pid: int, path: str, n: int) -> None:
             import sys

@@ -20,7 +20,6 @@ from rgt_vault import shadow
 from rgt_vault.shadow import ShadowWriter
 from rgt_vault.vault import VaultManager
 
-
 # ---------------------------------------------------------------------------
 # Unit tests: rgt_vault.shadow in isolation (_http monkeypatched)
 # ---------------------------------------------------------------------------

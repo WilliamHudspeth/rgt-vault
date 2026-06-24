@@ -95,7 +95,7 @@ def list_labels(workspace_id=WORKSPACE_ID):
     """Return all labels in the workspace as {name: uuid, ...}."""
     data = _get(f"/api/labels?workspace_id={workspace_id}")
     labels = data if isinstance(data, list) else data.get("labels", [])
-    return {l["name"]: l["id"] for l in labels}
+    return {lbl["name"]: lbl["id"] for lbl in labels}
 
 
 def list_projects(workspace_id=WORKSPACE_ID):
@@ -112,22 +112,22 @@ def milestone_lookup(workspace_id=WORKSPACE_ID):
 
 def label_set(issue):
     """Return {name} set from a full ticket dict."""
-    return {l["name"] for l in issue.get("labels", [])}
+    return {lbl["name"] for lbl in issue.get("labels", [])}
 
 
 def effort_size(issue):
     """Return effort label or 'unknown'."""
-    for l in label_set(issue):
-        if l.startswith("effort:"):
-            return l.split(":", 1)[1]
+    for lbl in label_set(issue):
+        if lbl.startswith("effort:"):
+            return lbl.split(":", 1)[1]
     return "unknown"
 
 
 def priority_label(issue):
     """Return pri:* label or 'none'."""
-    for l in label_set(issue):
-        if l.startswith("pri:"):
-            return l.split(":", 1)[1]
+    for lbl in label_set(issue):
+        if lbl.startswith("pri:"):
+            return lbl.split(":", 1)[1]
     return "none"
 
 

@@ -18,11 +18,9 @@ Fix:
 
 import threading
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
-
-from scripts.llm.router import Router, RouteConfig, TASK_CODE_REVIEW
+from scripts.llm.router import TASK_CODE_REVIEW, RouteConfig, Router
 from scripts.llm.types import Reply
 
 

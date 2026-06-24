@@ -1,7 +1,10 @@
 from __future__ import annotations
+
 import ctypes
 import os
-from typing import Union
+import sys
+from types import TracebackType
+from typing import Optional, Union
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -76,13 +79,6 @@ def zeroize_bytearray(b: bytearray) -> None:
         # Fallback if ctypes.memset fails
         for i in range(buffer_size):
             b[i] = 0
-
-
-import ctypes
-import sys
-import os
-from types import TracebackType
-from typing import Optional
 
 
 class SecureBuffer:

@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _common import list_issues, get_issue, label_set, list_projects, is_active, effort_size, WORKSPACE_ID
+from _common import WORKSPACE_ID, is_active, label_set, list_issues, list_projects
 
 
 def compute_dashboard(workspace_id=WORKSPACE_ID):
@@ -79,13 +79,13 @@ def compute_dashboard(workspace_id=WORKSPACE_ID):
         t
         for t in full_issues
         if is_active(t)
-        and any(l.startswith("security:") for l in label_set(t))
-        and any(l in ("pri:critical", "pri:blocker") for l in label_set(t))
+        and any(lbl.startswith("security:") for lbl in label_set(t))
+        and any(lbl in ("pri:critical", "pri:blocker") for lbl in label_set(t))
     ]
 
     # Review queue
     review_queue = [t for t in full_issues if t["status"] == "in_review"]
-    security_review_queue = [t for t in review_queue if any(l.startswith("security:") for l in label_set(t))]
+    security_review_queue = [t for t in review_queue if any(lbl.startswith("security:") for lbl in label_set(t))]
 
     # Lead time (last 30 days, done): created_at -> updated_at for done tickets.
     # Cycle time is NOT computed here — it requires status-transition timestamps
@@ -133,7 +133,7 @@ def compute_dashboard(workspace_id=WORKSPACE_ID):
 
 def render_markdown(d):
     lines = [
-        f"# RGT Vault Engineering Dashboard",
+        "# RGT Vault Engineering Dashboard",
         f"_{d['computed_at']}_",
         "",
         "## Health",

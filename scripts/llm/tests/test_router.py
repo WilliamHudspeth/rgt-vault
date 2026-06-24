@@ -6,10 +6,10 @@ import unittest
 from unittest.mock import patch
 
 from scripts.llm.router import (
-    Router,
-    RouteConfig,
     TASK_CODE_REVIEW,
     TASK_GENERAL,
+    RouteConfig,
+    Router,
     build_provider,
 )
 from scripts.llm.types import Reply
@@ -71,8 +71,8 @@ class ChainConfigTests(unittest.TestCase):
 
     def test_yaml_roundtrip(self, tmp_path=None):
         # default has no yaml — write it, read it back
+
         import yaml
-        from pathlib import Path
 
         d = RouteConfig.default()
         with tempfile_patch() as p:

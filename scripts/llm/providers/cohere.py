@@ -10,9 +10,9 @@ import os
 import time
 from typing import Optional
 
+from .. import usage as usage_tracker
 from ..types import Provider, Reply
 from ._http import HTTPStatusError, post_json, timer_ms
-from .. import usage as usage_tracker
 
 
 class CohereProvider(Provider):
