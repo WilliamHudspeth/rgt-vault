@@ -102,9 +102,9 @@ def main() -> None:
         python   = ".venv/bin/python"
 
     print(f"""
-────────────────────────────────────────────────
+================================================
  Setup complete. Quick-start:
-────────────────────────────────────────────────
+================================================
 
   Activate:
     {activate}
@@ -127,7 +127,7 @@ def main() -> None:
   Simulate a policy decision:
     {python} -m rgt_vault.cli simulate --agent my-agent \\
         --namespace test --action read
-────────────────────────────────────────────────
+================================================
 """)
 
 
