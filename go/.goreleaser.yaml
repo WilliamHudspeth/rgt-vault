@@ -61,9 +61,8 @@ changelog:
       order: 999
 
 release:
-  github:
-    draft: true
-    prerelease: auto
+  draft: true
+  prerelease: auto
   footer: |
     Note: The Python line (rgt-vault 0.2.x) remains supported for 6 months.
 
