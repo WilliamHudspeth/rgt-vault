@@ -30,6 +30,12 @@ sealed.bin
 *.priv
 *.pub
 
+# Go build artifacts
+go/rgt-vault
+go/gateway
+go/server
+*.test
+
 # Editor / OS
 .vscode/
 .idea/
