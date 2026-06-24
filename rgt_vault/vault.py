@@ -18,6 +18,7 @@ from rgt_vault.crypto import decrypt, encrypt, zeroize_bytearray
 from rgt_vault.exceptions import PolicyDeniedError, SecretNotFoundError, ValidationError
 from rgt_vault.keychain import HardenedDEKManager, MasterSecret, run_crypto_selftest
 from rgt_vault.storage.sqlite import StorageBackend
+from rgt_vault.watcher import FreezeWatcher
 
 
 class RateLimiter:
@@ -86,10 +87,24 @@ class VaultManager:
         # 4. Migrate Legacy Secrets (v2 Fernet -> v3 AES-256-GCM)
         self._migrate_legacy_secrets()
 
+        self.freeze_watcher = FreezeWatcher(
+            os.path.expanduser("~/.config/rgt-vault/freeze"),
+            interval=1.0,
+            callback=self._on_freeze
+        )
+        self.freeze_watcher.start()
+
+
+
+    def _on_freeze(self) -> None:
+        # Background thread detected the freeze file.
+        # Wipe DEK from memory immediately to trigger a lockout.
+        self.dek = None
 
     def _check_freeze_signal(self) -> None:
         freeze_file = os.path.expanduser("~/.config/rgt-vault/freeze")
-        if os.path.exists(freeze_file):
+        is_frozen = getattr(self, "freeze_watcher", None) and getattr(self.freeze_watcher, "is_frozen", False)
+        if is_frozen or os.path.exists(freeze_file):
             raise VaultFrozenError("Vault is frozen due to active kill switch.")
 
     def _migrate_legacy_secrets(self) -> None:
