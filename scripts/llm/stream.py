@@ -8,6 +8,7 @@ Usage:
     for chunk in provider.stream("Tell me a story"):
         print(chunk, end="", flush=True)
 """
+
 from __future__ import annotations
 
 import json
@@ -119,7 +120,7 @@ def stream_openai_chat(
                 line = raw.decode("utf-8", errors="replace").strip()
                 if not line or not line.startswith("data: "):
                     continue
-                data = line[len("data: "):]
+                data = line[len("data: ") :]
                 if data == "[DONE]":
                     return
                 try:

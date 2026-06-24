@@ -6,6 +6,7 @@ same API. Defaults to local; pass base_url to override.
 Uses the shared _http.post_json helper for OPUS-102/103/104 hardening
 (catches TimeoutError, ValueError on non-JSON, caps body read at 10 MiB).
 """
+
 from __future__ import annotations
 
 import json
@@ -124,7 +125,13 @@ class OllamaProvider(Provider):
         try:
             text = resp["message"]["content"]
         except (KeyError, TypeError) as e:
-            usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=f"unexpected response shape: {e}")
+            usage_tracker.log(
+                provider=self.name,
+                model=self.model,
+                latency_ms=latency,
+                ok=False,
+                error=f"unexpected response shape: {e}",
+            )
             return Reply(
                 text="",
                 provider=self.name,
@@ -135,7 +142,14 @@ class OllamaProvider(Provider):
             )
         in_tok = resp.get("prompt_eval_count", 0)
         out_tok = resp.get("eval_count", 0)
-        usage_tracker.log(provider=self.name, model=self.model, input_tokens=in_tok, output_tokens=out_tok, latency_ms=latency, ok=True)
+        usage_tracker.log(
+            provider=self.name,
+            model=self.model,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            latency_ms=latency,
+            ok=True,
+        )
         return Reply(
             text=text,
             provider=self.name,

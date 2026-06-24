@@ -22,13 +22,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, List, Tuple
 
+
 @dataclass
 class Divergence:
-    op: str          # "set" or "revoke"
+    op: str  # "set" or "revoke"
     namespace: str
     name: str
-    reason: str      # human-readable cause
-    timestamp: str   # ISO-8601 UTC, e.g. datetime.now(timezone.utc).isoformat()
+    reason: str  # human-readable cause
+    timestamp: str  # ISO-8601 UTC, e.g. datetime.now(timezone.utc).isoformat()
+
 
 def _http(method: str, url: str, token: str, body: Optional[dict], timeout: float = 2.0) -> Tuple[int, bytes]:
     """
@@ -38,13 +40,11 @@ def _http(method: str, url: str, token: str, body: Optional[dict], timeout: floa
     status code and response body.
     """
     data = None
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
+    headers = {"Authorization": f"Bearer {token}"}
     if body is not None:
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
-    
+
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
@@ -52,6 +52,7 @@ def _http(method: str, url: str, token: str, body: Optional[dict], timeout: floa
     except urllib.error.HTTPError as e:
         # e.read() reads the error body. e.code contains the status.
         return e.code, e.read()
+
 
 class ShadowWriter:
     # Active writers are enabled; the VaultManager only emits SHADOW_* audit
@@ -70,13 +71,7 @@ class ShadowWriter:
 
     def _add_divergence(self, op: str, namespace: str, name: str, reason: str) -> None:
         timestamp = datetime.now(timezone.utc).isoformat()
-        div = Divergence(
-            op=op,
-            namespace=namespace,
-            name=name,
-            reason=reason,
-            timestamp=timestamp
-        )
+        div = Divergence(op=op, namespace=namespace, name=name, reason=reason, timestamp=timestamp)
         with self._lock:
             self._divergences.append(div)
 
@@ -92,13 +87,7 @@ class ShadowWriter:
         try:
             # 1. POST
             post_url = f"{self.base_url}/v1/secrets"
-            body = {
-                "namespace": namespace,
-                "name": name,
-                "value": value,
-                "agent": agent,
-                "purpose": purpose
-            }
+            body = {"namespace": namespace, "name": name, "value": value, "agent": agent, "purpose": purpose}
             status, resp_bytes = _http("POST", post_url, self.token, body, self.timeout)
             if status not in (200, 201):
                 reason = f"POST /v1/secrets returned non-2xx status: {status} (response: {resp_bytes.decode('utf-8', errors='replace')})"
@@ -159,8 +148,8 @@ class ShadowWriter:
         and returns False (never raises).
         """
         try:
-            safe_ns = urllib.parse.quote(namespace, safe='')
-            safe_name = urllib.parse.quote(name, safe='')
+            safe_ns = urllib.parse.quote(namespace, safe="")
+            safe_name = urllib.parse.quote(name, safe="")
             url = f"{self.base_url}/v1/secrets/{safe_ns}/{safe_name}/revoke"
             status, resp_bytes = _http("POST", url, self.token, {}, self.timeout)
             if status not in (200, 204):
@@ -183,6 +172,7 @@ class ShadowWriter:
         with self._lock:
             return len(self._divergences)
 
+
 class NullShadowWriter(ShadowWriter):
     # Disabled no-op, used by default when shadowing is off.
     enabled = False
@@ -203,6 +193,7 @@ class NullShadowWriter(ShadowWriter):
 
     def divergence_count(self) -> int:
         return 0
+
 
 def shadow_from_env() -> "ShadowWriter":
     # Read RGT_VAULT_SHADOW_URL and RGT_VAULT_SHADOW_TOKEN from os.environ.

@@ -33,6 +33,7 @@ def _force_which(name: str, body: str) -> "callable":
     resolves to our fake via the env (not via shutil.which).
     """
     import tempfile
+
     tmpdir = tempfile.mkdtemp(prefix="rgt_fakebin_")
     target = Path(tmpdir) / name
     target.write_text(f"#!/bin/bash\nexec < /dev/null\n{body}\n")
@@ -54,6 +55,7 @@ def _force_which(name: str, body: str) -> "callable":
 def test_claude_timeout_killpg(tmp_path):
     """A real Popen-backed timeout must kill the whole process group."""
     import tempfile
+
     tmpdir = tempfile.mkdtemp(prefix="rgt_fakebin_")
     fake = Path(tmpdir) / "claude"
     fake.write_text("#!/bin/bash\nexec < /dev/null\nsleep 60\n")

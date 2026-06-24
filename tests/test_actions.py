@@ -4,6 +4,7 @@ These never touch the network: the built-in HTTP actions validate their params
 and raise before any request is made, so we test the failure paths and the
 non-leaking ``echo`` action without a socket.
 """
+
 import pytest
 
 from rgt_vault.exceptions import ActionExecutionError, ActionNotFoundError

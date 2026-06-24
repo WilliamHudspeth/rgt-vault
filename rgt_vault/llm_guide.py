@@ -7,8 +7,10 @@ to use the vault securely and to explain its security features
 to human users or to other LLM-based agents.
 """
 
+
 def get_llm_guide() -> str:
     return __doc__ + "\n" + LLM_INSTRUCTIONS
+
 
 LLM_INSTRUCTIONS = r"""
 # Secure Vault Manager – LLM Guide

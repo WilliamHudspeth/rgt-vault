@@ -40,6 +40,7 @@ from rgt_vault.token import (
 
 class RateLimiter:
     """Sliding window rate limiter in memory."""
+
     def __init__(self, max_requests: int = 100, window_seconds: int = 3600):
         self.max_requests = max_requests
         self.window_seconds = window_seconds
@@ -49,13 +50,12 @@ class RateLimiter:
     def allow(self, agent_id: str) -> bool:
         now = time.time()
         with self._lock:
-            self._windows[agent_id] = [
-                t for t in self._windows[agent_id] if now - t < self.window_seconds
-            ]
+            self._windows[agent_id] = [t for t in self._windows[agent_id] if now - t < self.window_seconds]
             if len(self._windows[agent_id]) >= self.max_requests:
                 return False
             self._windows[agent_id].append(now)
             return True
+
 
 class VaultManager:
     def __init__(
@@ -124,17 +124,19 @@ class VaultManager:
         from rgt_vault.server.actions import (
             register_builtin_actions as _reg_actions,
         )
+
         self.action_registry: _AR = _AR()
         _reg_actions(self.action_registry)
 
         # 3. Load Metadata & Keychain
         self.vault_id = self.storage.get_vault_id()
         self.key_epoch = self.storage.get_key_epoch()
-        
+
         # We store keychain.json next to the DB
         keychain_path = os.path.join(os.path.dirname(actual_db_path), "keychain.json")
-        
+
         from rgt_vault.providers import create_platform_provider
+
         self.master_provider = master_provider or create_platform_provider()
 
         # P0-2 audit fix: only auto-bootstrap on a truly fresh install
@@ -157,7 +159,7 @@ class VaultManager:
             self.dek = self.dek_manager.load_dek(master_secret, self.vault_id, self.key_epoch)
         else:
             self.dek = self.dek_manager.initialize_dek(master_secret, self.vault_id, self.key_epoch)
-            
+
         # 4. Migrate Legacy Secrets (v2 Fernet -> v3 AES-256-GCM)
         self._migrate_legacy_secrets()
 
@@ -176,7 +178,7 @@ class VaultManager:
         encoded_key = keyring.get_password("rgt_vault", "master_key")
         if not encoded_key:
             raise ValueError("Legacy secrets found but no legacy Fernet key in keyring.")
-        old_fernet = Fernet(encoded_key.encode('utf-8'))
+        old_fernet = Fernet(encoded_key.encode("utf-8"))
 
         def _rewrite(record_id, namespace, name, ciphertext, dek_version):
             if dek_version != 0:
@@ -208,8 +210,7 @@ class VaultManager:
         if isinstance(secret, (bytes, bytearray)):
             return MasterSecret(bytes(secret))
         raise ValidationError(
-            f"Master secret provider returned unsupported type {type(secret).__name__}; "
-            "expected bytes or MasterSecret."
+            f"Master secret provider returned unsupported type {type(secret).__name__}; expected bytes or MasterSecret."
         )
 
     def _get_aad(self, namespace: str, name: str) -> bytes:
@@ -265,15 +266,16 @@ class VaultManager:
         self._log_audit(
             f"HOOK_{operation.upper()}",
             secret_name,
-            json.dumps({
-                "hook_id": self.hook.hook_id,
-                **resp.to_audit_dict(),
-            }),
+            json.dumps(
+                {
+                    "hook_id": self.hook.hook_id,
+                    **resp.to_audit_dict(),
+                }
+            ),
         )
         if resp.decision is not HookDecision.ALLOW:
             raise PolicyDeniedError(
-                f"hook {self.hook.hook_id!r} denied {operation} for agent "
-                f"{agent!r}: {resp.reason or 'no reason given'}"
+                f"hook {self.hook.hook_id!r} denied {operation} for agent {agent!r}: {resp.reason or 'no reason given'}"
             )
 
     def _hook_consult_capability(
@@ -307,14 +309,16 @@ class VaultManager:
             self._log_audit(
                 "HOOK_CAPABILITY",
                 None,
-                json.dumps({
-                    "hook_id": self.hook.hook_id,
-                    "decision": "freeze",
-                    "reason": "vault frozen by hook",
-                    "agent": agent,
-                    "capability": capability,
-                    "capability_version": capability_version,
-                }),
+                json.dumps(
+                    {
+                        "hook_id": self.hook.hook_id,
+                        "decision": "freeze",
+                        "reason": "vault frozen by hook",
+                        "agent": agent,
+                        "capability": capability,
+                        "capability_version": capability_version,
+                    }
+                ),
             )
             raise PolicyDeniedError("vault frozen by hook")
 
@@ -331,13 +335,15 @@ class VaultManager:
         self._log_audit(
             "HOOK_CAPABILITY",
             None,
-            json.dumps({
-                "hook_id": self.hook.hook_id,
-                "agent": agent,
-                "capability": capability,
-                "capability_version": capability_version,
-                **resp.to_audit_dict(),
-            }),
+            json.dumps(
+                {
+                    "hook_id": self.hook.hook_id,
+                    "agent": agent,
+                    "capability": capability,
+                    "capability_version": capability_version,
+                    **resp.to_audit_dict(),
+                }
+            ),
         )
         if resp.decision is not HookDecision.ALLOW:
             raise PolicyDeniedError(
@@ -425,12 +431,14 @@ class VaultManager:
             self._log_audit(
                 "CAPABILITY_DENIED",
                 None,
-                json.dumps({
-                    "agent": agent_id,
-                    "capability": capability_name,
-                    "capability_version": capability_version,
-                    "reason": "vault frozen",
-                }),
+                json.dumps(
+                    {
+                        "agent": agent_id,
+                        "capability": capability_name,
+                        "capability_version": capability_version,
+                        "reason": "vault frozen",
+                    }
+                ),
             )
             raise PolicyDeniedError("vault frozen")
 
@@ -438,18 +446,20 @@ class VaultManager:
         # without one configured, refuse to run.
         token_metadata = {}
         token_id = "bypass"
-        
+
         if not bypass_verification:
             if self.token_verifier is None:
                 self._log_audit(
                     "CAPABILITY_DENIED",
                     None,
-                    json.dumps({
-                        "agent": agent_id,
-                        "capability": capability_name,
-                        "capability_version": capability_version,
-                        "reason": "no token verifier configured",
-                    }),
+                    json.dumps(
+                        {
+                            "agent": agent_id,
+                            "capability": capability_name,
+                            "capability_version": capability_version,
+                            "reason": "no token verifier configured",
+                        }
+                    ),
                 )
                 raise ValidationError(
                     "execute_capability requires a configured token_verifier; "
@@ -461,12 +471,14 @@ class VaultManager:
                 self._log_audit(
                     "CAPABILITY_DENIED",
                     None,
-                    json.dumps({
-                        "agent": agent_id,
-                        "capability": capability_name,
-                        "capability_version": capability_version,
-                        "reason": f"token: {type(e).__name__}",
-                    }),
+                    json.dumps(
+                        {
+                            "agent": agent_id,
+                            "capability": capability_name,
+                            "capability_version": capability_version,
+                            "reason": f"token: {type(e).__name__}",
+                        }
+                    ),
                 )
                 raise PolicyDeniedError(f"capability token rejected: {e}") from None
 
@@ -475,48 +487,47 @@ class VaultManager:
                 self._log_audit(
                     "CAPABILITY_DENIED",
                     None,
-                    json.dumps({
-                        "agent": agent_id,
-                        "capability": capability_name,
-                        "capability_version": capability_version,
-                        "reason": "agent mismatch",
-                    }),
+                    json.dumps(
+                        {
+                            "agent": agent_id,
+                            "capability": capability_name,
+                            "capability_version": capability_version,
+                            "reason": "agent mismatch",
+                        }
+                    ),
                 )
-                raise PolicyDeniedError(
-                    f"token bound to agent {tok.agent_id!r}, "
-                    f"caller claimed {agent_id!r}"
-                )
+                raise PolicyDeniedError(f"token bound to agent {tok.agent_id!r}, caller claimed {agent_id!r}")
             if tok.capability != capability_name:
                 self._log_audit(
                     "CAPABILITY_DENIED",
                     None,
-                    json.dumps({
-                        "agent": agent_id,
-                        "capability": capability_name,
-                        "capability_version": capability_version,
-                        "reason": "capability mismatch",
-                        "token_capability": tok.capability,
-                    }),
+                    json.dumps(
+                        {
+                            "agent": agent_id,
+                            "capability": capability_name,
+                            "capability_version": capability_version,
+                            "reason": "capability mismatch",
+                            "token_capability": tok.capability,
+                        }
+                    ),
                 )
-                raise PolicyDeniedError(
-                    f"token authorizes {tok.capability!r}, "
-                    f"request asked for {capability_name!r}"
-                )
+                raise PolicyDeniedError(f"token authorizes {tok.capability!r}, request asked for {capability_name!r}")
             if tok.capability_version != capability_version:
                 self._log_audit(
                     "CAPABILITY_DENIED",
                     None,
-                    json.dumps({
-                        "agent": agent_id,
-                        "capability": capability_name,
-                        "capability_version": capability_version,
-                        "reason": "version mismatch",
-                        "token_version": tok.capability_version,
-                    }),
+                    json.dumps(
+                        {
+                            "agent": agent_id,
+                            "capability": capability_name,
+                            "capability_version": capability_version,
+                            "reason": "version mismatch",
+                            "token_version": tok.capability_version,
+                        }
+                    ),
                 )
                 raise PolicyDeniedError(
-                    f"token capability_version={tok.capability_version}, "
-                    f"request asked for {capability_version}"
+                    f"token capability_version={tok.capability_version}, request asked for {capability_version}"
                 )
 
             # 4. Context binding. Every key the token pins must appear
@@ -533,12 +544,14 @@ class VaultManager:
                 self._log_audit(
                     "CAPABILITY_DENIED",
                     None,
-                    json.dumps({
-                        "agent": agent_id,
-                        "capability": capability_name,
-                        "capability_version": capability_version,
-                        "reason": f"context binding: {e}",
-                    }),
+                    json.dumps(
+                        {
+                            "agent": agent_id,
+                            "capability": capability_name,
+                            "capability_version": capability_version,
+                            "reason": f"context binding: {e}",
+                        }
+                    ),
                 )
                 raise
 
@@ -560,13 +573,15 @@ class VaultManager:
             self._log_audit(
                 "CAPABILITY_DENIED",
                 None,
-                json.dumps({
-                    "agent": agent_id,
-                    "capability": capability_name,
-                    "capability_version": capability_version,
-                    "reason": "version not supported by registered handler",
-                    "supported_versions": sorted(spec.supported_versions),
-                }),
+                json.dumps(
+                    {
+                        "agent": agent_id,
+                        "capability": capability_name,
+                        "capability_version": capability_version,
+                        "reason": "version not supported by registered handler",
+                        "supported_versions": sorted(spec.supported_versions),
+                    }
+                ),
             )
             raise CapabilityVersionError(
                 f"capability {capability_name!r} does not support version "
@@ -582,12 +597,14 @@ class VaultManager:
             self._log_audit(
                 "CAPABILITY_DENIED",
                 None,
-                json.dumps({
-                    "agent": agent_id,
-                    "capability": capability_name,
-                    "capability_version": capability_version,
-                    "reason": f"payload: {e}",
-                }),
+                json.dumps(
+                    {
+                        "agent": agent_id,
+                        "capability": capability_name,
+                        "capability_version": capability_version,
+                        "reason": f"payload: {e}",
+                    }
+                ),
             )
             raise
 
@@ -600,12 +617,14 @@ class VaultManager:
             self._log_audit(
                 "CAPABILITY_DENIED",
                 None,
-                json.dumps({
-                    "agent": agent_id,
-                    "capability": capability_name,
-                    "capability_version": capability_version,
-                    "reason": "rate limited",
-                }),
+                json.dumps(
+                    {
+                        "agent": agent_id,
+                        "capability": capability_name,
+                        "capability_version": capability_version,
+                        "reason": "rate limited",
+                    }
+                ),
             )
             raise PermissionError(f"Rate limit exceeded for agent {agent_id!r}")
 
@@ -637,30 +656,33 @@ class VaultManager:
             self._log_audit(
                 "CAPABILITY_FAILED",
                 None,
-                json.dumps({
-                    "agent": agent_id,
-                    "capability": capability_name,
-                    "capability_version": capability_version,
-                    "reason": f"handler: {type(e).__name__}",
-                    "context_hash": context_hash,
-                }),
+                json.dumps(
+                    {
+                        "agent": agent_id,
+                        "capability": capability_name,
+                        "capability_version": capability_version,
+                        "reason": f"handler: {type(e).__name__}",
+                        "context_hash": context_hash,
+                    }
+                ),
             )
             raise
 
         self._log_audit(
             "CAPABILITY_EXECUTED",
             None,
-            json.dumps({
-                "agent": agent_id,
-                "capability": capability_name,
-                "capability_version": capability_version,
-                "hook": self.hook.hook_id,
-                "allowed": True,
-                "context_hash": context_hash,
-            }),
+            json.dumps(
+                {
+                    "agent": agent_id,
+                    "capability": capability_name,
+                    "capability_version": capability_version,
+                    "hook": self.hook.hook_id,
+                    "allowed": True,
+                    "context_hash": context_hash,
+                }
+            ),
         )
         return result
-
 
     def _normalize_value_param(self, param_name: str, value: Any, max_len: int) -> bytearray:
         """Coerce a plaintext secret into a mutable ``bytearray``."""
@@ -678,12 +700,14 @@ class VaultManager:
             raise ValidationError(f"'{param_name}' exceeds {max_len} bytes.")
         return b
 
-    def set_secret(self, name: str, value: Any, namespace: str = "default", agent: str = "system", purpose: str = "") -> None:
+    def set_secret(
+        self, name: str, value: Any, namespace: str = "default", agent: str = "system", purpose: str = ""
+    ) -> None:
         """Encrypts and stores a secret."""
         self._validate_string_param("name", name, max_len=256)
         self._validate_string_param("namespace", namespace, max_len=128)
         self._validate_string_param("agent", agent, max_len=128)
-        
+
         plaintext = self._normalize_value_param("value", value, max_len=1024 * 1024)
 
         self._hook_consult("write", agent, namespace, purpose, secret_name=name)
@@ -691,7 +715,11 @@ class VaultManager:
         try:
             decision = self.auth.evaluate(agent, namespace, purpose, action="write")
             if not decision["allowed"]:
-                self._log_audit("POLICY_DENIED", name, f"Action: write, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}")
+                self._log_audit(
+                    "POLICY_DENIED",
+                    name,
+                    f"Action: write, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}",
+                )
                 raise PolicyDeniedError(f"Agent '{agent}' denied write access to '{name}' ({namespace}/{purpose})")
 
             aad = self._get_aad(namespace, name)
@@ -722,7 +750,13 @@ class VaultManager:
         # the fingerprint leaks no plaintext. Operators who want
         # even fingerprint reads gated can wrap the call themselves.
         if self.storage.is_honeytoken(namespace, name):
-            self._log_audit("HONEYTOKEN_TRIGGERED", name, json.dumps({"severity": "critical", "agent": "system", "namespace": namespace, "purpose": "fingerprint"}))
+            self._log_audit(
+                "HONEYTOKEN_TRIGGERED",
+                name,
+                json.dumps(
+                    {"severity": "critical", "agent": "system", "namespace": namespace, "purpose": "fingerprint"}
+                ),
+            )
             raise PermissionError(f"Honeytoken access detected: {namespace}/{name}")
 
         result = self.storage.get_secret(namespace, name, version, policy_hash=self.policy_hash)
@@ -732,7 +766,9 @@ class VaultManager:
         return hashlib.sha256(ciphertext).hexdigest()[:8]
 
     @contextlib.contextmanager
-    def lease_secret(self, name: str, agent: str, namespace: str, purpose: str, version: Optional[int] = None) -> Generator[bytearray, None, None]:
+    def lease_secret(
+        self, name: str, agent: str, namespace: str, purpose: str, version: Optional[int] = None
+    ) -> Generator[bytearray, None, None]:
         self._validate_string_param("name", name, max_len=256)
         self._validate_string_param("agent", agent, max_len=128)
         self._validate_string_param("namespace", namespace, max_len=128)
@@ -748,18 +784,26 @@ class VaultManager:
             raise PermissionError(f"Rate limit exceeded for agent '{agent}'")
 
         if self.storage.is_honeytoken(namespace, name):
-            self._log_audit("HONEYTOKEN_TRIGGERED", name, json.dumps({"severity": "critical", "agent": agent, "namespace": namespace, "purpose": purpose}))
+            self._log_audit(
+                "HONEYTOKEN_TRIGGERED",
+                name,
+                json.dumps({"severity": "critical", "agent": agent, "namespace": namespace, "purpose": purpose}),
+            )
             raise PermissionError(f"Honeytoken access detected: {namespace}/{name}")
 
         decision = self.auth.evaluate(agent, namespace, purpose, action="read")
         if not decision["allowed"]:
-            self._log_audit("POLICY_DENIED", name, f"Action: read, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}")
+            self._log_audit(
+                "POLICY_DENIED",
+                name,
+                f"Action: read, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}",
+            )
             raise PolicyDeniedError(f"Agent '{agent}' denied read access to '{name}' ({namespace}/{purpose})")
-        
+
         result = self.storage.get_secret(namespace, name, version, policy_hash=self.policy_hash)
         if not result:
             raise SecretNotFoundError(f"Secret '{namespace}/{name}' not found.")
-            
+
         ciphertext, dek_version = result
         aad = self._get_aad(namespace, name)
 
@@ -769,8 +813,8 @@ class VaultManager:
 
         plaintext_bytes = decrypt(ciphertext, self.dek, aad)
         buffer = bytearray(plaintext_bytes)
-        del plaintext_bytes 
-        
+        del plaintext_bytes
+
         self._log_audit("LEASE_GRANTED", name, f"Agent: {agent}")
         try:
             yield buffer
@@ -778,7 +822,9 @@ class VaultManager:
             zeroize_bytearray(buffer)
             self._log_audit("LEASE_RETURNED", name, f"Agent: {agent}")
 
-    def execute(self, agent: str, namespace: str, purpose: str, secret_name: str, callback: Callable[[bytearray], Any]) -> Any:
+    def execute(
+        self, agent: str, namespace: str, purpose: str, secret_name: str, callback: Callable[[bytearray], Any]
+    ) -> Any:
         """Lease a secret and hand the *mutable buffer* to ``callback``.
 
         The callback receives a ``bytearray`` (not a ``str``). The vault wipes
@@ -796,7 +842,11 @@ class VaultManager:
         self._hook_consult("list", agent, namespace, purpose)
         decision = self.auth.evaluate(agent, namespace, purpose, action="read")
         if not decision["allowed"]:
-            self._log_audit("POLICY_DENIED", None, f"Action: list, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}")
+            self._log_audit(
+                "POLICY_DENIED",
+                None,
+                f"Action: list, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}",
+            )
             raise PolicyDeniedError(f"Unauthorized to access namespace '{namespace}'")
         return self.storage.list_secrets(namespace, policy_hash=self.policy_hash)
 
@@ -838,6 +888,7 @@ class VaultManager:
         # P1-4 audit fix: pre-check capability BEFORE incrementing the epoch.
         if not callable(getattr(self.master_provider, "rotate_secret", None)):
             from rgt_vault.exceptions import RotateNotSupportedError
+
             raise RotateNotSupportedError(
                 f"{type(self.master_provider).__name__} does not support "
                 "automated master-key rotation. Re-seal the master secret "
@@ -981,12 +1032,19 @@ class VaultManager:
             prev_hash = entry.get("entry_hash") or ""
         return True
 
+
 class AgentVaultClient:
     def __init__(self, vault_manager: VaultManager):
         self._vault = vault_manager
-    def execute(self, agent: str, namespace: str, purpose: str, secret_name: str, callback: Callable[[bytearray], Any]) -> Any:
+
+    def execute(
+        self, agent: str, namespace: str, purpose: str, secret_name: str, callback: Callable[[bytearray], Any]
+    ) -> Any:
         return self._vault.execute(agent, namespace, purpose, secret_name, callback)
+
     @contextlib.contextmanager
-    def lease_secret(self, name: str, agent: str, namespace: str, purpose: str, version: Optional[int] = None) -> Generator[bytearray, None, None]:
+    def lease_secret(
+        self, name: str, agent: str, namespace: str, purpose: str, version: Optional[int] = None
+    ) -> Generator[bytearray, None, None]:
         with self._vault.lease_secret(name, agent, namespace, purpose, version) as secret_buffer:
             yield secret_buffer

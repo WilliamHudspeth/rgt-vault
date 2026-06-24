@@ -20,6 +20,7 @@ Covers:
     work and the hook is consulted on the legacy shape.
   * Audit chain still verifies after capability executions.
 """
+
 import json
 import time
 
@@ -195,11 +196,17 @@ def test_registry_builtins_registered_in_fresh_vault(vault):
 
 def test_execute_capability_happy_path(vault, verifier):
     tok = verifier.sign(
-        "agent-1", "secrets.echo", capability_version=1,
-        context_bindings={"message": "hi"}, ttl_seconds=60,
+        "agent-1",
+        "secrets.echo",
+        capability_version=1,
+        context_bindings={"message": "hi"},
+        ttl_seconds=60,
     )
     result = vault.execute_capability(
-        "secrets.echo", {"message": "hi"}, "agent-1", tok,
+        "secrets.echo",
+        {"message": "hi"},
+        "agent-1",
+        tok,
         capability_version=1,
     )
     assert result == {
@@ -225,15 +232,16 @@ def test_execute_capability_denies_on_agent_mismatch(vault, verifier):
     tok = verifier.sign("agent-1", "secrets.echo", capability_version=1, ttl_seconds=60)
     with pytest.raises(PolicyDeniedError) as exc:
         vault.execute_capability(
-            "secrets.echo", {}, "agent-DIFFERENT", tok, capability_version=1,
+            "secrets.echo",
+            {},
+            "agent-DIFFERENT",
+            tok,
+            capability_version=1,
         )
     assert "agent" in str(exc.value).lower()
     # And the audit chain reflects the deny.
     log = vault.get_audit_log(limit=20)
-    assert any(
-        r.get("action") == "CAPABILITY_DENIED" and "agent" in r.get("details", "")
-        for r in log
-    )
+    assert any(r.get("action") == "CAPABILITY_DENIED" and "agent" in r.get("details", "") for r in log)
 
 
 def test_execute_capability_denies_on_capability_mismatch(vault, verifier):
@@ -246,7 +254,11 @@ def test_execute_capability_denies_on_capability_mismatch(vault, verifier):
     # request agreed on a name the registry doesn't know about).
     with pytest.raises(PolicyDeniedError) as exc:
         vault.execute_capability(
-            "different.capability", {}, "agent-1", tok, capability_version=1,
+            "different.capability",
+            {},
+            "agent-1",
+            tok,
+            capability_version=1,
         )
     assert "authorizes" in str(exc.value) or "different" in str(exc.value)
 
@@ -255,7 +267,11 @@ def test_execute_capability_denies_on_version_mismatch(vault, verifier):
     tok = verifier.sign("agent-1", "secrets.echo", capability_version=1, ttl_seconds=60)
     with pytest.raises(PolicyDeniedError) as exc:
         vault.execute_capability(
-            "secrets.echo", {}, "agent-1", tok, capability_version=2,
+            "secrets.echo",
+            {},
+            "agent-1",
+            tok,
+            capability_version=2,
         )
     assert "version" in str(exc.value).lower()
 
@@ -271,6 +287,7 @@ def test_execute_capability_denies_on_expired_token(vault, verifier):
     import hashlib
     import hmac as _hmac
     import json as _json
+
     payload = _json.dumps(
         {
             "v": 2,
@@ -284,14 +301,16 @@ def test_execute_capability_denies_on_expired_token(vault, verifier):
         separators=(",", ":"),
     ).encode("utf-8")
     sig = _hmac.new(SHARED_SECRET, payload, hashlib.sha256).digest()
-    tok = (
-        base64.urlsafe_b64encode(payload).rstrip(b"=")
-        + b"."
-        + base64.urlsafe_b64encode(sig).rstrip(b"=")
-    ).decode("ascii")
+    tok = (base64.urlsafe_b64encode(payload).rstrip(b"=") + b"." + base64.urlsafe_b64encode(sig).rstrip(b"=")).decode(
+        "ascii"
+    )
     with pytest.raises(PolicyDeniedError):
         vault.execute_capability(
-            "secrets.echo", {}, "agent-1", tok, capability_version=1,
+            "secrets.echo",
+            {},
+            "agent-1",
+            tok,
+            capability_version=1,
         )
 
 
@@ -299,7 +318,11 @@ def test_execute_capability_denies_on_signature_failure(vault):
     fake_token = "not-a-real-token"
     with pytest.raises(PolicyDeniedError):
         vault.execute_capability(
-            "secrets.echo", {}, "agent-1", fake_token, capability_version=1,
+            "secrets.echo",
+            {},
+            "agent-1",
+            fake_token,
+            capability_version=1,
         )
 
 
@@ -310,8 +333,11 @@ def test_execute_capability_denies_on_signature_failure(vault):
 
 def test_execute_capability_enforces_context_binding(vault, verifier):
     tok = verifier.sign(
-        "agent-1", "secrets.echo", capability_version=1,
-        context_bindings={"message": "expected"}, ttl_seconds=60,
+        "agent-1",
+        "secrets.echo",
+        capability_version=1,
+        context_bindings={"message": "expected"},
+        ttl_seconds=60,
     )
     # Wrong binding value -> deny.
     with pytest.raises(Exception) as exc:
@@ -325,6 +351,7 @@ def test_execute_capability_enforces_context_binding(vault, verifier):
     # TokenBindingError is raised directly (not wrapped in PolicyDeniedError
     # at the binding step -- the test only cares that we denied).
     from rgt_vault.token import TokenBindingError
+
     assert isinstance(exc.value, TokenBindingError)
 
 
@@ -346,7 +373,9 @@ def test_execute_capability_accepts_extra_payload_keys(vault, verifier):
     result = vault.execute_capability(
         "permissive.cap",
         {"a": 1, "extra": "ignored-by-token-check"},
-        "agent-1", tok, capability_version=1,
+        "agent-1",
+        tok,
+        capability_version=1,
     )
     assert result["ok"] is True
     assert result["got"]["extra"] == "ignored-by-token-check"
@@ -367,16 +396,26 @@ def test_execute_capability_denies_when_registry_version_mismatch(vault, verifie
         return None
 
     registry.register(
-        "future.cap", _h, supported_versions={2}, params_schema=[],
+        "future.cap",
+        _h,
+        supported_versions={2},
+        params_schema=[],
     )
     # Replace the vault's registry with the test one.
     vault.capability_registry = registry
     tok = verifier.sign(
-        "agent-1", "future.cap", capability_version=1, ttl_seconds=60,
+        "agent-1",
+        "future.cap",
+        capability_version=1,
+        ttl_seconds=60,
     )
     with pytest.raises(CapabilityVersionError):
         vault.execute_capability(
-            "future.cap", {}, "agent-1", tok, capability_version=1,
+            "future.cap",
+            {},
+            "agent-1",
+            tok,
+            capability_version=1,
         )
 
 
@@ -387,13 +426,18 @@ def test_execute_capability_payload_validation(vault, verifier):
         return None
 
     registry.register(
-        "strict.cap", _h, params_schema=["a", "b"],
+        "strict.cap",
+        _h,
+        params_schema=["a", "b"],
     )
     vault.capability_registry = registry
     tok = verifier.sign("agent-1", "strict.cap", capability_version=1, ttl_seconds=60)
     with pytest.raises(ValidationError):
         vault.execute_capability(
-            "strict.cap", {"a": 1, "extra": "no"}, "agent-1", tok,
+            "strict.cap",
+            {"a": 1, "extra": "no"},
+            "agent-1",
+            tok,
             capability_version=1,
         )
 
@@ -402,7 +446,11 @@ def test_execute_capability_denies_unknown_capability(vault, verifier):
     tok = verifier.sign("agent-1", "nope", capability_version=1, ttl_seconds=60)
     with pytest.raises(CapabilityNotFoundError):
         vault.execute_capability(
-            "nope", {}, "agent-1", tok, capability_version=1,
+            "nope",
+            {},
+            "agent-1",
+            tok,
+            capability_version=1,
         )
 
 
@@ -443,10 +491,7 @@ def test_handler_exception_logged_and_reraised(vault, verifier):
     # message would not leak via audit.
     assert "handler internal failure" in str(exc.value)
     log = vault.get_audit_log(limit=20)
-    assert any(
-        r.get("action") == "CAPABILITY_FAILED" and "RuntimeError" in r.get("details", "")
-        for r in log
-    )
+    assert any(r.get("action") == "CAPABILITY_FAILED" and "RuntimeError" in r.get("details", "") for r in log)
 
 
 # ---------------------------------------------------------------------
@@ -458,7 +503,11 @@ def test_execute_capability_denies_when_frozen(frozen_vault, verifier):
     tok = verifier.sign("agent-1", "secrets.echo", capability_version=1, ttl_seconds=60)
     with pytest.raises(PolicyDeniedError) as exc:
         frozen_vault.execute_capability(
-            "secrets.echo", {}, "agent-1", tok, capability_version=1,
+            "secrets.echo",
+            {},
+            "agent-1",
+            tok,
+            capability_version=1,
         )
     assert "frozen" in str(exc.value).lower()
     # No token verification should have happened: we never reach the
@@ -466,11 +515,7 @@ def test_execute_capability_denies_when_frozen(frozen_vault, verifier):
     # audit row's reason says "vault frozen" -- the verifier's failure
     # modes would say "token" instead.
     log = frozen_vault.get_audit_log(limit=20)
-    assert any(
-        r.get("action") == "CAPABILITY_DENIED"
-        and "frozen" in r.get("details", "").lower()
-        for r in log
-    )
+    assert any(r.get("action") == "CAPABILITY_DENIED" and "frozen" in r.get("details", "").lower() for r in log)
 
 
 # ---------------------------------------------------------------------
@@ -483,14 +528,20 @@ def test_secrets_use_bridges_to_legacy_action(vault, verifier):
     legacy action against it, without leaking the secret material.
     """
     vault.set_secret(
-        "api-key", "super-secret", namespace="default",
-        agent="cli", purpose="test",
+        "api-key",
+        "super-secret",
+        namespace="default",
+        agent="cli",
+        purpose="test",
     )
     # The action registry is built into the vault; check the
     # action_registry attribute is set so the bridge can find it.
     assert hasattr(vault, "action_registry")
     tok = verifier.sign(
-        "agent-1", "secrets.use", capability_version=1, ttl_seconds=60,
+        "agent-1",
+        "secrets.use",
+        capability_version=1,
+        ttl_seconds=60,
     )
     result = vault.execute_capability(
         "secrets.use",
@@ -500,7 +551,9 @@ def test_secrets_use_bridges_to_legacy_action(vault, verifier):
             "action": "echo",
             "params": {"message": "bridged"},
         },
-        "agent-1", tok, capability_version=1,
+        "agent-1",
+        tok,
+        capability_version=1,
     )
     assert result["ok"] is True
     assert result["action"] == "echo"
@@ -511,7 +564,10 @@ def test_secrets_use_bridges_to_legacy_action(vault, verifier):
 
 def test_secrets_use_missing_secret_raises(vault, verifier):
     tok = verifier.sign(
-        "agent-1", "secrets.use", capability_version=1, ttl_seconds=60,
+        "agent-1",
+        "secrets.use",
+        capability_version=1,
+        ttl_seconds=60,
     )
     with pytest.raises(SecretNotFoundError):
         vault.execute_capability(
@@ -522,18 +578,28 @@ def test_secrets_use_missing_secret_raises(vault, verifier):
                 "action": "echo",
                 "params": {},
             },
-            "agent-1", tok, capability_version=1,
+            "agent-1",
+            tok,
+            capability_version=1,
         )
 
 
 def test_secrets_use_unknown_action_raises(vault, verifier):
     vault.set_secret(
-        "k", "v", namespace="default", agent="cli", purpose="test",
+        "k",
+        "v",
+        namespace="default",
+        agent="cli",
+        purpose="test",
     )
     tok = verifier.sign(
-        "agent-1", "secrets.use", capability_version=1, ttl_seconds=60,
+        "agent-1",
+        "secrets.use",
+        capability_version=1,
+        ttl_seconds=60,
     )
     from rgt_vault.exceptions import ActionNotFoundError
+
     with pytest.raises(ActionNotFoundError):
         vault.execute_capability(
             "secrets.use",
@@ -543,21 +609,29 @@ def test_secrets_use_unknown_action_raises(vault, verifier):
                 "action": "does.not.exist",
                 "params": {},
             },
-            "agent-1", tok, capability_version=1,
+            "agent-1",
+            tok,
+            capability_version=1,
         )
 
 
 def test_secrets_use_validates_required_params(vault, verifier):
     """The bridge rejects payloads that don't include secret_name/action."""
     tok = verifier.sign(
-        "agent-1", "secrets.use", capability_version=1, ttl_seconds=60,
+        "agent-1",
+        "secrets.use",
+        capability_version=1,
+        ttl_seconds=60,
     )
     from rgt_vault.exceptions import ActionExecutionError
+
     with pytest.raises(ActionExecutionError):
         vault.execute_capability(
             "secrets.use",
             {"action": "echo"},  # missing secret_name
-            "agent-1", tok, capability_version=1,
+            "agent-1",
+            tok,
+            capability_version=1,
         )
 
 
@@ -571,7 +645,11 @@ def test_log_hook_records_capability_request(vault, verifier):
     vault.hook = LogHook()
     tok = verifier.sign("agent-1", "secrets.echo", capability_version=1, ttl_seconds=60)
     vault.execute_capability(
-        "secrets.echo", {}, "agent-1", tok, capability_version=1,
+        "secrets.echo",
+        {},
+        "agent-1",
+        tok,
+        capability_version=1,
     )
     last = vault.hook.consultations[-1]
     assert last["operation"] == "capability"
@@ -591,10 +669,17 @@ def test_two_factor_hook_verifies_v2_token_on_capability_path(tmp_path):
     )
     verifier = HMACTokenVerifier(SHARED_SECRET)
     tok = verifier.sign(
-        "agent-1", "secrets.echo", capability_version=1, ttl_seconds=60,
+        "agent-1",
+        "secrets.echo",
+        capability_version=1,
+        ttl_seconds=60,
     )
     result = vault.execute_capability(
-        "secrets.echo", {}, "agent-1", tok, capability_version=1,
+        "secrets.echo",
+        {},
+        "agent-1",
+        tok,
+        capability_version=1,
     )
     assert result["ok"] is True
     # The hook must have seen the capability-shaped request, including

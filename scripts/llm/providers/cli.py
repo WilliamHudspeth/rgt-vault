@@ -4,6 +4,7 @@ These are useful when the binary already has auth baked in (via OAuth) so
 no API key management is needed from us. They are slower than the API
 providers but are the path of least resistance for design-level work.
 """
+
 from __future__ import annotations
 
 import os
@@ -28,7 +29,8 @@ def _subprocess_env() -> dict:
     extract unrelated secrets from the parent's environment.
     """
     return {
-        k: v for k, v in os.environ.items()
+        k: v
+        for k, v in os.environ.items()
         if k in ("PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "TZ")
     }
 
@@ -316,6 +318,7 @@ def _kill_pg(proc: subprocess.Popen, grace_seconds: float = 1.0) -> None:
     if the pgid isn't available.
     """
     import os
+
     pgid = getattr(proc, "pid", None)
     if pgid is None:
         return

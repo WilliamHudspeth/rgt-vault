@@ -16,6 +16,7 @@ once the per-line write exceeds PIPE_BUF (4 KiB on Linux). We hold
 an fcntl advisory lock around the append+header-check section so
 the file is written atomically per row across processes.
 """
+
 from __future__ import annotations
 
 import csv
@@ -67,11 +68,20 @@ def _append_row(p: Path, row: list) -> None:
                 # detect this without an extra stat() call. The
                 # check+write+append is one critical section.
                 if f.tell() == 0:
-                    w.writerow([
-                        "ts", "provider", "model", "task_type", "spec",
-                        "input_tokens", "output_tokens", "latency_ms",
-                        "ok", "error",
-                    ])
+                    w.writerow(
+                        [
+                            "ts",
+                            "provider",
+                            "model",
+                            "task_type",
+                            "spec",
+                            "input_tokens",
+                            "output_tokens",
+                            "latency_ms",
+                            "ok",
+                            "error",
+                        ]
+                    )
                 w.writerow(row)
             finally:
                 try:
@@ -103,18 +113,21 @@ def log(
     """
     p = path or DEFAULT_LOG_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
-    _append_row(p, [
-        time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        provider,
-        model,
-        task_type,
-        spec,
-        input_tokens,
-        output_tokens,
-        latency_ms,
-        int(ok),
-        error[:200] if error else "",
-    ])
+    _append_row(
+        p,
+        [
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            provider,
+            model,
+            task_type,
+            spec,
+            input_tokens,
+            output_tokens,
+            latency_ms,
+            int(ok),
+            error[:200] if error else "",
+        ],
+    )
 
 
 def totals(path: Path | None = None) -> dict:
@@ -154,8 +167,7 @@ def summary(path: Path | None = None) -> str:
     if not agg:
         return f"no usage data at {p}"
     lines = [f"Usage summary from {p}:", ""]
-    lines.append(f"{'provider':<28} {'model':<28} {'calls':>6} {'ok':>4} "
-                 f"{'in_tok':>10} {'out_tok':>10} {'avg_ms':>8}")
+    lines.append(f"{'provider':<28} {'model':<28} {'calls':>6} {'ok':>4} {'in_tok':>10} {'out_tok':>10} {'avg_ms':>8}")
     lines.append("-" * 100)
     for (provider, model), a in sorted(agg.items()):
         avg_ms = a["latency_ms_total"] / max(a["calls"], 1)

@@ -9,6 +9,7 @@ Two layers:
     path stays byte-for-byte unchanged, and a shadow failure never breaks the
     authoritative Python write (chaos invariant).
 """
+
 import os
 import threading
 import urllib.error
@@ -24,29 +25,30 @@ from rgt_vault.vault import VaultManager
 # Unit tests: rgt_vault.shadow in isolation (_http monkeypatched)
 # ---------------------------------------------------------------------------
 
+
 def fake_http_set_get(method, url, token, body, timeout=2.0):
-    if method == 'POST':
-        return 201, b'{}'
-    elif method == 'GET':
+    if method == "POST":
+        return 201, b"{}"
+    elif method == "GET":
         return 200, b'{"namespace":"ns","secrets":[{"name":"k","value":"v"}]}'
 
 
 def fake_http_set_get_mismatch(method, url, token, body, timeout=2.0):
-    if method == 'POST':
-        return 201, b'{}'
-    elif method == 'GET':
+    if method == "POST":
+        return 201, b"{}"
+    elif method == "GET":
         return 200, b'{"namespace":"ns","secrets":[{"name":"k","value":"WRONG"}]}'
 
 
 def fake_http_post_non_2xx(method, url, token, body, timeout=2.0):
-    if method == 'POST':
-        return 500, b'err'
-    elif method == 'GET':
-        return 200, b'{}'
+    if method == "POST":
+        return 500, b"err"
+    elif method == "GET":
+        return 200, b"{}"
 
 
 def fake_http_revoke_success(method, url, token, body, timeout=2.0):
-    return 200, b'{}'
+    return 200, b"{}"
 
 
 def fake_http_connection_refused(method, url, token, body, timeout=2.0):
@@ -55,62 +57,62 @@ def fake_http_connection_refused(method, url, token, body, timeout=2.0):
 
 @pytest.fixture
 def shadow_writer():
-    return shadow.ShadowWriter('http://example.com', 'token')
+    return shadow.ShadowWriter("http://example.com", "token")
 
 
 def test_null_shadow_writer_is_noop():
     writer = shadow.NullShadowWriter()
-    assert writer.mirror_set('ns', 'k', 'v') is True
-    assert writer.mirror_revoke('ns', 'k') is True
+    assert writer.mirror_set("ns", "k", "v") is True
+    assert writer.mirror_revoke("ns", "k") is True
     assert writer.divergence_count() == 0
     assert writer.enabled is False
 
 
 def test_shadow_from_env_unset_returns_null(monkeypatch):
-    monkeypatch.delenv('RGT_VAULT_SHADOW_URL', raising=False)
-    monkeypatch.delenv('RGT_VAULT_SHADOW_TOKEN', raising=False)
+    monkeypatch.delenv("RGT_VAULT_SHADOW_URL", raising=False)
+    monkeypatch.delenv("RGT_VAULT_SHADOW_TOKEN", raising=False)
     writer = shadow.shadow_from_env()
     assert isinstance(writer, shadow.NullShadowWriter)
 
 
 def test_shadow_from_env_set_returns_shadow(monkeypatch):
-    monkeypatch.setenv('RGT_VAULT_SHADOW_URL', 'http://example.com')
-    monkeypatch.setenv('RGT_VAULT_SHADOW_TOKEN', 'token')
+    monkeypatch.setenv("RGT_VAULT_SHADOW_URL", "http://example.com")
+    monkeypatch.setenv("RGT_VAULT_SHADOW_TOKEN", "token")
     writer = shadow.shadow_from_env()
     assert isinstance(writer, shadow.ShadowWriter)
-    assert writer.base_url == 'http://example.com'
+    assert writer.base_url == "http://example.com"
 
 
 def test_mirror_set_success(monkeypatch, shadow_writer):
-    monkeypatch.setattr(shadow, '_http', fake_http_set_get)
-    assert shadow_writer.mirror_set('ns', 'k', 'v') is True
+    monkeypatch.setattr(shadow, "_http", fake_http_set_get)
+    assert shadow_writer.mirror_set("ns", "k", "v") is True
     assert shadow_writer.divergence_count() == 0
 
 
 def test_mirror_set_value_mismatch_records_divergence(monkeypatch, shadow_writer):
-    monkeypatch.setattr(shadow, '_http', fake_http_set_get_mismatch)
-    assert shadow_writer.mirror_set('ns', 'k', 'v') is False
+    monkeypatch.setattr(shadow, "_http", fake_http_set_get_mismatch)
+    assert shadow_writer.mirror_set("ns", "k", "v") is False
     assert shadow_writer.divergence_count() == 1
     divergences = shadow_writer.divergences()
     assert len(divergences) == 1
-    assert divergences[0].op == 'set'
+    assert divergences[0].op == "set"
 
 
 def test_mirror_set_post_non_2xx_records_divergence(monkeypatch, shadow_writer):
-    monkeypatch.setattr(shadow, '_http', fake_http_post_non_2xx)
-    assert shadow_writer.mirror_set('ns', 'k', 'v') is False
+    monkeypatch.setattr(shadow, "_http", fake_http_post_non_2xx)
+    assert shadow_writer.mirror_set("ns", "k", "v") is False
     assert shadow_writer.divergence_count() == 1
 
 
 def test_mirror_revoke_success(monkeypatch, shadow_writer):
-    monkeypatch.setattr(shadow, '_http', fake_http_revoke_success)
-    assert shadow_writer.mirror_revoke('ns', 'k') is True
+    monkeypatch.setattr(shadow, "_http", fake_http_revoke_success)
+    assert shadow_writer.mirror_revoke("ns", "k") is True
     assert shadow_writer.divergence_count() == 0
 
 
 def test_mirror_set_connection_refused_never_raises(monkeypatch, shadow_writer):
-    monkeypatch.setattr(shadow, '_http', fake_http_connection_refused)
-    assert shadow_writer.mirror_set('ns', 'k', 'v') is False
+    monkeypatch.setattr(shadow, "_http", fake_http_connection_refused)
+    assert shadow_writer.mirror_set("ns", "k", "v") is False
     assert shadow_writer.divergence_count() == 1
 
 
@@ -133,6 +135,7 @@ rules:
 
 class _FakeShadow(ShadowWriter):
     """In-memory shadow stand-in: records calls, can be forced to fail."""
+
     enabled = True
 
     def __init__(self, fail: bool = False):

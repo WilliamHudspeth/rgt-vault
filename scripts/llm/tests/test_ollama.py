@@ -19,6 +19,7 @@ import pytest
 
 # ----- is_available: tolerant match -----------------------------------
 
+
 class FakeResponse:
     def __init__(self, body: bytes):
         self._body = body
@@ -37,9 +38,7 @@ def test_is_available_exact_match(monkeypatch):
     from scripts.llm.providers.ollama import OllamaProvider
 
     def fake_urlopen(url, timeout=None):
-        return FakeResponse(json.dumps({
-            "models": [{"name": "qwen2.5:7b"}, {"name": "llama3.2:3b"}]
-        }).encode())
+        return FakeResponse(json.dumps({"models": [{"name": "qwen2.5:7b"}, {"name": "llama3.2:3b"}]}).encode())
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     p = OllamaProvider("qwen2.5:7b")
@@ -51,9 +50,7 @@ def test_is_available_family_match(monkeypatch):
     from scripts.llm.providers.ollama import OllamaProvider
 
     def fake_urlopen(url, timeout=None):
-        return FakeResponse(json.dumps({
-            "models": [{"name": "qwen2.5:latest"}, {"name": "llama3.2:3b"}]
-        }).encode())
+        return FakeResponse(json.dumps({"models": [{"name": "qwen2.5:latest"}, {"name": "llama3.2:3b"}]}).encode())
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     p = OllamaProvider("qwen2.5:7b")
@@ -87,9 +84,7 @@ def test_is_available_different_family(monkeypatch):
     from scripts.llm.providers.ollama import OllamaProvider
 
     def fake_urlopen(url, timeout=None):
-        return FakeResponse(json.dumps({
-            "models": [{"name": "llama3.2:3b"}, {"name": "mistral:7b"}]
-        }).encode())
+        return FakeResponse(json.dumps({"models": [{"name": "llama3.2:3b"}, {"name": "mistral:7b"}]}).encode())
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     p = OllamaProvider("qwen2.5:7b")
@@ -97,6 +92,7 @@ def test_is_available_different_family(monkeypatch):
 
 
 # ----- complete: routes through _http.post_json ------------------------
+
 
 def test_complete_success(monkeypatch):
     from scripts.llm.providers import ollama

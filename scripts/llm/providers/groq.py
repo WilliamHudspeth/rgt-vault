@@ -5,6 +5,7 @@ IMPORTANT: Groq is behind Cloudflare and 403s on the default urllib UA.
 We always send a custom User-Agent header.
 Free tier: 12,000 tokens/minute per request.
 """
+
 from __future__ import annotations
 
 import os
@@ -60,7 +61,13 @@ class GroqProvider(Provider):
                 timeout=timeout,
             )
         except HTTPStatusError as e:
-            usage_tracker.log(provider=self.name, model=self.model, latency_ms=timer_ms(t0), ok=False, error=f"HTTP {e.status}: {e.body[:200]}")
+            usage_tracker.log(
+                provider=self.name,
+                model=self.model,
+                latency_ms=timer_ms(t0),
+                ok=False,
+                error=f"HTTP {e.status}: {e.body[:200]}",
+            )
             return Reply(
                 text="",
                 provider=self.name,
@@ -73,7 +80,13 @@ class GroqProvider(Provider):
         try:
             text = resp["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as e:
-            usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=f"unexpected response shape: {e}")
+            usage_tracker.log(
+                provider=self.name,
+                model=self.model,
+                latency_ms=latency,
+                ok=False,
+                error=f"unexpected response shape: {e}",
+            )
             return Reply(
                 text="",
                 provider=self.name,
@@ -85,7 +98,14 @@ class GroqProvider(Provider):
         usage = resp.get("usage", {})
         in_tok = usage.get("prompt_tokens", 0)
         out_tok = usage.get("completion_tokens", 0)
-        usage_tracker.log(provider=self.name, model=self.model, input_tokens=in_tok, output_tokens=out_tok, latency_ms=latency, ok=True)
+        usage_tracker.log(
+            provider=self.name,
+            model=self.model,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            latency_ms=latency,
+            ok=True,
+        )
         return Reply(
             text=text,
             provider=self.name,

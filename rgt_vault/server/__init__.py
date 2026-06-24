@@ -39,5 +39,6 @@ def __getattr__(name: str):
     # [server] extra — the package's stated design contract above.
     if name == "build_app":
         from .app import build_app
+
         return build_app
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

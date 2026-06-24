@@ -17,6 +17,7 @@ Audit integration: every authenticated request gets a short "token id"
 This lets the operator correlate HTTP activity with the hash-chained
 audit log without ever recording the token itself.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -84,8 +85,7 @@ class TokenStore:
     def read(self) -> str:
         if not self.path.is_file():
             raise ServerAuthError(
-                f"Token file not found: {self.path}. "
-                "Run `rgt-vault init` (or pass --token-file to a file that exists)."
+                f"Token file not found: {self.path}. Run `rgt-vault init` (or pass --token-file to a file that exists)."
             )
         return self.path.read_text(encoding="utf-8").strip()
 
@@ -135,8 +135,7 @@ def load_or_create_token(path: Optional[Path] = None) -> tuple[Path, str]:
         existing = store.read()
         if not existing:
             raise ServerAuthError(
-                f"Token file {p} is empty. Delete it and rerun, or replace it "
-                "with a non-empty token."
+                f"Token file {p} is empty. Delete it and rerun, or replace it with a non-empty token."
             )
         return p, existing
     token = generate_token()

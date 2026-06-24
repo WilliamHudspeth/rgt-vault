@@ -8,6 +8,7 @@ Imports the Multica API and exposes high-level queries:
 
 Tokens read from ~/.multica/config.json (the standard Multica PAT).
 """
+
 import json
 import urllib.error
 import urllib.request
@@ -28,10 +29,7 @@ def _token() -> str:
     with open(cfg_path) as f:
         data = json.load(f)
     if "token" not in data:
-        raise KeyError(
-            f"'token' key missing from {cfg_path}; "
-            "expected Multica PAT config"
-        )
+        raise KeyError(f"'token' key missing from {cfg_path}; expected Multica PAT config")
     return data["token"]
 
 

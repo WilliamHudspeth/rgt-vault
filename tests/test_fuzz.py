@@ -5,6 +5,7 @@ corrupted bytes can reach: AES-256-GCM decrypt, DEK unwrap, and import_vault.
 The invariants: never return wrong plaintext, never raise an *unexpected*
 exception type, never crash the interpreter.
 """
+
 import os
 import tempfile
 
@@ -19,6 +20,7 @@ from rgt_vault.keychain import AES256GCMWrapper
 from rgt_vault.vault import VaultManager
 
 # --- AES-256-GCM (crypto.encrypt/decrypt) ----------------------------------
+
 
 @settings(max_examples=200, deadline=None)
 @given(data=st.binary(min_size=0, max_size=4096), aad=st.binary(max_size=256))
@@ -64,6 +66,7 @@ def test_decrypt_rejects_wrong_key(data, aad):
 
 # --- DEK unwrap (AES256GCMWrapper.unwrap) ----------------------------------
 
+
 @settings(max_examples=150, deadline=None)
 @given(blob=st.binary(max_size=128))
 def test_unwrap_arbitrary_blob_raises(blob):
@@ -75,6 +78,7 @@ def test_unwrap_arbitrary_blob_raises(blob):
 
 
 # --- import_vault (untrusted payload parsing) ------------------------------
+
 
 @pytest.fixture(scope="module")
 def fuzz_vault():
@@ -91,8 +95,7 @@ def fuzz_vault():
         )
 
 
-@settings(max_examples=300, deadline=None,
-          suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(blob=st.binary(max_size=1024))
 def test_import_vault_only_raises_validation(fuzz_vault, blob):
     """Arbitrary bytes into import_vault must fail cleanly, never with an
@@ -103,17 +106,18 @@ def test_import_vault_only_raises_validation(fuzz_vault, blob):
         pass  # expected, controlled failure
 
 
-@settings(max_examples=100, deadline=None,
-          suppress_health_check=[HealthCheck.function_scoped_fixture])
-@given(payload=st.dictionaries(
-    keys=st.sampled_from(["secrets", "audit_logs", "honeytokens", "vault_id", "junk"]),
-    values=st.recursive(
-        st.none() | st.booleans() | st.integers() | st.text(max_size=8),
-        lambda c: st.lists(c, max_size=3) | st.dictionaries(st.text(max_size=4), c, max_size=3),
-        max_leaves=5,
-    ),
-    max_size=4,
-))
+@settings(max_examples=100, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(
+    payload=st.dictionaries(
+        keys=st.sampled_from(["secrets", "audit_logs", "honeytokens", "vault_id", "junk"]),
+        values=st.recursive(
+            st.none() | st.booleans() | st.integers() | st.text(max_size=8),
+            lambda c: st.lists(c, max_size=3) | st.dictionaries(st.text(max_size=4), c, max_size=3),
+            max_leaves=5,
+        ),
+        max_size=4,
+    )
+)
 def test_import_data_structured_garbage(fuzz_vault, payload):
     """Structurally-plausible but malformed dicts must raise ValueError, not crash."""
     try:

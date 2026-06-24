@@ -119,10 +119,7 @@ class CapabilityV2Token:
             return
         for key, expected in self.context_bindings.items():
             if key not in request_context:
-                raise TokenBindingError(
-                    f"capability {self.capability!r} requires context key "
-                    f"{key!r} in the request"
-                )
+                raise TokenBindingError(f"capability {self.capability!r} requires context key {key!r} in the request")
             if request_context[key] != expected:
                 raise TokenBindingError(
                     f"capability {self.capability!r} context binding failed "
@@ -237,9 +234,7 @@ class HMACTokenVerifier(TokenVerifier):
         if not isinstance(shared_secret, (bytes, bytearray)):
             raise ValidationError("shared_secret must be bytes")
         if len(shared_secret) < 32:
-            raise ValidationError(
-                "shared_secret must be at least 32 bytes of random material"
-            )
+            raise ValidationError("shared_secret must be at least 32 bytes of random material")
         self._secret = bytes(shared_secret)
 
     def sign(
@@ -286,8 +281,7 @@ class HMACTokenVerifier(TokenVerifier):
         version = int(data.get("v", 0))
         if version != TOKEN_FORMAT_VERSION:
             raise TokenVersionError(
-                f"token format version {version} not supported; "
-                f"this verifier only handles v{TOKEN_FORMAT_VERSION}"
+                f"token format version {version} not supported; this verifier only handles v{TOKEN_FORMAT_VERSION}"
             )
 
         try:
@@ -315,9 +309,7 @@ class HMACTokenVerifier(TokenVerifier):
             token_id=token_id,
         )
         if result.is_expired():
-            raise TokenExpiredError(
-                f"token for {capability!r} expired at {expires_at}"
-            )
+            raise TokenExpiredError(f"token for {capability!r} expired at {expires_at}")
         return result
 
 
@@ -335,8 +327,7 @@ class Ed25519TokenVerifier(TokenVerifier):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         raise NotImplementedError(
-            "Ed25519TokenVerifier is an architectural stub; "
-            "use HMACTokenVerifier for the v1 deployment."
+            "Ed25519TokenVerifier is an architectural stub; use HMACTokenVerifier for the v1 deployment."
         )
 
     def sign(self, *args: Any, **kwargs: Any) -> str:  # pragma: no cover

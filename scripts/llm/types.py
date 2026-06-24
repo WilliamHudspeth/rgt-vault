@@ -4,6 +4,7 @@ A Provider is a single backend (Mistral, Cohere, Groq, Ollama local, Claude CLI,
 A Provider returns a Reply with text + token usage + latency.
 The Router picks a Provider for each TaskType with a fallback chain.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

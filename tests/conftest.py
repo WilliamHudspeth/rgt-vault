@@ -5,6 +5,7 @@ deliberately exercises ``VaultManager._normalize_master`` (the bytes-vs-
 MasterSecret boundary that previously crashed every default code path) and
 keeps the test suite from writing into the developer's real OS keyring.
 """
+
 import os
 import tempfile
 

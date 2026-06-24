@@ -1,4 +1,5 @@
 """Unit tests for the router. Offline — no real provider calls."""
+
 from __future__ import annotations
 
 import unittest
@@ -87,33 +88,35 @@ class ChainConfigTests(unittest.TestCase):
             p.write_text("")  # totally empty
             loaded = RouteConfig.load(p)
         # The chains dict must be populated.
-        self.assertGreater(len(loaded.chains), 0,
-                           "empty yaml should fall back to default chains")
+        self.assertGreater(len(loaded.chains), 0, "empty yaml should fall back to default chains")
         # Specifically, the default code-review chain should be present.
         from scripts.llm.router import TASK_CODE_REVIEW
+
         self.assertIn(TASK_CODE_REVIEW, loaded.chains)
 
     def test_yaml_with_only_other_keys_falls_back(self):
         """A yaml that has env_path or providers but no chains: same fallback."""
         import yaml
+
         with tempfile_patch() as p:
             p.write_text(yaml.safe_dump({"providers": {"groq": {"model": "x"}}}))
             loaded = RouteConfig.load(p)
         from scripts.llm.router import TASK_CODE_REVIEW
-        self.assertIn(TASK_CODE_REVIEW, loaded.chains,
-                      "providers-only yaml should still get default chains")
+
+        self.assertIn(TASK_CODE_REVIEW, loaded.chains, "providers-only yaml should still get default chains")
         # The providers section should be preserved.
         self.assertEqual(loaded.provider_args, {"groq": {"model": "x"}})
 
     def test_yaml_with_empty_chains_falls_back(self):
         """A yaml that has chains: {} (explicitly empty) also falls back."""
         import yaml
+
         with tempfile_patch() as p:
             p.write_text(yaml.safe_dump({"chains": {}}))
             loaded = RouteConfig.load(p)
         from scripts.llm.router import TASK_CODE_REVIEW
-        self.assertIn(TASK_CODE_REVIEW, loaded.chains,
-                      "explicit empty chains should fall back")
+
+        self.assertIn(TASK_CODE_REVIEW, loaded.chains, "explicit empty chains should fall back")
 
 
 def tempfile_patch():
@@ -134,15 +137,15 @@ class RouterFallbackTests(unittest.TestCase):
         )
         bad = _FakeProvider(
             name="bad",
-            reply=Reply(
-                text="", provider="bad", model="b", error="HTTP 500"
-            ),
+            reply=Reply(text="", provider="bad", model="b", error="HTTP 500"),
         )
         cfg = RouteConfig(
             chains={TASK_CODE_REVIEW: ["bad", "good", "unused"]},
         )
         router = Router(cfg)
-        with patch.object(router, "_get", side_effect=lambda s: {"bad": bad, "good": good, "unused": _FakeProvider(name="u")}[s]):
+        with patch.object(
+            router, "_get", side_effect=lambda s: {"bad": bad, "good": good, "unused": _FakeProvider(name="u")}[s]
+        ):
             reply = router.call(TASK_CODE_REVIEW, "hi")
         self.assertTrue(reply.ok)
         self.assertEqual(reply.provider, "good")

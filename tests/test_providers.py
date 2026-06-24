@@ -70,10 +70,7 @@ class TestLinuxTPMProvider:
     def test_missing_private_file(self, temp_dir):
         """If the private blob doesn't exist, expect FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
-            provider = LinuxTPMProvider(
-                str(temp_dir / "nonexistent.priv"),
-                str(temp_dir / "dummy.pub")
-            )
+            provider = LinuxTPMProvider(str(temp_dir / "nonexistent.priv"), str(temp_dir / "dummy.pub"))
             provider.get_secret()
 
     def test_missing_public_file(self, temp_dir):
@@ -146,6 +143,7 @@ class TestWindowsDPAPIProvider:
     def test_missing_file(self, temp_dir):
         """FileNotFoundError if the sealed blob doesn't exist."""
         from rgt_vault.providers.windows_dpapi import WindowsDPAPIProvider
+
         with pytest.raises(FileNotFoundError):
             WindowsDPAPIProvider(str(temp_dir / "nonexistent.bin"))
 
@@ -171,13 +169,10 @@ class TestWindowsDPAPIProvider:
 class TestMacOSKeychainProvider:
     def test_successful_find(self, dummy_master_secret):
         """Simulate a working 'security' call returning the secret."""
+
         def fake_run(args, **kwargs):
             if "find-generic-password" in args:
-                return mock.MagicMock(
-                    returncode=0,
-                    stdout=dummy_master_secret.decode("utf-8") + "\n",
-                    stderr=""
-                )
+                return mock.MagicMock(returncode=0, stdout=dummy_master_secret.decode("utf-8") + "\n", stderr="")
             return mock.MagicMock(returncode=0)
 
         with mock.patch("subprocess.run", side_effect=fake_run):
@@ -189,13 +184,11 @@ class TestMacOSKeychainProvider:
     def test_keychain_access_denied(self):
         """If security command fails (non\u2011zero), PermissionError raised."""
         import subprocess
+
         def fake_run(args, **kwargs):
             if "find-generic-password" in args:
                 raise subprocess.CalledProcessError(
-                    returncode=1,
-                    cmd=args,
-                    output="",
-                    stderr="The specified item could not be found in the keychain."
+                    returncode=1, cmd=args, output="", stderr="The specified item could not be found in the keychain."
                 )
             return mock.MagicMock(returncode=0)
 
@@ -210,6 +203,7 @@ class TestMacOSKeychainProvider:
 # ------------------------------------------------------------------
 def test_tpm_seal(temp_dir, dummy_master_secret):
     """Run seal_master_secret and verify it writes .priv and .pub files."""
+
     def fake_run(args, **kwargs):
         return mock.MagicMock(returncode=0)
 
@@ -235,6 +229,7 @@ def test_dpapi_seal(temp_dir, dummy_master_secret):
 
 def test_keychain_seal(dummy_master_secret):
     """Seal calls the security command with appropriate arguments."""
+
     def fake_run(args, **kwargs):
         assert "add-generic-password" in args
         return mock.MagicMock(returncode=0)
@@ -256,15 +251,16 @@ class TestPlatformFactory:
         """On Windows, should return WindowsDPAPIProvider."""
         blob = temp_dir / "sealed.bin"
         blob.write_text(base64.b64encode(b"dummy").decode())
-        with mock.patch("sys.platform", "win32"), \
-             mock.patch.dict("os.environ", {"VAULT_DPAPI_BLOB": str(blob)}):
+        with mock.patch("sys.platform", "win32"), mock.patch.dict("os.environ", {"VAULT_DPAPI_BLOB": str(blob)}):
             provider = create_platform_provider()
             assert isinstance(provider, WindowsDPAPIProvider)
 
     def test_macos_platform(self):
         """On macOS, returns MacOSKeychainProvider."""
-        with mock.patch("sys.platform", "darwin"), \
-             mock.patch("subprocess.run", return_value=mock.MagicMock(returncode=0, stdout="test")):
+        with (
+            mock.patch("sys.platform", "darwin"),
+            mock.patch("subprocess.run", return_value=mock.MagicMock(returncode=0, stdout="test")),
+        ):
             provider = create_platform_provider()
             assert isinstance(provider, MacOSKeychainProvider)
 
@@ -274,19 +270,20 @@ class TestPlatformFactory:
         pub = temp_dir / "master.pub"
         priv.write_text("priv")
         pub.write_text("pub")
-        with mock.patch("sys.platform", "linux"), \
-             mock.patch.dict("os.environ", {
-                 "VAULT_TPM_PRIV": str(priv),
-                 "VAULT_TPM_PUB": str(pub)
-             }), \
-             mock.patch("subprocess.run", return_value=mock.MagicMock(returncode=0)):
+        with (
+            mock.patch("sys.platform", "linux"),
+            mock.patch.dict("os.environ", {"VAULT_TPM_PRIV": str(priv), "VAULT_TPM_PUB": str(pub)}),
+            mock.patch("subprocess.run", return_value=mock.MagicMock(returncode=0)),
+        ):
             provider = create_platform_provider()
             assert isinstance(provider, LinuxTPMProvider)
 
     def test_fallback_if_paths_not_set(self, temp_dir):
         """The factory uses default paths if env vars are missing."""
-        with mock.patch("sys.platform", "linux"), \
-             mock.patch("subprocess.run", return_value=mock.MagicMock(returncode=0)):
+        with (
+            mock.patch("sys.platform", "linux"),
+            mock.patch("subprocess.run", return_value=mock.MagicMock(returncode=0)),
+        ):
             with mock.patch.object(Path, "is_file", return_value=True):
                 provider = create_platform_provider()
                 assert isinstance(provider, LinuxTPMProvider)

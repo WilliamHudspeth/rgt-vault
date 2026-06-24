@@ -26,6 +26,7 @@ Adding a new action is a one-line registration against the
 action must be registered in-process by the application that started the
 server.
 """
+
 from __future__ import annotations
 
 import ipaddress
@@ -72,9 +73,7 @@ def _validate_outbound_url(url: str, *, allow_private_network: bool = False) -> 
         raise ActionExecutionError(f"'url' is not parseable: {e}") from e
 
     if parsed.scheme.lower() not in _ALLOWED_SCHEMES:
-        raise ActionExecutionError(
-            f"Refusing URL with scheme {parsed.scheme!r}; allowed: {sorted(_ALLOWED_SCHEMES)}."
-        )
+        raise ActionExecutionError(f"Refusing URL with scheme {parsed.scheme!r}; allowed: {sorted(_ALLOWED_SCHEMES)}.")
 
     host = parsed.hostname
     if not host:
@@ -152,8 +151,7 @@ class ActionSpec:
         unknown = set(params) - set(self.params_schema)
         if unknown:
             raise ActionExecutionError(
-                f"Action '{self.name}' got unknown param(s): {sorted(unknown)}. "
-                f"Allowed: {sorted(self.params_schema)}"
+                f"Action '{self.name}' got unknown param(s): {sorted(unknown)}. Allowed: {sorted(self.params_schema)}"
             )
 
 
@@ -176,10 +174,7 @@ class ActionRegistry:
     def get(self, name: str) -> ActionSpec:
         spec = self._actions.get(name)
         if spec is None:
-            raise ActionNotFoundError(
-                f"Unknown action '{name}'. "
-                f"Registered: {sorted(self._actions)}"
-            )
+            raise ActionNotFoundError(f"Unknown action '{name}'. Registered: {sorted(self._actions)}")
         return spec
 
     def list(self) -> List[ActionSpec]:
@@ -233,9 +228,7 @@ def _http_request(
         truncated = len(raw) > _MAX_RESPONSE_BYTES
         if truncated:
             raw = raw[:_MAX_RESPONSE_BYTES]
-        raise ActionExecutionError(
-            f"Upstream {method} {url} returned HTTP {e.code}."
-        ) from e
+        raise ActionExecutionError(f"Upstream {method} {url} returned HTTP {e.code}.") from e
     except urllib.error.URLError as e:
         raise ActionExecutionError(f"Upstream {method} {url} failed.") from e
 
@@ -248,7 +241,9 @@ def _effective_allow_private(registry: "ActionRegistry | None", params: Dict[str
     return bool(explicit)
 
 
-def _action_openai_chat(secret_buf: bytearray, params: Dict[str, Any], *, registry: "ActionRegistry | None" = None) -> Dict[str, Any]:
+def _action_openai_chat(
+    secret_buf: bytearray, params: Dict[str, Any], *, registry: "ActionRegistry | None" = None
+) -> Dict[str, Any]:
     api_key = bytes(secret_buf).decode("utf-8")
     model = params.get("model")
     messages = params.get("messages")
@@ -260,19 +255,13 @@ def _action_openai_chat(secret_buf: bytearray, params: Dict[str, Any], *, regist
         raise ActionExecutionError("'messages' must not be empty.")
     for i, msg in enumerate(messages):
         if not isinstance(msg, dict):
-            raise ActionExecutionError(
-                f"'messages[{i}]' must be a JSON object with 'role' and 'content' keys."
-            )
+            raise ActionExecutionError(f"'messages[{i}]' must be a JSON object with 'role' and 'content' keys.")
         role = msg.get("role")
         content = msg.get("content")
         if not isinstance(role, str) or not role:
-            raise ActionExecutionError(
-                f"'messages[{i}].role' is required and must be a non-empty string."
-            )
+            raise ActionExecutionError(f"'messages[{i}].role' is required and must be a non-empty string.")
         if not isinstance(content, (str, list)):
-            raise ActionExecutionError(
-                f"'messages[{i}].content' is required and must be a string or list."
-            )
+            raise ActionExecutionError(f"'messages[{i}].content' is required and must be a string or list.")
     max_tokens = params.get("max_tokens")
     temperature = params.get("temperature")
     if max_tokens is not None:
@@ -309,7 +298,9 @@ def _action_openai_chat(secret_buf: bytearray, params: Dict[str, Any], *, regist
     )
 
 
-def _action_http_get_with_auth(secret_buf: bytearray, params: Dict[str, Any], *, registry: "ActionRegistry | None" = None) -> Dict[str, Any]:
+def _action_http_get_with_auth(
+    secret_buf: bytearray, params: Dict[str, Any], *, registry: "ActionRegistry | None" = None
+) -> Dict[str, Any]:
     api_key = bytes(secret_buf).decode("utf-8")
     url = params.get("url")
     if not url or not isinstance(url, str):
@@ -318,11 +309,17 @@ def _action_http_get_with_auth(secret_buf: bytearray, params: Dict[str, Any], *,
     allow_private = _effective_allow_private(registry, params)
     headers = {**extra_headers, "Authorization": f"Bearer {api_key}"}
     return _http_request(
-        "GET", url, headers, None, allow_private_network=allow_private,
+        "GET",
+        url,
+        headers,
+        None,
+        allow_private_network=allow_private,
     )
 
 
-def _action_http_post_with_auth(secret_buf: bytearray, params: Dict[str, Any], *, registry: "ActionRegistry | None" = None) -> Dict[str, Any]:
+def _action_http_post_with_auth(
+    secret_buf: bytearray, params: Dict[str, Any], *, registry: "ActionRegistry | None" = None
+) -> Dict[str, Any]:
     api_key = bytes(secret_buf).decode("utf-8")
     url = params.get("url")
     if not url or not isinstance(url, str):
@@ -343,11 +340,17 @@ def _action_http_post_with_auth(secret_buf: bytearray, params: Dict[str, Any], *
     if body and "Content-Type" not in headers and "content-type" not in headers:
         headers["Content-Type"] = "application/json"
     return _http_request(
-        "POST", url, headers, body, allow_private_network=allow_private,
+        "POST",
+        url,
+        headers,
+        body,
+        allow_private_network=allow_private,
     )
 
 
-def _action_echo(secret_buf: bytearray, params: Dict[str, Any], *, registry: "ActionRegistry | None" = None) -> Dict[str, Any]:
+def _action_echo(
+    secret_buf: bytearray, params: Dict[str, Any], *, registry: "ActionRegistry | None" = None
+) -> Dict[str, Any]:
     # Deliberately do NOT return the secret. This action exists so an
     # operator can confirm the lease + auth + policy path end-to-end.
     return {

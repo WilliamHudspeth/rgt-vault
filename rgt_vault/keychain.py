@@ -19,14 +19,17 @@ from rgt_vault.providers.base import MasterSecretProvider
 # Dataclasses & Interfaces
 # ============================================================
 
+
 @dataclass(frozen=True)
 class MasterSecret:
     value: bytes
+
 
 @dataclass(frozen=True)
 class DerivedKeyMaterial:
     key: bytes
     nonce: bytes
+
 
 class KeyringProvider(MasterSecretProvider):
     def __init__(self, service_name: str = "rgt_vault", username: str = "master_key"):
@@ -60,7 +63,7 @@ class KeyringProvider(MasterSecretProvider):
 
     def rotate_secret(self) -> MasterSecret:
         raw = os.urandom(32)
-        encoded = base64.urlsafe_b64encode(raw).decode('utf-8')
+        encoded = base64.urlsafe_b64encode(raw).decode("utf-8")
         keyring.set_password(self.service_name, self.username, encoded)
         return MasterSecret(raw)
 
@@ -87,7 +90,7 @@ class KeyringProvider(MasterSecretProvider):
             return MasterSecret(base64.urlsafe_b64decode(existing))
 
         raw = os.urandom(32)
-        encoded = base64.urlsafe_b64encode(raw).decode('utf-8')
+        encoded = base64.urlsafe_b64encode(raw).decode("utf-8")
         # ``set_password`` overwrites by default; if another process raced us
         # between the get_password and set_password, the winner is whichever
         # wrote last. We don't try to detect this -- the loser will fail on
@@ -96,17 +99,19 @@ class KeyringProvider(MasterSecretProvider):
         keyring.set_password(self.service_name, self.username, encoded)
         return MasterSecret(raw)
 
+
 # ============================================================
 # Cryptographic Primitives
 # ============================================================
+
 
 def _argon2_id_kdf(
     password: MasterSecret,
     salt: bytes,
     length: int = 32,
-    memory_cost: int = 262144, # 256MB
+    memory_cost: int = 262144,  # 256MB
     time_cost: int = 4,
-    parallelism: int = 4
+    parallelism: int = 4,
 ) -> bytes:
     kdf = Argon2id(
         salt=salt,
@@ -117,12 +122,8 @@ def _argon2_id_kdf(
     )
     return kdf.derive(password.value)
 
-def _hkdf_expand(
-    input_key_material: bytes,
-    info: bytes,
-    length: int = 32,
-    hash_algorithm=hashes.SHA256()
-) -> bytes:
+
+def _hkdf_expand(input_key_material: bytes, info: bytes, length: int = 32, hash_algorithm=hashes.SHA256()) -> bytes:
     hkdf = HKDF(
         algorithm=hash_algorithm,
         length=length,
@@ -130,6 +131,7 @@ def _hkdf_expand(
         info=info,
     )
     return hkdf.derive(input_key_material)
+
 
 class AES256GCMWrapper:
     def wrap(self, plaintext: bytes, kek: bytes, nonce: bytes, aad: bytes) -> bytes:
@@ -140,9 +142,11 @@ class AES256GCMWrapper:
         cipher = AESGCM(kek)
         return cipher.decrypt(nonce, ciphertext, aad)
 
+
 # ============================================================
 # Orchestration
 # ============================================================
+
 
 class KeyDerivationOrchestrator:
     def __init__(self, memory_cost: int, time_cost: int, parallelism: int):
@@ -152,10 +156,7 @@ class KeyDerivationOrchestrator:
 
     def _stage1_argon2_stretch(self, master: MasterSecret, salt: bytes) -> bytes:
         return _argon2_id_kdf(
-            master, salt, 
-            memory_cost=self.memory_cost, 
-            time_cost=self.time_cost, 
-            parallelism=self.parallelism
+            master, salt, memory_cost=self.memory_cost, time_cost=self.time_cost, parallelism=self.parallelism
         )
 
     def _stage2_hkdf_extract_binding(self, intermediate: bytes, context: bytes, length: int = 64) -> bytes:
@@ -170,33 +171,44 @@ class KeyDerivationOrchestrator:
         nonce = _hkdf_expand(nonce_raw, b"nonce expansion", length=12)
         return DerivedKeyMaterial(key=kek, nonce=nonce)
 
-    def derive_wrapping_key_and_nonce(self, master: MasterSecret, salt: bytes, binding_context: bytes) -> DerivedKeyMaterial:
+    def derive_wrapping_key_and_nonce(
+        self, master: MasterSecret, salt: bytes, binding_context: bytes
+    ) -> DerivedKeyMaterial:
         intermediate = self._stage1_argon2_stretch(master, salt)
         binding = self._stage2_hkdf_extract_binding(intermediate, binding_context)
         return self._stage3_derive_ops_key_and_nonce(binding)
 
+
 # ============================================================
 # DEK Manager
 # ============================================================
+
 
 class HardenedDEKManager:
     def __init__(self, keychain_path: str):
         self.keychain_path = keychain_path
         self._dek: Optional[bytes] = None
 
-    def initialize_dek(self, master: MasterSecret, vault_id: str, epoch: int,
-                       memory_cost: int = 262144, time_cost: int = 4, parallelism: int = 4) -> bytes:
+    def initialize_dek(
+        self,
+        master: MasterSecret,
+        vault_id: str,
+        epoch: int,
+        memory_cost: int = 262144,
+        time_cost: int = 4,
+        parallelism: int = 4,
+    ) -> bytes:
         dek = os.urandom(32)
         salt = os.urandom(32)
-        
+
         orchestrator = KeyDerivationOrchestrator(memory_cost, time_cost, parallelism)
         binding_context = f"rgt-vault:{vault_id}".encode()
-        
+
         key_mat = orchestrator.derive_wrapping_key_and_nonce(master, salt, binding_context)
-        
+
         aad = f"{vault_id}:{epoch}".encode()
         wrapped = AES256GCMWrapper().wrap(dek, key_mat.key, key_mat.nonce, aad)
-        
+
         data = {
             "version": 1,
             "kdf": "argon2id",
@@ -206,9 +218,9 @@ class HardenedDEKManager:
             "argon2_parallelism": parallelism,
             "wrapped_dek": base64.b64encode(wrapped).decode("utf-8"),
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "key_epoch": epoch
+            "key_epoch": epoch,
         }
-        
+
         os.makedirs(os.path.dirname(self.keychain_path), exist_ok=True)
         with open(self.keychain_path, "w") as f:
             json.dump(data, f, indent=2)
@@ -229,43 +241,50 @@ class HardenedDEKManager:
     def load_dek(self, master: MasterSecret, vault_id: str, expected_epoch: int) -> bytes:
         if not os.path.exists(self.keychain_path):
             raise FileNotFoundError("Keychain file not found.")
-            
+
         with open(self.keychain_path) as f:
             data = json.load(f)
-            
+
         if data.get("key_epoch") != expected_epoch:
-            raise ValueError(f"Rollback attack detected! DB epoch {expected_epoch} does not match keychain epoch {data.get('key_epoch')}")
-            
+            raise ValueError(
+                f"Rollback attack detected! DB epoch {expected_epoch} does not match keychain epoch {data.get('key_epoch')}"
+            )
+
         salt = base64.b64decode(data["argon2_salt"])
         wrapped = base64.b64decode(data["wrapped_dek"])
-        
+
         orchestrator = KeyDerivationOrchestrator(
-            data["argon2_memory_cost"],
-            data["argon2_time_cost"],
-            data["argon2_parallelism"]
+            data["argon2_memory_cost"], data["argon2_time_cost"], data["argon2_parallelism"]
         )
         binding_context = f"rgt-vault:{vault_id}".encode()
         key_mat = orchestrator.derive_wrapping_key_and_nonce(master, salt, binding_context)
-        
+
         aad = f"{vault_id}:{expected_epoch}".encode()
         dek = AES256GCMWrapper().unwrap(wrapped, key_mat.key, key_mat.nonce, aad)
-        
+
         self._dek = dek
         return dek
 
-    def rewrap_dek(self, master: MasterSecret, vault_id: str, epoch: int,
-                   memory_cost: int = 262144, time_cost: int = 4, parallelism: int = 4) -> None:
+    def rewrap_dek(
+        self,
+        master: MasterSecret,
+        vault_id: str,
+        epoch: int,
+        memory_cost: int = 262144,
+        time_cost: int = 4,
+        parallelism: int = 4,
+    ) -> None:
         if not self._dek:
             raise ValueError("DEK must be loaded to rewrap it.")
-            
+
         salt = os.urandom(32)
         orchestrator = KeyDerivationOrchestrator(memory_cost, time_cost, parallelism)
         binding_context = f"rgt-vault:{vault_id}".encode()
-        
+
         key_mat = orchestrator.derive_wrapping_key_and_nonce(master, salt, binding_context)
         aad = f"{vault_id}:{epoch}".encode()
         wrapped = AES256GCMWrapper().wrap(self._dek, key_mat.key, key_mat.nonce, aad)
-        
+
         data = {
             "version": 1,
             "kdf": "argon2id",
@@ -275,9 +294,9 @@ class HardenedDEKManager:
             "argon2_parallelism": parallelism,
             "wrapped_dek": base64.b64encode(wrapped).decode("utf-8"),
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "key_epoch": epoch
+            "key_epoch": epoch,
         }
-        
+
         with open(self.keychain_path, "w") as f:
             json.dump(data, f, indent=2)
 
@@ -292,9 +311,11 @@ class HardenedDEKManager:
             raise ValueError("DEK is not loaded.")
         return self._dek
 
+
 # ============================================================
 # Crypto Self-Test
 # ============================================================
+
 
 def run_crypto_selftest() -> None:
     try:
@@ -303,7 +324,7 @@ def run_crypto_selftest() -> None:
         salt = b"selftest_salt" * 4
         orch = KeyDerivationOrchestrator(memory_cost=1024, time_cost=1, parallelism=1)
         kmat = orch.derive_wrapping_key_and_nonce(master, salt, b"test_context")
-        
+
         # Test AESGCM
         wrapper = AES256GCMWrapper()
         plaintext = b"test_dek"
@@ -311,13 +332,13 @@ def run_crypto_selftest() -> None:
         ct = wrapper.wrap(plaintext, kmat.key, kmat.nonce, aad)
         pt = wrapper.unwrap(ct, kmat.key, kmat.nonce, aad)
         assert plaintext == pt, "AESGCM unwrap failed"
-        
+
         # Test AAD integrity
         try:
             wrapper.unwrap(ct, kmat.key, kmat.nonce, b"wrong_aad")
             raise AssertionError("AESGCM allowed bad AAD")
         except InvalidTag:
             pass
-            
+
     except Exception as e:
         raise RuntimeError(f"Cryptographic self-test failed: {e}")

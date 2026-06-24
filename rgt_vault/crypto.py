@@ -15,7 +15,7 @@ def encrypt(data: Union[str, bytes, bytearray], dek: bytes, aad: bytes) -> bytes
     A unique 96-bit (12-byte) nonce is generated and prepended to the ciphertext.
     """
     if isinstance(data, str):
-        data = data.encode('utf-8')
+        data = data.encode("utf-8")
     if not isinstance(aad, (bytes, bytearray)):
         raise ValidationError("AAD must be bytes or bytearray.")
     if not isinstance(dek, (bytes, bytearray)) or len(dek) != 32:
@@ -25,6 +25,7 @@ def encrypt(data: Union[str, bytes, bytearray], dek: bytes, aad: bytes) -> bytes
     cipher = AESGCM(dek)
     ciphertext = cipher.encrypt(nonce, data, aad)
     return nonce + ciphertext
+
 
 def decrypt(token: bytes, dek: bytes, aad: bytes) -> bytes:
     """
@@ -58,15 +59,16 @@ def decrypt(token: bytes, dek: bytes, aad: bytes) -> bytes:
         # to a public caller; the chain preserves the cause for debug logs.
         raise DecryptionError("Decryption failed: ciphertext is invalid or tampered with.") from e
 
+
 def zeroize_bytearray(b: bytearray) -> None:
     """Aggressively wipe secrets from memory using ctypes.memset."""
     if not isinstance(b, bytearray):
         raise TypeError("zeroize_bytearray requires a bytearray")
-    
+
     buffer_size = len(b)
     if buffer_size == 0:
         return
-        
+
     try:
         buffer_type = ctypes.c_char * buffer_size
         ctypes.memset(buffer_type.from_buffer(b), 0, buffer_size)
@@ -74,17 +76,21 @@ def zeroize_bytearray(b: bytearray) -> None:
         # Fallback if ctypes.memset fails
         for i in range(buffer_size):
             b[i] = 0
+
+
 import ctypes
 import sys
 import os
 from types import TracebackType
 from typing import Optional
 
+
 class SecureBuffer:
     """
     Fixed-size, mlocked native buffer for secrets.
     Use ONLY inside a context manager — guarantees zeroization.
     """
+
     def __init__(self, size: int, *, lock: bool = True):
         if size <= 0:
             raise ValueError("size must be >0")
@@ -97,7 +103,7 @@ class SecureBuffer:
         if lock:
             self._lock_memory()
 
-        self.zeroize() # start clean
+        self.zeroize()  # start clean
 
     # --- platform locking ---
     def _lock_memory(self) -> None:
@@ -110,7 +116,7 @@ class SecureBuffer:
             else:
                 libc = ctypes.CDLL(None, use_errno=True)
                 # mlock requires page alignment on some kernels — create_string_buffer is usually fine
-                if libc.mlock(ctypes.c_void_p(self._addr), ctypes.c_size_t(self.size))!= 0:
+                if libc.mlock(ctypes.c_void_p(self._addr), ctypes.c_size_t(self.size)) != 0:
                     errno = ctypes.get_errno()
                     # Don't crash in dev, but log — production should run with CAP_IPC_LOCK
                     raise OSError(errno, "mlock failed - run with CAP_IPC_LOCK or increase ulimit -l")

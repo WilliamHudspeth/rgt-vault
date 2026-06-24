@@ -11,6 +11,7 @@ Covers:
   * The TokenError hierarchy is wired up and the right subclass fires
     for each failure mode.
 """
+
 import time
 
 import pytest
@@ -29,8 +30,8 @@ from rgt_vault.token import (
     TokenVersionError,
 )
 
-SECRET=b"k" * 32
-OTHER_SECRET=b"q" * 32
+SECRET = b"k" * 32
+OTHER_SECRET = b"q" * 32
 
 
 # ---------------------------------------------------------------------
@@ -60,6 +61,7 @@ def test_token_format_version_is_two():
     # "format dispatch" path independently of the signature check.
     import base64
     import json
+
     payload_b64, sig_b64 = fake.split(".", 1)
     payload = base64.urlsafe_b64decode(payload_b64 + "==")
     data = json.loads(payload)
@@ -97,6 +99,7 @@ def test_expired_token_raises_token_expired():
     import hashlib
     import hmac as _hmac
     import json as _json
+
     payload = _json.dumps(
         {
             "v": 2,
@@ -110,11 +113,9 @@ def test_expired_token_raises_token_expired():
         separators=(",", ":"),
     ).encode("utf-8")
     sig = _hmac.new(SECRET, payload, hashlib.sha256).digest()
-    tok = (
-        base64.urlsafe_b64encode(payload).rstrip(b"=")
-        + b"."
-        + base64.urlsafe_b64encode(sig).rstrip(b"=")
-    ).decode("ascii")
+    tok = (base64.urlsafe_b64encode(payload).rstrip(b"=") + b"." + base64.urlsafe_b64encode(sig).rstrip(b"=")).decode(
+        "ascii"
+    )
     with pytest.raises(TokenExpiredError):
         v.verify(tok)
 
@@ -171,6 +172,7 @@ def test_payload_tampering_raises_signature_error():
     tok = v.sign("a", "c", capability_version=1, ttl_seconds=60)
     import base64
     import json
+
     payload_b64, sig_b64 = tok.split(".", 1)
     payload = base64.urlsafe_b64decode(payload_b64 + "==")
     data = json.loads(payload)
@@ -219,7 +221,9 @@ def test_invalid_base64_raises_token_malformed():
 
 def test_check_context_passes_when_no_bindings():
     tok = CapabilityV2Token(
-        agent_id="a", capability="c", capability_version=1,
+        agent_id="a",
+        capability="c",
+        capability_version=1,
         context_bindings={},
     )
     # No bindings => any request is acceptable.
@@ -228,7 +232,9 @@ def test_check_context_passes_when_no_bindings():
 
 def test_check_context_passes_when_all_bindings_match():
     tok = CapabilityV2Token(
-        agent_id="a", capability="c", capability_version=1,
+        agent_id="a",
+        capability="c",
+        capability_version=1,
         context_bindings={"repo": "org/x", "branch": "main"},
     )
     tok.check_context({"repo": "org/x", "branch": "main", "extra": "ok"})
@@ -236,7 +242,9 @@ def test_check_context_passes_when_all_bindings_match():
 
 def test_check_context_raises_when_binding_missing():
     tok = CapabilityV2Token(
-        agent_id="a", capability="c", capability_version=1,
+        agent_id="a",
+        capability="c",
+        capability_version=1,
         context_bindings={"repo": "org/x"},
     )
     with pytest.raises(TokenBindingError):
@@ -245,7 +253,9 @@ def test_check_context_raises_when_binding_missing():
 
 def test_check_context_raises_when_binding_value_wrong():
     tok = CapabilityV2Token(
-        agent_id="a", capability="c", capability_version=1,
+        agent_id="a",
+        capability="c",
+        capability_version=1,
         context_bindings={"repo": "org/x"},
     )
     with pytest.raises(TokenBindingError):

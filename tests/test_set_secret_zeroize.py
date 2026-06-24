@@ -1,4 +1,5 @@
 """RGT-113: verify that set_secret zeroizes the plaintext buffer it uses."""
+
 import os
 
 import pytest

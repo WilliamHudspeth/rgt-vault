@@ -4,6 +4,7 @@ Run: python benchmarks/bench.py
 Numbers are machine-dependent (Argon2id is intentionally expensive). Publish
 your own; do not treat the committed sample numbers as guarantees.
 """
+
 import os
 import sys
 import time
@@ -48,21 +49,22 @@ def main():
         # Unlock = construct VaultManager (Argon2id + DEK unwrap). Build once so
         # keychain.json exists, then measure the load path.
         VaultManager(db_path=db, policy_yaml=ALLOW, master_provider=provider)
-        _t("Unlock vault (Argon2id + unwrap)",
-           lambda: VaultManager(db_path=db, policy_yaml=ALLOW, master_provider=provider),
-           repeat=5)
+        _t(
+            "Unlock vault (Argon2id + unwrap)",
+            lambda: VaultManager(db_path=db, policy_yaml=ALLOW, master_provider=provider),
+            repeat=5,
+        )
 
         # High rate limit so the benchmark loop isn't throttled.
-        vault = VaultManager(db_path=db, policy_yaml=ALLOW, master_provider=provider,
-                             rate_limit=10_000_000)
-        _t("Set secret (encrypt + insert)",
-           lambda: vault.set_secret("k", "v" * 64, agent="a"),
-           repeat=50)
+        vault = VaultManager(db_path=db, policy_yaml=ALLOW, master_provider=provider, rate_limit=10_000_000)
+        _t("Set secret (encrypt + insert)", lambda: vault.set_secret("k", "v" * 64, agent="a"), repeat=50)
 
         vault.set_secret("read_me", "secret-value", agent="a")
-        _t("Lease + decrypt secret",
-           lambda: vault.execute("a", "default", "p", "read_me", lambda b: bytes(b)),
-           repeat=200)
+        _t(
+            "Lease + decrypt secret",
+            lambda: vault.execute("a", "default", "p", "read_me", lambda b: bytes(b)),
+            repeat=200,
+        )
 
         _t("Rotate master key (re-wrap KEK)", vault.rotate_master_key, repeat=5)
 

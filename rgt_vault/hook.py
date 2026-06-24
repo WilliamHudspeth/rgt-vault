@@ -104,6 +104,7 @@ Example YAML config (future)::
       freeze_file: ~/.secure-vault/freeze
       audit_chain_label: "harness-prod-01"
 """
+
 from __future__ import annotations
 
 import abc
@@ -162,7 +163,8 @@ class HookRequest:
     to perform and the arguments. The future security boundary is
     *actions*, not secret reads.
     """
-    operation: str           # "read" | "write" | "rotate" | "revoke" | "list" | "simulate" | "capability"
+
+    operation: str  # "read" | "write" | "rotate" | "revoke" | "list" | "simulate" | "capability"
     agent: str
     namespace: str = ""
     purpose: str = ""
@@ -186,6 +188,7 @@ class HookRequest:
 @dataclass(frozen=True)
 class HookResponse:
     """The hook's answer."""
+
     decision: HookDecision
     reason: str = ""
     capability_token: Optional[str] = None  # optional refresh from the harness
@@ -300,6 +303,7 @@ class AuditHook(abc.ABC):
 # Mode: off
 # --------------------------------------------------------------------
 
+
 class OffHook(AuditHook):
     """No-op hook. The default. Always allows."""
 
@@ -314,6 +318,7 @@ class OffHook(AuditHook):
 # Mode: log
 # --------------------------------------------------------------------
 
+
 class LogHook(AuditHook):
     """Hook that records every consultation to an in-memory list.
 
@@ -327,21 +332,24 @@ class LogHook(AuditHook):
         self.consultations: List[Dict[str, Any]] = []
 
     def consult(self, req: HookRequest) -> HookResponse:
-        self.consultations.append({
-            "operation": req.operation,
-            "agent": req.agent,
-            "namespace": req.namespace,
-            "purpose": req.purpose,
-            "secret_name": req.secret_name,
-            "request_id": req.request_id,
-            "ts": time.time(),
-        })
+        self.consultations.append(
+            {
+                "operation": req.operation,
+                "agent": req.agent,
+                "namespace": req.namespace,
+                "purpose": req.purpose,
+                "secret_name": req.secret_name,
+                "request_id": req.request_id,
+                "ts": time.time(),
+            }
+        )
         return HookResponse(decision=HookDecision.ALLOW, reason="log mode: not enforced")
 
 
 # --------------------------------------------------------------------
 # Mode: two_factor
 # --------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class CapabilityToken:
@@ -350,11 +358,12 @@ class CapabilityToken:
     The vault verifies these tokens locally using a shared secret.
     No HTTP round-trip per call.
     """
+
     agent: str
     namespace: str
-    capabilities: List[str]     # e.g. ["read", "write"]
-    issued_at: int              # unix seconds
-    expires_at: int             # unix seconds
+    capabilities: List[str]  # e.g. ["read", "write"]
+    issued_at: int  # unix seconds
+    expires_at: int  # unix seconds
     token_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def to_compact(self) -> str:
@@ -365,6 +374,7 @@ class CapabilityToken:
         payload invalidates the signature.
         """
         import base64
+
         payload = json.dumps(
             {
                 "a": self.agent,
@@ -436,9 +446,7 @@ class TwoFactorHook(AuditHook):
 
     def __init__(self, shared_secret: bytes, *, max_ttl_seconds: int = 3600) -> None:
         if not isinstance(shared_secret, (bytes, bytearray)) or len(shared_secret) < 32:
-            raise ValidationError(
-                "shared_secret must be at least 32 bytes of random material."
-            )
+            raise ValidationError("shared_secret must be at least 32 bytes of random material.")
         super().__init__(hook_id="two_factor")
         self.shared_secret = bytes(shared_secret)
         self.max_ttl_seconds = max_ttl_seconds
@@ -458,6 +466,7 @@ class TwoFactorHook(AuditHook):
         """Lazy import to keep the hook import surface narrow."""
         if self._v2_verifier is None:
             from rgt_vault.token import HMACTokenVerifier
+
             self._v2_verifier = HMACTokenVerifier(self.shared_secret)
         return self._v2_verifier
 
@@ -471,9 +480,7 @@ class TwoFactorHook(AuditHook):
         """Mint a new capability token. The harness calls this; the
         agent presents the result."""
         if ttl_seconds <= 0 or ttl_seconds > self.max_ttl_seconds:
-            raise ValidationError(
-                f"ttl_seconds must be between 1 and {self.max_ttl_seconds}."
-            )
+            raise ValidationError(f"ttl_seconds must be between 1 and {self.max_ttl_seconds}.")
         now = int(time.time())
         return CapabilityToken(
             agent=agent,
@@ -517,6 +524,7 @@ class TwoFactorHook(AuditHook):
             )
         payload_b64 = parts[0]
         import base64
+
         try:
             peek_payload = base64.urlsafe_b64decode(_pad_b64(payload_b64))
             peek = json.loads(peek_payload.decode("utf-8"))
@@ -546,6 +554,7 @@ class TwoFactorHook(AuditHook):
                 reason="malformed capability_token",
             )
         import base64
+
         try:
             payload = base64.urlsafe_b64decode(_pad_b64(payload_b64))
             sig = base64.urlsafe_b64decode(_pad_b64(sig_b64))
@@ -578,18 +587,12 @@ class TwoFactorHook(AuditHook):
         if token.agent != req.agent:
             return HookResponse(
                 decision=HookDecision.DENY,
-                reason=(
-                    f"capability_token bound to agent {token.agent!r}, "
-                    f"caller claimed {req.agent!r}"
-                ),
+                reason=(f"capability_token bound to agent {token.agent!r}, caller claimed {req.agent!r}"),
             )
         if not token.covers(operation=req.operation, namespace=req.namespace):
             return HookResponse(
                 decision=HookDecision.DENY,
-                reason=(
-                    f"capability_token does not cover "
-                    f"{req.operation} on {req.namespace}"
-                ),
+                reason=(f"capability_token does not cover {req.operation} on {req.namespace}"),
             )
         return self._accept_token(token.token_id, token.expires_at, "v1 token valid")
 
@@ -612,6 +615,7 @@ class TwoFactorHook(AuditHook):
                 TokenSignatureError,
                 TokenVersionError,
             )
+
             cls = type(e).__name__
             # Map every verifier error to a deny; reason keeps the class
             # name so an operator can tell expiry from tampering in the
@@ -629,25 +633,18 @@ class TwoFactorHook(AuditHook):
         if tok.agent_id != req.agent:
             return HookResponse(
                 decision=HookDecision.DENY,
-                reason=(
-                    f"v2 token bound to agent {tok.agent_id!r}, "
-                    f"caller claimed {req.agent!r}"
-                ),
+                reason=(f"v2 token bound to agent {tok.agent_id!r}, caller claimed {req.agent!r}"),
             )
         if tok.capability != req.capability:
             return HookResponse(
                 decision=HookDecision.DENY,
-                reason=(
-                    f"v2 token authorizes {tok.capability!r}, "
-                    f"request asked for {req.capability!r}"
-                ),
+                reason=(f"v2 token authorizes {tok.capability!r}, request asked for {req.capability!r}"),
             )
         if tok.capability_version != req.capability_version:
             return HookResponse(
                 decision=HookDecision.DENY,
                 reason=(
-                    f"v2 token capability_version={tok.capability_version}, "
-                    f"request asked for {req.capability_version}"
+                    f"v2 token capability_version={tok.capability_version}, request asked for {req.capability_version}"
                 ),
             )
         # Context binding: the token's bindings must be a subset of the
@@ -696,6 +693,7 @@ class TwoFactorHook(AuditHook):
 # --------------------------------------------------------------------
 # Mode: webhook / soar
 # --------------------------------------------------------------------
+
 
 class WebhookHook(AuditHook):
     """Hook that calls a configured HTTP URL and honors the response.
@@ -789,12 +787,14 @@ class WebhookHook(AuditHook):
 # Signal-file freeze integration
 # --------------------------------------------------------------------
 
+
 def install_freeze_signal_handler(hook: AuditHook, *, sig: int = signal.SIGUSR1) -> None:
     """Install a POSIX signal handler that toggles the hook's frozen
     state. ``kill -USR1 <pid>`` freezes; ``kill -USR2 <pid>`` unfreezes.
 
     Idempotent; safe to call multiple times (overwrites prior handler).
     """
+
     def _usr1(_signum, _frame):
         hook.freeze(reason="USR1 signal")
 
@@ -832,10 +832,7 @@ def hook_from_config(config: Dict[str, Any]) -> AuditHook:
     """
     mode = str(config.get("mode", "off")).lower()
     if mode == "soar":
-        raise ValidationError(
-            "hook mode 'soar' has been removed; SOAR products integrate "
-            "through 'webhook' mode"
-        )
+        raise ValidationError("hook mode 'soar' has been removed; SOAR products integrate through 'webhook' mode")
     if mode == "off":
         h: AuditHook = OffHook()
     elif mode == "log":
@@ -853,9 +850,7 @@ def hook_from_config(config: Dict[str, Any]) -> AuditHook:
         tf = config.get("two_factor") or {}
         secret = tf.get("shared_secret") or os.environ.get(tf.get("shared_secret_env", ""))
         if not secret:
-            raise ValidationError(
-                "two_factor hook requires a shared_secret (config or env var)."
-            )
+            raise ValidationError("two_factor hook requires a shared_secret (config or env var).")
         h = TwoFactorHook(
             shared_secret=secret.encode("utf-8"),
             max_ttl_seconds=int(tf.get("max_ttl_seconds", 3600)),

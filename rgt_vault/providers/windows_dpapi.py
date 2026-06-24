@@ -18,10 +18,10 @@ def _load_win32crypt():
         import win32crypt
     except ImportError as e:
         raise RuntimeError(
-            "WindowsDPAPIProvider requires pywin32. "
-            "Install it with: pip install 'rgt-vault[windows]'"
+            "WindowsDPAPIProvider requires pywin32. Install it with: pip install 'rgt-vault[windows]'"
         ) from e
     return win32crypt
+
 
 class WindowsDPAPIProvider(MasterSecretProvider):
     def __init__(self, blob_path: str, entropy: Optional[bytes] = None):
@@ -45,7 +45,7 @@ class WindowsDPAPIProvider(MasterSecretProvider):
                 self.entropy,
                 None,
                 None,
-                4  # CRYPTPROTECT_LOCAL_MACHINE
+                4,  # CRYPTPROTECT_LOCAL_MACHINE
             )
         except Exception as e:
             raise PermissionError(f"DPAPI decryption failed: {e}")
@@ -56,11 +56,8 @@ class WindowsDPAPIProvider(MasterSecretProvider):
             return decrypted[1]
         return decrypted
 
-def seal_master_secret(
-    master_secret: bytes,
-    output_path: str,
-    entropy: Optional[bytes] = None
-) -> None:
+
+def seal_master_secret(master_secret: bytes, output_path: str, entropy: Optional[bytes] = None) -> None:
     win32crypt = _load_win32crypt()
 
     encrypted = win32crypt.CryptProtectData(
@@ -69,7 +66,7 @@ def seal_master_secret(
         entropy,
         None,
         None,
-        4  # CRYPTPROTECT_LOCAL_MACHINE
+        4,  # CRYPTPROTECT_LOCAL_MACHINE
     )
 
     b64data = base64.b64encode(encrypted).decode("utf-8")

@@ -10,6 +10,7 @@ Covers:
   - P2-1: StorageBackend.revoke_secret does the same.
   - P2-3 (Server): cmd_init does not print the existing bearer token.
 """
+
 import sqlite3
 
 import pytest
@@ -31,6 +32,7 @@ class _BytesProvider:
 
     def rotate_secret(self):
         import os as _os
+
         self._s = _os.urandom(32)
         return self._s
 
@@ -49,6 +51,7 @@ def vault(tmp_path):
 # ------------------------------------------------------------------
 # P1-1: empty log is vacuously OK, tampered log is NOT
 # ------------------------------------------------------------------
+
 
 def test_verify_on_fresh_vault(vault):
     # Vault was just constructed with no operations. The chain is
@@ -86,8 +89,7 @@ def test_verify_detects_inserted_orphan_row(vault):
         conn.execute(
             "INSERT INTO audit_logs (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("EVIL", "x", "2026-01-01T00:00:00+00:00", "injected",
-             "deadbeef" * 8, "cafebabe" * 8, ""),
+            ("EVIL", "x", "2026-01-01T00:00:00+00:00", "injected", "deadbeef" * 8, "cafebabe" * 8, ""),
         )
         conn.commit()
     finally:
@@ -98,6 +100,7 @@ def test_verify_detects_inserted_orphan_row(vault):
 # ------------------------------------------------------------------
 # P1-2: verify_audit_chain does not silently truncate
 # ------------------------------------------------------------------
+
 
 def test_verify_audit_walks_full_log(tmp_path, monkeypatch):
     """An audit log with >10000 entries must still verify correctly
@@ -122,9 +125,11 @@ def test_verify_audit_walks_full_log(tmp_path, monkeypatch):
         for i in range(n_rows):
             raw = f"{prev_hash}|2026-01-01T00:00:{i % 60:02d}+00:00|EVENT{i}|name{i}|details{i}|"
             import hashlib
+
             h = hashlib.sha256(raw.encode()).hexdigest()
-            batch.append((f"EVENT{i}", f"name{i}", f"2026-01-01T00:00:{i % 60:02d}+00:00",
-                          f"details{i}", prev_hash, h, ""))
+            batch.append(
+                (f"EVENT{i}", f"name{i}", f"2026-01-01T00:00:{i % 60:02d}+00:00", f"details{i}", prev_hash, h, "")
+            )
             prev_hash = h
         conn.execute("BEGIN")
         conn.executemany(
@@ -144,8 +149,7 @@ def test_verify_audit_walks_full_log(tmp_path, monkeypatch):
     conn = sqlite3.connect(db)
     try:
         conn.execute(
-            "UPDATE audit_logs SET details = 'TAMPERED' "
-            "WHERE id = (SELECT id FROM audit_logs ORDER BY id DESC LIMIT 1)"
+            "UPDATE audit_logs SET details = 'TAMPERED' WHERE id = (SELECT id FROM audit_logs ORDER BY id DESC LIMIT 1)"
         )
         conn.commit()
     finally:
@@ -156,6 +160,7 @@ def test_verify_audit_walks_full_log(tmp_path, monkeypatch):
 # ------------------------------------------------------------------
 # P2-4: set_secret writes the audit row inside the same transaction
 # ------------------------------------------------------------------
+
 
 def test_set_secret_audit_is_atomic(tmp_path):
     """If the audit insert fails inside set_secret, the secret insert
@@ -172,8 +177,10 @@ def test_set_secret_audit_is_atomic(tmp_path):
     # Force _append_audit_in_tx to raise AFTER the secret insert has
     # been prepared but before the audit row commits.
     original = v.storage._append_audit_in_tx
+
     def boom(*a, **k):
         raise sqlite3.OperationalError("simulated audit failure inside set_secret")
+
     v.storage._append_audit_in_tx = boom
 
     with pytest.raises(sqlite3.OperationalError):
@@ -184,15 +191,14 @@ def test_set_secret_audit_is_atomic(tmp_path):
     # Confirm via the storage layer that no row with name 'rolled_back' exists.
     conn = sqlite3.connect(v.storage.db_path)
     try:
-        n = conn.execute(
-            "SELECT COUNT(*) FROM secrets WHERE namespace='default' AND name='rolled_back'"
-        ).fetchone()[0]
+        n = conn.execute("SELECT COUNT(*) FROM secrets WHERE namespace='default' AND name='rolled_back'").fetchone()[0]
     finally:
         conn.close()
     assert n == 0, "secret insert should have rolled back when audit insert failed"
 
     # And via the public API: SecretNotFoundError is the expected path.
     from rgt_vault.exceptions import SecretNotFoundError
+
     with pytest.raises(SecretNotFoundError):
         v.execute("a", "default", "use", "rolled_back", lambda b: None)
 
@@ -200,6 +206,7 @@ def test_set_secret_audit_is_atomic(tmp_path):
 # ------------------------------------------------------------------
 # P2-1: revoke_secret writes the audit row inside the same transaction
 # ------------------------------------------------------------------
+
 
 def test_revoke_secret_audit_is_atomic(tmp_path):
     sub = tmp_path / "rv"
@@ -213,8 +220,10 @@ def test_revoke_secret_audit_is_atomic(tmp_path):
 
     # Patch _append_audit_in_tx to raise.
     original = v.storage._append_audit_in_tx
+
     def boom(*a, **k):
         raise sqlite3.OperationalError("simulated audit failure inside revoke")
+
     v.storage._append_audit_in_tx = boom
 
     with pytest.raises(sqlite3.OperationalError):

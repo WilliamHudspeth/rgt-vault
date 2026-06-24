@@ -6,6 +6,7 @@ Covers:
   * P1-4  audit hash-chain stays intact under concurrent writers
   * P2-2  cross-vault import is refused instead of silently corrupting
 """
+
 import os
 import threading
 

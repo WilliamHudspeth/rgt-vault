@@ -10,6 +10,7 @@ To get a usage cost report:
     from scripts.llm.usage import totals
     pricing.cost_report(totals())
 """
+
 from __future__ import annotations
 
 from typing import Optional
@@ -75,16 +76,11 @@ def cost_report(totals: dict) -> str:
     for (provider, model), a in sorted(totals.items()):
         cost = estimate_cost(provider, model, a["input_tokens"], a["output_tokens"])
         total_cost += cost
-        rows.append((provider, model, a["calls"], a["input_tokens"],
-                     a["output_tokens"], cost))
-    lines.append(f"{'provider':<28} {'model':<28} {'calls':>6} {'in_tok':>10} "
-                 f"{'out_tok':>10} {'cost_usd':>12}")
+        rows.append((provider, model, a["calls"], a["input_tokens"], a["output_tokens"], cost))
+    lines.append(f"{'provider':<28} {'model':<28} {'calls':>6} {'in_tok':>10} {'out_tok':>10} {'cost_usd':>12}")
     lines.append("-" * 100)
     for provider, model, calls, in_tok, out_tok, cost in rows:
-        lines.append(
-            f"{provider:<28} {model:<28} {calls:>6} {in_tok:>10} "
-            f"{out_tok:>10} {cost:>12.6f}"
-        )
+        lines.append(f"{provider:<28} {model:<28} {calls:>6} {in_tok:>10} {out_tok:>10} {cost:>12.6f}")
     lines.append("-" * 100)
     lines.append(f"{'TOTAL':<28} {'':<28} {'':>6} {'':>10} {'':>10} {total_cost:>12.6f}")
     return "\n".join(lines)

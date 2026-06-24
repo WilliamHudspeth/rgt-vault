@@ -10,6 +10,7 @@ Covers:
   - P0-2: KeyringProvider fails closed on missing keyring entry
   - P1-3: keychain.json is chmod 0600 after writing
 """
+
 import os
 import sqlite3
 import threading
@@ -35,6 +36,7 @@ rules:
 
 class _BytesProvider:
     """Test provider returning raw bytes -- exercises _normalize_master."""
+
     def __init__(self, secret: bytes = b"\x02" * 32):
         self._s = secret
 
@@ -44,6 +46,7 @@ class _BytesProvider:
     def rotate_secret(self) -> bytes:
         # Simulate a provider that supports rotation (used by happy-path tests).
         import os as _os
+
         self._s = _os.urandom(32)
         return self._s
 
@@ -79,18 +82,22 @@ def vault(tmp_path):
 # P0-2: KeyringProvider fails closed on missing entry
 # ------------------------------------------------------------------
 
+
 def test_keyring_provider_missing_entry_raises(tmp_path, monkeypatch):
     """A keyring entry that disappears must NOT silently regenerate; the
     vault must fail closed with a clear message so the operator doesn't
     unknowingly brick their vault.
     """
     import keyring as real_keyring
+
     monkeypatch.setattr(real_keyring, "get_password", lambda *a, **k: None)
     # No set_password should be called.
     called = {"set": 0}
+
     def _set(*a, **k):
         called["set"] += 1
         return None
+
     monkeypatch.setattr(real_keyring, "set_password", _set)
 
     p = KeyringProvider()
@@ -103,6 +110,7 @@ def test_keyring_provider_initialize_if_missing_creates_once(tmp_path, monkeypat
     """initialize_if_missing should create the entry when absent and be
     a no-op when present."""
     import keyring as real_keyring
+
     state = {"value": None}
 
     def _get(*a, **k):
@@ -126,13 +134,15 @@ def test_keyring_provider_initialize_if_missing_creates_once(tmp_path, monkeypat
 # P1-3: keychain.json is chmod 0600 after writing
 # ------------------------------------------------------------------
 
+
 def test_keychain_json_is_0600(tmp_path):
     """After initialize_dek, keychain.json must be mode 0600 so it can't
     be read by other users on a multi-user host.
     """
     if os.name != "posix":
-        pytest.skip("POSIX permission bits don't apply on this platform; "
-                    "Windows os.chmod only toggles the read-only flag")
+        pytest.skip(
+            "POSIX permission bits don't apply on this platform; Windows os.chmod only toggles the read-only flag"
+        )
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         pytest.skip("chmod is permissive under root; not a meaningful test")
 
@@ -140,6 +150,7 @@ def test_keychain_json_is_0600(tmp_path):
     sub.mkdir()
     manager = HardenedDEKManager(str(sub / "keychain.json"))
     from rgt_vault.keychain import MasterSecret
+
     manager.initialize_dek(MasterSecret(b"\x03" * 32), vault_id="vid", epoch=1)
     mode = oct(os.stat(sub / "keychain.json").st_mode & 0o777)
     assert mode == "0o600", f"expected 0o600, got {mode}"
@@ -148,6 +159,7 @@ def test_keychain_json_is_0600(tmp_path):
 # ------------------------------------------------------------------
 # P1-4: rotate_master_key pre-check
 # ------------------------------------------------------------------
+
 
 def test_rotate_master_key_refuses_non_rotating_provider(tmp_path):
     """rotate_master_key must refuse to proceed if the provider doesn't
@@ -184,6 +196,7 @@ def test_rotate_master_key_works_on_rotating_provider(vault):
 # P0-4 / P2-1 / P2-2: set_secret is atomic
 # ------------------------------------------------------------------
 
+
 def test_set_secret_atomic_under_concurrency(tmp_path):
     """Concurrent set_secret calls for the same name must serialize cleanly:
     each invocation produces exactly one ACTIVE version with a unique
@@ -198,6 +211,7 @@ def test_set_secret_atomic_under_concurrency(tmp_path):
     )
 
     errors = []
+
     def worker(i):
         try:
             vault.set_secret("k", f"v{i}", namespace="default", agent="a")
@@ -233,6 +247,7 @@ def test_set_secret_atomic_under_concurrency(tmp_path):
 # P0-5: get_secret + audit-log write in one transaction
 # ------------------------------------------------------------------
 
+
 def test_get_secret_atomic_audit(vault):
     """A successful get_secret must produce exactly one GET_SECRET audit
     row per call, and the chain must verify.
@@ -255,8 +270,10 @@ def test_get_secret_audit_in_same_tx_as_read(vault):
     vault.set_secret("k", "v", namespace="default", agent="a")
 
     original = vault.storage._append_audit_in_tx
+
     def boom(*a, **k):
         raise sqlite3.OperationalError("simulated audit write failure")
+
     vault.storage._append_audit_in_tx = boom
     try:
         with pytest.raises(sqlite3.OperationalError):
@@ -268,6 +285,7 @@ def test_get_secret_audit_in_same_tx_as_read(vault):
 # ------------------------------------------------------------------
 # P0-3: bulk_rewrite_active_secrets is atomic
 # ------------------------------------------------------------------
+
 
 def test_bulk_rewrite_rolls_back_on_failure(vault):
     """If the rewrite function raises partway, the transaction rolls back
@@ -290,6 +308,7 @@ def test_bulk_rewrite_rolls_back_on_failure(vault):
     # Rewrite function that succeeds for k1, fails for k2, would succeed
     # for k3 -- we must observe k1 and k3 unchanged.
     call_count = {"n": 0}
+
     def _rewrite(record_id, namespace, name, ciphertext, dek_version):
         call_count["n"] += 1
         if name == "k2":
@@ -314,6 +333,7 @@ def test_bulk_rewrite_rolls_back_on_failure(vault):
 # rotation: end-to-end via vault.rotate_dek()
 # ------------------------------------------------------------------
 
+
 def test_rotate_dek_atomic_end_to_end(vault):
     """rotate_dek() must leave the vault in a state where every previously
     stored secret is still readable under the new DEK.
@@ -333,6 +353,7 @@ def test_rotate_dek_atomic_end_to_end(vault):
 # ------------------------------------------------------------------
 # P0-1: LinuxTPMProvider temp file is 0600
 # ------------------------------------------------------------------
+
 
 def test_linux_tpm_temp_file_is_0600(tmp_path, monkeypatch):
     """The unseal-target temp file created by LinuxTPMProvider.get_secret()
@@ -371,7 +392,8 @@ def test_linux_tpm_temp_file_is_0600(tmp_path, monkeypatch):
     # The provider uses subprocess.run for tpm2_flushcontext (not
     # _run_tpm_cmd) at the end of the finally block. Patch both.
     monkeypatch.setattr(
-        "rgt_vault.providers.linux_tpm._run_tpm_cmd", fake_run_tpm_cmd,
+        "rgt_vault.providers.linux_tpm._run_tpm_cmd",
+        fake_run_tpm_cmd,
     )
     monkeypatch.setattr(
         "rgt_vault.providers.linux_tpm.subprocess.run",
@@ -387,6 +409,7 @@ def test_linux_tpm_temp_file_is_0600(tmp_path, monkeypatch):
     # That's fine -- we just need the temp file to have been created
     # with mode 0600 by the time tpm2_unseal was called.
     from rgt_vault.providers.linux_tpm import TPMError
+
     with pytest.raises(TPMError):
         provider.get_secret()
 

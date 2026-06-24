@@ -19,6 +19,7 @@ Usage:
   python3 wip_audit.py
   python3 wip_audit.py --json /tmp/wip.json
 """
+
 import argparse
 import json
 import sys
@@ -93,45 +94,53 @@ def main():
     for member_id, tickets in by_assignee.items():
         active_count = len(tickets)
         if active_count > 3:
-            violations.append({
-                "type": "wip_overflow",
-                "rule": "max 3 active issues per engineer",
-                "assignee_id": member_id,
-                "actual": active_count,
-                "limit": 3,
-                "tickets": [t["identifier"] for t in tickets],
-            })
+            violations.append(
+                {
+                    "type": "wip_overflow",
+                    "rule": "max 3 active issues per engineer",
+                    "assignee_id": member_id,
+                    "actual": active_count,
+                    "limit": 3,
+                    "tickets": [t["identifier"] for t in tickets],
+                }
+            )
         xl_count = by_assignee_xl.get(member_id, 0)
         if xl_count > 1:
-            violations.append({
-                "type": "xl_overflow",
-                "rule": "max 1 XL issue per engineer",
-                "assignee_id": member_id,
-                "actual": xl_count,
-                "limit": 1,
-                "tickets": [t["identifier"] for t in tickets if "effort:XL" in label_set(t)],
-            })
+            violations.append(
+                {
+                    "type": "xl_overflow",
+                    "rule": "max 1 XL issue per engineer",
+                    "assignee_id": member_id,
+                    "actual": xl_count,
+                    "limit": 1,
+                    "tickets": [t["identifier"] for t in tickets if "effort:XL" in label_set(t)],
+                }
+            )
 
     # Check age violations
     for t, days in ready_old:
-        violations.append({
-            "type": "ready_stale",
-            "rule": "Ready/Backlog issues older than 30 days",
-            "ticket": t["identifier"],
-            "days_old": days,
-            "limit_days": 30,
-            "title": t["title"][:60],
-        })
+        violations.append(
+            {
+                "type": "ready_stale",
+                "rule": "Ready/Backlog issues older than 30 days",
+                "ticket": t["identifier"],
+                "days_old": days,
+                "limit_days": 30,
+                "title": t["title"][:60],
+            }
+        )
 
     for t, days in code_review_old:
-        violations.append({
-            "type": "code_review_stale",
-            "rule": "Code Review issues older than 7 days",
-            "ticket": t["identifier"],
-            "days_in_review": days,
-            "limit_days": 7,
-            "title": t["title"][:60],
-        })
+        violations.append(
+            {
+                "type": "code_review_stale",
+                "rule": "Code Review issues older than 7 days",
+                "ticket": t["identifier"],
+                "days_in_review": days,
+                "limit_days": 7,
+                "title": t["title"][:60],
+            }
+        )
 
     # Output
     print(f"WIP audit — {now.strftime('%Y-%m-%d %H:%M UTC')}")
@@ -152,20 +161,25 @@ def main():
     # JSON output
     if args.json:
         Path(args.json).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.json).write_text(json.dumps({
-            "audit_time": now.isoformat(),
-            "violations": violations,
-            "by_engineer": {
-                member_id: {
-                    "active_count": len(tickets),
-                    "active": [t["identifier"] for t in tickets],
-                    "xl_count": by_assignee_xl.get(member_id, 0),
-                }
-                for member_id, tickets in by_assignee.items()
-            },
-            "ready_stale": [{"ticket": t["identifier"], "days": d} for t, d in ready_old],
-            "code_review_stale": [{"ticket": t["identifier"], "days": d} for t, d in code_review_old],
-        }, indent=2))
+        Path(args.json).write_text(
+            json.dumps(
+                {
+                    "audit_time": now.isoformat(),
+                    "violations": violations,
+                    "by_engineer": {
+                        member_id: {
+                            "active_count": len(tickets),
+                            "active": [t["identifier"] for t in tickets],
+                            "xl_count": by_assignee_xl.get(member_id, 0),
+                        }
+                        for member_id, tickets in by_assignee.items()
+                    },
+                    "ready_stale": [{"ticket": t["identifier"], "days": d} for t, d in ready_old],
+                    "code_review_stale": [{"ticket": t["identifier"], "days": d} for t, d in code_review_old],
+                },
+                indent=2,
+            )
+        )
         print(f"JSON written: {args.json}")
 
     return 1 if violations else 0

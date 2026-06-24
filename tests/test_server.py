@@ -3,6 +3,7 @@
 No real socket is opened. The vault uses the in-memory master provider from
 conftest and a temp database, so no OS keyring / TPM / DPAPI is touched.
 """
+
 import pytest
 
 pytest.importorskip("fastapi")

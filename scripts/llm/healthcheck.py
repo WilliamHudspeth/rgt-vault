@@ -11,6 +11,7 @@ Exit code:
   1 - warnings (some loops stuck)
   2 - critical (no providers available, multica unreachable)
 """
+
 from __future__ import annotations
 
 import json
@@ -129,6 +130,7 @@ def main() -> int:
     # Multica
     print("\n[2] MULTICA REACHABILITY")
     from scripts.program._common import WORKSPACE_ID
+
     ok, msg = check_multica(WORKSPACE_ID)
     print(f"  {'OK' if ok else 'FAIL'}: {msg}")
 
@@ -152,8 +154,7 @@ def main() -> int:
     burn = check_burn_rate(Path("/tmp/rgt_llm_usage.csv"))
     if burn:
         for provider, stats in sorted(burn.items()):
-            print(f"  {provider:<28} calls={stats['calls']:>4d}  "
-                  f"in={stats['in_tok']:>6d}  out={stats['out_tok']:>6d}")
+            print(f"  {provider:<28} calls={stats['calls']:>4d}  in={stats['in_tok']:>6d}  out={stats['out_tok']:>6d}")
     else:
         print("  (no calls in last hour)")
 

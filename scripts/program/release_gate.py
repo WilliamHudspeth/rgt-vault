@@ -22,6 +22,7 @@ Usage:
   python3 release_gate.py --milestone v1.0.0          # check specific milestone
   python3 release_gate.py --json /tmp/gate.json      # machine-readable
 """
+
 import argparse
 import json
 import sys
@@ -36,7 +37,14 @@ def check_milestone(milestone_short, workspace_id=WORKSPACE_ID):
     gates = []
 
     projects = list_projects(workspace_id)
-    proj = next((p for p in projects if p["title"].startswith(milestone_short + " ") or p["title"].startswith(milestone_short + "-")), None)
+    proj = next(
+        (
+            p
+            for p in projects
+            if p["title"].startswith(milestone_short + " ") or p["title"].startswith(milestone_short + "-")
+        ),
+        None,
+    )
     if not proj:
         return [("milestone_lookup", False, f"Milestone '{milestone_short}' not found")]
 
@@ -52,23 +60,34 @@ def check_milestone(milestone_short, workspace_id=WORKSPACE_ID):
     # "no_sev_blocker" (sev:blocker OR pri:blocker) gates — they were
     # duplicates with confusing naming. The unified gate catches both
     # severity-based and priority-based blocker tickets.
-    blockers = [t for t in full if is_active(t) and (
-        "sev:blocker" in label_set(t) or "pri:blocker" in label_set(t)
-    )]
+    blockers = [t for t in full if is_active(t) and ("sev:blocker" in label_set(t) or "pri:blocker" in label_set(t))]
     if blockers:
-        gates.append(("no_blocker_issues", False,
-                      f"{len(blockers)} blocker issue(s) open: {[t['identifier'] for t in blockers]}"))
+        gates.append(
+            (
+                "no_blocker_issues",
+                False,
+                f"{len(blockers)} blocker issue(s) open: {[t['identifier'] for t in blockers]}",
+            )
+        )
     else:
         gates.append(("no_blocker_issues", True, "0 blocker issues"))
 
     # Gate 2: No critical security
-    crit_sec = [t for t in full
-                if is_active(t)
-                and any(l.startswith("security:") for l in label_set(t))
-                and any(l in ("pri:critical", "pri:blocker") for l in label_set(t))]
+    crit_sec = [
+        t
+        for t in full
+        if is_active(t)
+        and any(l.startswith("security:") for l in label_set(t))
+        and any(l in ("pri:critical", "pri:blocker") for l in label_set(t))
+    ]
     if crit_sec:
-        gates.append(("no_critical_security", False,
-                      f"{len(crit_sec)} critical security issue(s) open: {[t['identifier'] for t in crit_sec]}"))
+        gates.append(
+            (
+                "no_critical_security",
+                False,
+                f"{len(crit_sec)} critical security issue(s) open: {[t['identifier'] for t in crit_sec]}",
+            )
+        )
     else:
         gates.append(("no_critical_security", True, "0 critical security issues"))
 
@@ -83,8 +102,9 @@ def check_milestone(milestone_short, workspace_id=WORKSPACE_ID):
         if any(l.startswith("security:") for l in labels) and "review:security" not in labels:
             dod_failures.append(t["identifier"])
     if dod_failures:
-        gates.append(("dod_compliance", False,
-                      f"{len(dod_failures)} done ticket(s) missing review:security: {dod_failures}"))
+        gates.append(
+            ("dod_compliance", False, f"{len(dod_failures)} done ticket(s) missing review:security: {dod_failures}")
+        )
     else:
         gates.append(("dod_compliance", True, "all done tickets satisfy DoD"))
 
@@ -96,8 +116,13 @@ def check_milestone(milestone_short, workspace_id=WORKSPACE_ID):
             if "review:security" not in labels:
                 sec_no_review.append(t["identifier"])
     if sec_no_review:
-        gates.append(("security_reviews", False,
-                      f"{len(sec_no_review)} active security ticket(s) without review:security: {sec_no_review}"))
+        gates.append(
+            (
+                "security_reviews",
+                False,
+                f"{len(sec_no_review)} active security ticket(s) without review:security: {sec_no_review}",
+            )
+        )
     else:
         gates.append(("security_reviews", True, "all active security tickets have review:security"))
 
@@ -109,13 +134,19 @@ def check_milestone(milestone_short, workspace_id=WORKSPACE_ID):
     gates.append(("changelog_updated", "skipped", "manual check required (no programmatic verification)"))
 
     # Gate 6: No open critical security (sev:critical AND security:*)
-    crit_sec_sev = [t for t in full
-                    if is_active(t)
-                    and "sev:critical" in label_set(t)
-                    and any(l.startswith("security:") for l in label_set(t))]
+    crit_sec_sev = [
+        t
+        for t in full
+        if is_active(t) and "sev:critical" in label_set(t) and any(l.startswith("security:") for l in label_set(t))
+    ]
     if crit_sec_sev:
-        gates.append(("no_sev_critical_security", False,
-                      f"{len(crit_sec_sev)} sev:critical security issue(s) open: {[t['identifier'] for t in crit_sec_sev]}"))
+        gates.append(
+            (
+                "no_sev_critical_security",
+                False,
+                f"{len(crit_sec_sev)} sev:critical security issue(s) open: {[t['identifier'] for t in crit_sec_sev]}",
+            )
+        )
     else:
         gates.append(("no_sev_critical_security", True, "0 sev:critical security issues"))
 

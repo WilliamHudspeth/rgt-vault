@@ -1,4 +1,5 @@
 """Shared HTTP helpers for providers (urllib-based, zero deps)."""
+
 from __future__ import annotations
 
 import json

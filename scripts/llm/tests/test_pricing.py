@@ -1,4 +1,5 @@
 """Tests for pricing.cost_report and pricing.estimate_cost."""
+
 import unittest
 
 from scripts.llm import pricing
@@ -30,18 +31,24 @@ class PricingTests(unittest.TestCase):
     def test_cost_report_aggregates(self):
         totals = {
             ("mistral", "mistral-small-latest"): {
-                "calls": 10, "ok": 10,
-                "input_tokens": 1_000_000, "output_tokens": 500_000,
+                "calls": 10,
+                "ok": 10,
+                "input_tokens": 1_000_000,
+                "output_tokens": 500_000,
                 "latency_ms_total": 5000,
             },
             ("groq", "llama-3.3-70b-versatile"): {
-                "calls": 5, "ok": 5,
-                "input_tokens": 2_000_000, "output_tokens": 1_000_000,
+                "calls": 5,
+                "ok": 5,
+                "input_tokens": 2_000_000,
+                "output_tokens": 1_000_000,
                 "latency_ms_total": 3000,
             },
             ("ollama:qwen2.5:7b", "qwen2.5:7b"): {
-                "calls": 20, "ok": 20,
-                "input_tokens": 100_000, "output_tokens": 50_000,
+                "calls": 20,
+                "ok": 20,
+                "input_tokens": 100_000,
+                "output_tokens": 50_000,
                 "latency_ms_total": 200_000,
             },
         }

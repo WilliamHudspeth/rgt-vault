@@ -4,6 +4,7 @@ from typing import Any, Mapping
 from dataclasses import dataclass
 import hashlib
 
+
 @dataclass(frozen=True, slots=True)
 class RequestContext:
     agent_id: str
@@ -11,7 +12,7 @@ class RequestContext:
     version: str
     timestamp_ns: int
     nonce: bytes
-    
+
     def context_hash(self) -> str:
         h = hashlib.blake2b(digest_size=32)
         h.update(self.agent_id.encode())
@@ -20,6 +21,7 @@ class RequestContext:
         h.update(str(self.timestamp_ns).encode())
         h.update(self.nonce)
         return h.hexdigest()
+
 
 class AuditHook(ABC):
     """Stable hook interface for v0.2.0. Do not change method signatures."""

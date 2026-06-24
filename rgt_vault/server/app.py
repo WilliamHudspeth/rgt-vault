@@ -13,6 +13,7 @@ Plaintext never crosses the HTTP boundary: ``/v1/secrets/{ns}/{name}/use``
 leases the secret into a server-side ``bytearray`` and hands it to a registered
 action, returning only the action's result.
 """
+
 from __future__ import annotations
 
 import logging
@@ -24,8 +25,7 @@ try:
     from pydantic import BaseModel, Field
 except ModuleNotFoundError as e:  # pragma: no cover - exercised only without extra
     raise ImportError(
-        "The rgt-vault HTTP server requires the [server] extra. "
-        "Install it with: pip install 'rgt-vault[server]'"
+        "The rgt-vault HTTP server requires the [server] extra. Install it with: pip install 'rgt-vault[server]'"
     ) from e
 
 from rgt_vault.exceptions import (
@@ -80,6 +80,7 @@ class ExecuteCapabilityBody(BaseModel):
     ``agent_id`` is the caller's identity claim; the vault compares it
     to the token's ``agent_id`` field and refuses on mismatch.
     """
+
     capability: str
     agent_id: str
     capability_token: str
@@ -215,9 +216,7 @@ def build_app(
                     "Action %r raised an unhandled exception; details suppressed from response",
                     body.action,
                 )
-                raise ActionExecutionError(
-                    f"Action '{body.action}' failed; see server logs for details."
-                )
+                raise ActionExecutionError(f"Action '{body.action}' failed; see server logs for details.")
 
         result = vault.execute(body.agent, namespace, body.purpose, name, _run)
         return {"ok": True, "action": body.action, "result": result}
@@ -266,8 +265,7 @@ def build_app(
         if limit > 1000:
             raise HTTPException(
                 status_code=400,
-                detail="'limit' must be <= 1000. Use /v1/audit/verify and a "
-                       "tail query tool to walk larger histories.",
+                detail="'limit' must be <= 1000. Use /v1/audit/verify and a tail query tool to walk larger histories.",
             )
         return {"entries": vault.get_audit_log(limit=limit)}
 
@@ -331,9 +329,7 @@ def build_app(
                 "capability %r raised an unhandled exception; details suppressed from response",
                 body.capability,
             )
-            raise ActionExecutionError(
-                f"capability {body.capability!r} failed; see server logs for details"
-            )
+            raise ActionExecutionError(f"capability {body.capability!r} failed; see server logs for details")
         return {"ok": True, "capability": body.capability, "result": result}
 
     @app.get("/v1/capabilities")

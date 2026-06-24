@@ -15,6 +15,7 @@ def vault(temp_vault_dir, master_provider):
     """
     return VaultManager(db_path=db_path, policy_yaml=policy_yaml, master_provider=master_provider)
 
+
 def test_set_secret_validation(vault):
     # Test wrong types
     with pytest.raises(ValidationError):
@@ -37,13 +38,14 @@ def test_set_secret_validation(vault):
     with pytest.raises(ValidationError):
         vault.set_secret("key", long_value)
 
+
 def test_execute_validation(vault):
     vault.set_secret("KEY", "val")
-    
+
     # Test wrong types
     with pytest.raises(ValidationError):
         vault.execute(123, "ns", "purpose", "KEY", lambda x: True)
-    
+
     # Test empty strings
     with pytest.raises(ValidationError):
         vault.execute("", "ns", "purpose", "KEY", lambda x: True)
@@ -51,6 +53,7 @@ def test_execute_validation(vault):
     # Test non-callable callback
     with pytest.raises(ValidationError):
         vault.execute("agent", "ns", "purpose", "KEY", "not_a_function")
+
 
 def test_auth_validation(temp_vault_dir, master_provider):
     db_path = os.path.join(temp_vault_dir, "vault.db")
@@ -63,41 +66,39 @@ def test_auth_validation(temp_vault_dir, master_provider):
     with pytest.raises(ValidationError):
         VaultManager(db_path=db_path, policy_yaml=massive_yaml, master_provider=master_provider)
 
+
 def test_import_vault_validation(vault):
     # Test non-bytes input
     with pytest.raises(ValidationError):
         vault.import_vault("not_bytes")
-        
+
     # Test massive input
     massive_payload = b"a" * (10 * 1024 * 1024 + 1)
     with pytest.raises(ValidationError):
         vault.import_vault(massive_payload)
-        
+
     # Test malformed base64 / json
     with pytest.raises(ValidationError, match="Invalid import payload format"):
         vault.import_vault(b"this_is_not_base64_or_json!")
+
 
 def test_sqlite_import_data_malformed(vault):
     # Since import_vault catches JSON decode errors, we bypass it to test sqlite import_data directly
     malformed_data = {
         "secrets": [
-            {"id": 1, "name": "test"} # Missing ciphertext
+            {"id": 1, "name": "test"}  # Missing ciphertext
         ]
     }
     with pytest.raises(ValueError, match="Malformed secret entry"):
         vault.storage.import_data(malformed_data)
-        
-    malformed_data2 = {
-        "secrets": [
-            {"id": 1, "name": "test", "ciphertext": "invalid_base64+++"}
-        ]
-    }
+
+    malformed_data2 = {"secrets": [{"id": 1, "name": "test", "ciphertext": "invalid_base64+++"}]}
     with pytest.raises(ValueError, match="Failed to decode ciphertext"):
         vault.storage.import_data(malformed_data2)
-        
+
     malformed_audit = {
         "audit_logs": [
-            {"id": 1, "action": "READ"} # Missing entry_hash
+            {"id": 1, "action": "READ"}  # Missing entry_hash
         ]
     }
     with pytest.raises(ValueError, match="Malformed audit log entry"):

@@ -13,6 +13,7 @@ Two modes:
 Task types and chains are in routes.yaml under "chains:" (sequential) and
 "pairs:" (2-model review).
 """
+
 from __future__ import annotations
 
 import os
@@ -52,14 +53,15 @@ TASK_GENERAL = "general"
 # Routes file
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class RouteConfig:
     """Parsed routes.yaml."""
 
-    chains: dict = field(default_factory=dict)            # task -> [spec, ...]
-    pairs: dict = field(default_factory=dict)             # task -> {"primary": spec, "secondary": spec}
-    writers: dict = field(default_factory=dict)           # task -> spec (the big model that writes/answers)
-    provider_args: dict = field(default_factory=dict)     # spec -> kwargs
+    chains: dict = field(default_factory=dict)  # task -> [spec, ...]
+    pairs: dict = field(default_factory=dict)  # task -> {"primary": spec, "secondary": spec}
+    writers: dict = field(default_factory=dict)  # task -> spec (the big model that writes/answers)
+    provider_args: dict = field(default_factory=dict)  # spec -> kwargs
     env_path: Optional[str] = None
 
     @classmethod
@@ -91,7 +93,7 @@ class RouteConfig:
                         if not line or line.startswith("#"):
                             continue
                         if line.startswith("export "):
-                            line = line[len("export "):]
+                            line = line[len("export ") :]
                         if "=" in line:
                             k, _, v = line.partition("=")
                             k = k.strip()
@@ -100,13 +102,14 @@ class RouteConfig:
                                 os.environ[k] = v
                 except Exception as e:
                     import sys as _sys
-                    print(f"Warning: failed to load env_path {env_file}: {e}",
-                          file=_sys.stderr)
+
+                    print(f"Warning: failed to load env_path {env_file}: {e}", file=_sys.stderr)
         chains = data.get("chains") or {}
         if not chains:
             # File exists but has no chains. Warn the user and fall back
             # to the hard-coded default so the router is actually usable.
             import sys as _sys
+
             print(
                 f"Warning: {path} has no 'chains' section; "
                 f"falling back to built-in defaults. Edit the file to add "
@@ -184,11 +187,12 @@ class RouteConfig:
 # Provider registry
 # ---------------------------------------------------------------------------
 
+
 def build_provider(spec: str, args: Optional[dict] = None) -> Provider:
     """Build a Provider from a spec string like "groq" or "ollama:qwen2.5:7b"."""
     args = args or {}
     if spec.startswith("ollama:"):
-        model = spec[len("ollama:"):]
+        model = spec[len("ollama:") :]
         return OllamaProvider(model, **args)
     if spec == "groq":
         return GroqProvider(**args)
@@ -206,6 +210,7 @@ def build_provider(spec: str, args: Optional[dict] = None) -> Provider:
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
+
 
 class Router:
     """Routes a task to providers via chain (sequential) or pair (fan-out)."""
@@ -343,7 +348,9 @@ class Router:
                 return future.result(timeout=executor_timeout)
             except TimeoutError:
                 return Reply(
-                    text="", provider=spec, model="?",
+                    text="",
+                    provider=spec,
+                    model="?",
                     error=f"executor timeout after {executor_timeout}s",
                 )
         finally:
@@ -369,12 +376,17 @@ class Router:
             return Reply(text="", provider=spec, model="?", error="unavailable")
         try:
             return provider.complete(
-                prompt, system=system, max_tokens=max_tokens,
-                temperature=temperature, timeout=timeout,
+                prompt,
+                system=system,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout=timeout,
             )
         except Exception as e:
             return Reply(
-                text="", provider=spec, model="?",
+                text="",
+                provider=spec,
+                model="?",
                 error=f"exception: {type(e).__name__}: {e}",
             )
 
@@ -409,7 +421,10 @@ class Router:
         executor_timeout = max(1, timeout + 5)  # 5s grace beyond provider timeout
         ex = ThreadPoolExecutor(max_workers=max(1, len(specs)))
         try:
-            futures = {spec: ex.submit(self._dispatch, spec, prompt, system, max_tokens, temperature, timeout) for spec in specs}
+            futures = {
+                spec: ex.submit(self._dispatch, spec, prompt, system, max_tokens, temperature, timeout)
+                for spec in specs
+            }
             replies = []
             for spec in specs:
                 f = futures[spec]
@@ -419,17 +434,31 @@ class Router:
                     # OPUS-3: provider ignored its own timeout; we caught
                     # it at the executor level. Must come before the
                     # broader Exception catch (TimeoutError is a subclass).
-                    replies.append((spec, Reply(
-                        text="", provider=spec, model="?",
-                        error=f"executor timeout after {executor_timeout}s",
-                    )))
+                    replies.append(
+                        (
+                            spec,
+                            Reply(
+                                text="",
+                                provider=spec,
+                                model="?",
+                                error=f"executor timeout after {executor_timeout}s",
+                            ),
+                        )
+                    )
                 except Exception as e:
                     # An exception inside the future (shouldn't happen
                     # now that _one catches its own, but defensively):
-                    replies.append((spec, Reply(
-                        text="", provider=spec, model="?",
-                        error=f"future exception: {type(e).__name__}: {e}",
-                    )))
+                    replies.append(
+                        (
+                            spec,
+                            Reply(
+                                text="",
+                                provider=spec,
+                                model="?",
+                                error=f"future exception: {type(e).__name__}: {e}",
+                            ),
+                        )
+                    )
         finally:
             # wait=False so a hung worker doesn't block the caller.
             ex.shutdown(wait=False, cancel_futures=True)
@@ -462,8 +491,14 @@ class Router:
             # No pair configured — fall back to a single call.
             only = self.chain_for(task_type)[0] if self.chain_for(task_type) else None
             if not only:
-                return {"primary": (None, Reply(text="", provider="<none>", model="<none>", error="no providers")), "secondary": None, "agreement": "unknown"}
-            reply = self.call(task_type, prompt, system=system, max_tokens=max_tokens, temperature=temperature, timeout=timeout)
+                return {
+                    "primary": (None, Reply(text="", provider="<none>", model="<none>", error="no providers")),
+                    "secondary": None,
+                    "agreement": "unknown",
+                }
+            reply = self.call(
+                task_type, prompt, system=system, max_tokens=max_tokens, temperature=temperature, timeout=timeout
+            )
             return {"primary": (only, reply), "secondary": None, "agreement": "unknown"}
 
         primary_spec = pair.get("primary")
@@ -480,8 +515,12 @@ class Router:
             # through _run_with_timeout so the same OPUS-3 timeout
             # guarantee applies.
             reply = self._run_with_timeout(
-                primary_spec, prompt, system=system, max_tokens=max_tokens,
-                temperature=temperature, timeout=timeout,
+                primary_spec,
+                prompt,
+                system=system,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout=timeout,
             )
             return {
                 "primary": (primary_spec, reply),

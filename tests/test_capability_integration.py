@@ -12,6 +12,7 @@ Exercises:
   * Capability audit rows participate in the same hash chain as
     legacy rows.
 """
+
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -101,7 +102,10 @@ def test_http_execute_capability_happy_path(server_vault):
     _vault, client = server_vault
     verifier = HMACTokenVerifier(SHARED_SECRET)
     tok = verifier.sign(
-        "agent-1", "secrets.echo", capability_version=1, ttl_seconds=60,
+        "agent-1",
+        "secrets.echo",
+        capability_version=1,
+        ttl_seconds=60,
     )
     r = client.post(
         "/v1/capabilities/execute",
@@ -267,7 +271,11 @@ def test_webhook_hook_runs_on_capability_path(tmp_path, harness_server):
     verifier = HMACTokenVerifier(SHARED_SECRET)
     tok = verifier.sign("agent-1", "secrets.echo", capability_version=1, ttl_seconds=60)
     result = vault.execute_capability(
-        "secrets.echo", {}, "agent-1", tok, capability_version=1,
+        "secrets.echo",
+        {},
+        "agent-1",
+        tok,
+        capability_version=1,
     )
     assert result["ok"] is True
     # The HOOK_CAPABILITY audit row recorded the webhook's decision.
@@ -344,8 +352,11 @@ def test_audit_chain_verifies_after_capability_and_legacy(server_vault):
         "/v1/secrets",
         headers={"Authorization": "Bearer test-server-token"},
         json={
-            "name": "k", "value": "v", "namespace": "default",
-            "agent": "cli", "purpose": "test",
+            "name": "k",
+            "value": "v",
+            "namespace": "default",
+            "agent": "cli",
+            "purpose": "test",
         },
     )
     # Chain still verifies: capability + legacy rows are interleaved

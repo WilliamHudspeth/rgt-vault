@@ -22,6 +22,7 @@ Usage:
   python3 dashboard.py --json /tmp/dash.json
   python3 dashboard.py --table
 """
+
 import argparse
 import json
 import statistics
@@ -31,10 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _common import (
-    list_issues, get_issue, label_set, list_projects,
-    is_active, effort_size, WORKSPACE_ID
-)
+from _common import list_issues, get_issue, label_set, list_projects, is_active, effort_size, WORKSPACE_ID
 
 
 def compute_dashboard(workspace_id=WORKSPACE_ID):
@@ -74,14 +72,12 @@ def compute_dashboard(workspace_id=WORKSPACE_ID):
             by_milestone[ms]["backlog"] += 1
 
     # Open blockers
-    open_blockers = [
-        t for t in full_issues
-        if is_active(t) and "pri:blocker" in label_set(t)
-    ]
+    open_blockers = [t for t in full_issues if is_active(t) and "pri:blocker" in label_set(t)]
 
     # Open critical security
     open_critical_security = [
-        t for t in full_issues
+        t
+        for t in full_issues
         if is_active(t)
         and any(l.startswith("security:") for l in label_set(t))
         and any(l in ("pri:critical", "pri:blocker") for l in label_set(t))
@@ -89,9 +85,7 @@ def compute_dashboard(workspace_id=WORKSPACE_ID):
 
     # Review queue
     review_queue = [t for t in full_issues if t["status"] == "in_review"]
-    security_review_queue = [
-        t for t in review_queue if any(l.startswith("security:") for l in label_set(t))
-    ]
+    security_review_queue = [t for t in review_queue if any(l.startswith("security:") for l in label_set(t))]
 
     # Lead time (last 30 days, done): created_at -> updated_at for done tickets.
     # Cycle time is NOT computed here — it requires status-transition timestamps
@@ -154,7 +148,9 @@ def render_markdown(d):
         "",
         "## Throughput (last 30 days)",
         "",
-        f"- Median lead time: **{d['lead_time_median_days']} days**" if d["lead_time_median_days"] is not None else "- Median lead time: N/A (no tickets completed in last 30 days)",
+        f"- Median lead time: **{d['lead_time_median_days']} days**"
+        if d["lead_time_median_days"] is not None
+        else "- Median lead time: N/A (no tickets completed in last 30 days)",
         f"- Mean lead time: {d['lead_time_mean_days']} days" if d["lead_time_mean_days"] is not None else "",
         "",
         "## Milestone Burndown",

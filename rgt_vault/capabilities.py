@@ -169,10 +169,7 @@ class CapabilityRegistry:
         try:
             return self._specs[name]
         except KeyError:
-            raise CapabilityNotFoundError(
-                f"unknown capability {name!r}. "
-                f"Registered: {sorted(self._specs)}"
-            ) from None
+            raise CapabilityNotFoundError(f"unknown capability {name!r}. Registered: {sorted(self._specs)}") from None
 
     def has(self, name: str) -> bool:
         return name in self._specs
@@ -243,9 +240,7 @@ def _cap_secrets_use(payload: Mapping[str, Any], ctx: CapabilityContext) -> Dict
         try:
             return spec.fn(buf, action_params, registry=registry)
         except Exception as e:
-            raise ActionExecutionError(
-                f"action {action_name!r} failed; see server logs for details"
-            ) from e
+            raise ActionExecutionError(f"action {action_name!r} failed; see server logs for details") from e
 
     result = ctx.vault.execute(
         agent=ctx.agent_id,

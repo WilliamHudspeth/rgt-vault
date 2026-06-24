@@ -7,6 +7,7 @@ This prevents callers from distinguishing "wrong key" from "tampered
 ciphertext" by exception type, which would otherwise be a useful oracle to an
 attacker probing the vault.
 """
+
 import os
 
 import pytest
@@ -18,8 +19,10 @@ from rgt_vault.vault import VaultManager
 # crypto.decrypt contract
 # ------------------------------------------------------------------
 
+
 def test_decrypt_truncated_raises_decryption_error():
     from rgt_vault.crypto import decrypt
+
     key = b"k" * 32
     # 5 bytes is below the 12 (nonce) + 16 (tag) minimum.
     with pytest.raises(DecryptionError):
@@ -28,12 +31,14 @@ def test_decrypt_truncated_raises_decryption_error():
 
 def test_decrypt_non_bytes_token():
     from rgt_vault.crypto import decrypt
+
     with pytest.raises(DecryptionError, match="bytes or bytearray"):
         decrypt("not bytes", b"k" * 32, b"aad")
 
 
 def test_decrypt_wrong_aad_raises_decryption_error():
     from rgt_vault.crypto import decrypt, encrypt
+
     key = b"k" * 32
     ct = encrypt(b"plaintext", key, b"good-aad")
     with pytest.raises(DecryptionError):
@@ -42,6 +47,7 @@ def test_decrypt_wrong_aad_raises_decryption_error():
 
 def test_decrypt_wrong_key_raises_decryption_error():
     from rgt_vault.crypto import decrypt, encrypt
+
     ct = encrypt(b"plaintext", b"k" * 32, b"aad")
     with pytest.raises(DecryptionError):
         decrypt(ct, b"j" * 32, b"aad")
@@ -50,6 +56,7 @@ def test_decrypt_wrong_key_raises_decryption_error():
 def test_decrypt_error_is_a_vault_error():
     """All vault error types should be catchable as ``VaultError``."""
     from rgt_vault.crypto import decrypt
+
     with pytest.raises(VaultError):
         decrypt(b"short", b"k" * 32, b"aad")
 
@@ -58,14 +65,14 @@ def test_decrypt_error_is_a_vault_error():
 # VaultManager.lease_secret surfaces DecryptionError (not InvalidTag)
 # ------------------------------------------------------------------
 
+
 def test_lease_secret_tampered_ciphertext_raises_decryption_error(temp_vault_dir, master_provider):
     """If the stored ciphertext is tampered with, lease_secret must raise
     ``DecryptionError`` (a ``VaultError``), not the raw ``InvalidTag`` from
     cryptography (which would be a ``cryptography`` library exception and
     leak "we use AES-GCM" via the exception type)."""
     db = os.path.join(temp_vault_dir, "v.db")
-    v = VaultManager(db_path=db, policy_yaml="rules:\n  - effect: allow\n",
-                     master_provider=master_provider)
+    v = VaultManager(db_path=db, policy_yaml="rules:\n  - effect: allow\n", master_provider=master_provider)
     v.set_secret("K", "v", namespace="default", agent="a")
 
     # Tamper: flip one byte of the stored ciphertext directly in the DB.
@@ -73,6 +80,7 @@ def test_lease_secret_tampered_ciphertext_raises_decryption_error(temp_vault_dir
     # raises ``ChecksumError``; that itself is a ``VaultError`` and prevents
     # leaking the underlying library exception type.
     import sqlite3
+
     conn = sqlite3.connect(db)
     row = conn.execute("SELECT id, ciphertext FROM secrets WHERE name='K'").fetchone()
     record_id, ct = row
@@ -92,12 +100,12 @@ def test_lease_secret_decryption_error_when_checksum_matches_tampered(temp_vault
     cryptography, which would tell the attacker which library we use.
     """
     db = os.path.join(temp_vault_dir, "v.db")
-    v = VaultManager(db_path=db, policy_yaml="rules:\n  - effect: allow\n",
-                     master_provider=master_provider)
+    v = VaultManager(db_path=db, policy_yaml="rules:\n  - effect: allow\n", master_provider=master_provider)
     v.set_secret("K", "v", namespace="default", agent="a")
 
     import hashlib
     import sqlite3
+
     conn = sqlite3.connect(db)
     row = conn.execute("SELECT id, ciphertext FROM secrets WHERE name='K'").fetchone()
     record_id, ct = row
@@ -120,12 +128,12 @@ def test_lease_secret_propagates_validation_error_for_unsupported_dek_version(te
     ``VaultError``), not a bare ``ValueError`` -- same oracle-prevention
     rationale as above."""
     db = os.path.join(temp_vault_dir, "v.db")
-    v = VaultManager(db_path=db, policy_yaml="rules:\n  - effect: allow\n",
-                     master_provider=master_provider)
+    v = VaultManager(db_path=db, policy_yaml="rules:\n  - effect: allow\n", master_provider=master_provider)
     v.set_secret("K", "v", namespace="default", agent="a")
 
     # Pin a future DEK version and try to read it back.
     import sqlite3
+
     conn = sqlite3.connect(db)
     conn.execute("UPDATE secrets SET dek_version = 99 WHERE name='K'")
     conn.commit()

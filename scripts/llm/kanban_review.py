@@ -17,6 +17,7 @@ Usage:
   python3 scripts/llm/kanban_review.py --identifier RGT-26 # process one ticket
   python3 scripts/llm/kanban_review.py --status todo,in_progress
 """
+
 from __future__ import annotations
 
 import argparse
@@ -57,18 +58,10 @@ def pick_task_type(ticket: dict) -> str:
     """Decide which router task type to use for a ticket."""
     labels = label_set(ticket)
     # Security-critical first
-    if (
-        "comp:crypto" in labels
-        or any(l.startswith("security:") for l in labels)
-        or "pri:blocker" in labels
-    ):
+    if "comp:crypto" in labels or any(l.startswith("security:") for l in labels) or "pri:blocker" in labels:
         return TASK_SECURITY_REVIEW
     # Architecture / design
-    if (
-        "effort:L" in labels
-        or "effort:XL" in labels
-        or "type:design" in labels
-    ):
+    if "effort:L" in labels or "effort:XL" in labels or "type:design" in labels:
         return TASK_DESIGN_REVIEW
     # Default: code review for any component-tagged ticket
     return TASK_CODE_REVIEW
@@ -123,18 +116,16 @@ def post_comment(ticket: dict, body: str, workspace_id: str) -> tuple:
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Kanban review dispatcher")
-    p.add_argument("--dry-run", action="store_true",
-                   help="plan the dispatch but do not call LLMs or post comments")
-    p.add_argument("--limit", type=int, default=5,
-                   help="max tickets to process (default 5)")
+    p.add_argument("--dry-run", action="store_true", help="plan the dispatch but do not call LLMs or post comments")
+    p.add_argument("--limit", type=int, default=5, help="max tickets to process (default 5)")
     p.add_argument("--identifier", help="process a single ticket by RGT-N")
-    p.add_argument("--status", default="todo,in_progress",
-                   help="comma-separated statuses to include (default 'todo,in_progress')")
+    p.add_argument(
+        "--status", default="todo,in_progress", help="comma-separated statuses to include (default 'todo,in_progress')"
+    )
     p.add_argument("--workspace-id", default=WORKSPACE_ID)
     p.add_argument("--max-tokens", type=int, default=600)
     p.add_argument("--timeout", type=int, default=120)
-    p.add_argument("--json", action="store_true",
-                   help="emit JSON envelope per ticket")
+    p.add_argument("--json", action="store_true", help="emit JSON envelope per ticket")
     args = p.parse_args()
 
     statuses = set(s.strip() for s in args.status.split(",") if s.strip())
@@ -166,15 +157,20 @@ def main() -> int:
 
         if args.dry_run:
             pair = router.pair_for(task)
-            print(json.dumps({
-                "ticket": tid,
-                "title": full.get("title"),
-                "task_type": task,
-                "labels": sorted(label_set(full)),
-                "status": full.get("status"),
-                "pair": pair,
-                "chain": router.chain_for(task),
-            }, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "ticket": tid,
+                        "title": full.get("title"),
+                        "task_type": task,
+                        "labels": sorted(label_set(full)),
+                        "status": full.get("status"),
+                        "pair": pair,
+                        "chain": router.chain_for(task),
+                    },
+                    indent=2,
+                )
+            )
             print()
             continue
 
@@ -194,25 +190,30 @@ def main() -> int:
         wall = int((time.time() - t0) * 1000)
 
         if args.json:
-            print(json.dumps({
-                "ticket": tid,
-                "task": task,
-                "wall_ms": wall,
-                "replies": [
+            print(
+                json.dumps(
                     {
-                        "spec": spec,
-                        "ok": r.ok,
-                        "provider": r.provider,
-                        "model": r.model,
-                        "latency_ms": r.latency_ms,
-                        "input_tokens": r.input_tokens,
-                        "output_tokens": r.output_tokens,
-                        "text": r.text,
-                        "error": r.error,
-                    }
-                    for spec, r in replies
-                ],
-            }, indent=2))
+                        "ticket": tid,
+                        "task": task,
+                        "wall_ms": wall,
+                        "replies": [
+                            {
+                                "spec": spec,
+                                "ok": r.ok,
+                                "provider": r.provider,
+                                "model": r.model,
+                                "latency_ms": r.latency_ms,
+                                "input_tokens": r.input_tokens,
+                                "output_tokens": r.output_tokens,
+                                "text": r.text,
+                                "error": r.error,
+                            }
+                            for spec, r in replies
+                        ],
+                    },
+                    indent=2,
+                )
+            )
             print()
         else:
             print(f"\n{'=' * 70}\n{tid} [{task}] multi-model review\n{'=' * 70}")
@@ -220,13 +221,14 @@ def main() -> int:
             for spec, r in replies:
                 if r.ok:
                     ok_count += 1
-                    print(f"\n--- {spec} ({r.provider}/{r.model}) "
-                          f"{r.latency_ms}ms  in={r.input_tokens} out={r.output_tokens}")
+                    print(
+                        f"\n--- {spec} ({r.provider}/{r.model}) "
+                        f"{r.latency_ms}ms  in={r.input_tokens} out={r.output_tokens}"
+                    )
                     print(r.text)
                 else:
                     print(f"\n--- {spec}: ERROR {r.error}")
-            print(f"\n# {ok_count}/{len(replies)} models replied, {wall}ms wall",
-                  file=sys.stderr)
+            print(f"\n# {ok_count}/{len(replies)} models replied, {wall}ms wall", file=sys.stderr)
 
             # Post the synthesis back as a Multica comment
             ok_replies = [(s, r) for s, r in replies if r.ok]
@@ -245,8 +247,7 @@ def main() -> int:
                 if 200 <= status < 300:
                     print(f"# posted synthesis (HTTP {status})", file=sys.stderr)
                 else:
-                    print(f"# comment post failed: HTTP {status}: {resp[:200]}",
-                          file=sys.stderr)
+                    print(f"# comment post failed: HTTP {status}: {resp[:200]}", file=sys.stderr)
 
     return 0
 

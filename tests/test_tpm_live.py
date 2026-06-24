@@ -7,6 +7,7 @@ the full VaultManager stack (set / execute / rotate_dek) on top of it.
 Run with:
     sg tss -c "pytest tests/test_tpm_live.py -v"
 """
+
 import os
 import shutil
 import tempfile
@@ -30,8 +31,7 @@ def _tpm_available():
 
 pytestmark = pytest.mark.skipif(
     not _tpm_available(),
-    reason="/dev/tpmrm0 not readable in this environment "
-           "(run as a member of the 'tss' group)",
+    reason="/dev/tpmrm0 not readable in this environment (run as a member of the 'tss' group)",
 )
 
 
@@ -48,8 +48,7 @@ def test_seal_unseal_roundtrip(tpm_workdir):
     secret = os.urandom(32)
     priv, pub = seal_master_secret(secret, tpm_workdir)
     assert priv.exists() and pub.exists()
-    assert (priv.parent / f"{priv.name}.pcrs").exists() or \
-           (priv.with_suffix(".pcrs")).exists()
+    assert (priv.parent / f"{priv.name}.pcrs").exists() or (priv.with_suffix(".pcrs")).exists()
 
     provider = LinuxTPMProvider(str(priv), str(pub))
     unsealed = provider.get_secret()
@@ -79,7 +78,9 @@ def test_vaultmanager_set_get_via_tpm(tpm_workdir):
     provider = LinuxTPMProvider(str(priv), str(pub))
     policy = "rules:\n  - effect: allow\n    agent: t\n    namespace: '*'\n    action: '*'\n"
     vault = VaultManager(
-        db_path=db, policy_yaml=policy, master_provider=provider,
+        db_path=db,
+        policy_yaml=policy,
+        master_provider=provider,
     )
     vault.set_secret("KEY", "value", namespace="demo", agent="t")
     out = vault.execute("t", "demo", "use", "KEY", lambda b: bytes(b))
@@ -98,7 +99,9 @@ def test_rotate_dek_via_tpm(tpm_workdir):
     db = os.path.join(tpm_workdir, "vault.db")
     policy = "rules:\n  - effect: allow\n    agent: t\n    namespace: '*'\n    action: '*'\n"
     vault = VaultManager(
-        db_path=db, policy_yaml=policy, master_provider=provider,
+        db_path=db,
+        policy_yaml=policy,
+        master_provider=provider,
     )
     vault.set_secret("K1", "v1", namespace="ns", agent="t")
     vault.rotate_dek()

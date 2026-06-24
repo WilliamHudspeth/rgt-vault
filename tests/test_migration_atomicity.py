@@ -4,6 +4,7 @@ A failing migration file must roll back both the schema change AND the
 bookkeeping row, so a subsequent startup retries the migration. Otherwise
 the DB could be left in a half-applied state forever.
 """
+
 import sqlite3
 from pathlib import Path as RealPath
 
@@ -14,6 +15,7 @@ from rgt_vault.storage.sqlite import StorageBackend
 
 class _PathProxy:
     """Path stand-in that returns a fake dir when the suffix is 'migrations'."""
+
     def __init__(self, real, override=None):
         # ``real`` is the underlying RealPath used for OS calls (fspath,
         # chmod, sqlite3.connect). ``override`` is the dir we WANT the
@@ -37,8 +39,10 @@ class _PathProxy:
         if self._override is not None and name in ("glob", "exists", "iterdir", "read_text"):
             target = RealPath(self._override)
             if callable(attr):
+
                 def call(*args, **kwargs):
                     return getattr(target, name)(*args, **kwargs)
+
                 return call
             return attr
         return attr
@@ -72,6 +76,7 @@ def test_failed_migration_rolls_back_bookkeeping(tmp_path, monkeypatch):
         return _PathProxy(RealPath(arg))
 
     import rgt_vault.storage.sqlite as sqlite_mod
+
     monkeypatch.setattr(sqlite_mod, "Path", _path_factory)
 
     with pytest.raises(sqlite3.OperationalError):

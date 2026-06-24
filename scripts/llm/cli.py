@@ -12,6 +12,7 @@ Usage:
 Set keys before invoking (only the providers in the chosen chain need them):
   set -a; . ~/.config/llm-review/keys.env; set +a
 """
+
 from __future__ import annotations
 
 import argparse
@@ -155,7 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--provider",
         default="ollama:qwen2.5:7b",
         help="Provider spec (default: ollama:qwen2.5:7b). Currently ollama and "
-             "OpenAI-compatible (groq/mistral/cohere) are supported.",
+        "OpenAI-compatible (groq/mistral/cohere) are supported.",
     )
 
     # Usage summary: print the rolling totals from /tmp/rgt_llm_usage.csv
@@ -227,15 +228,18 @@ def cmd_run(task: str, args) -> int:
         print()
 
     if args.dry_run:
-        reply = router.call(
-            task, "", system="", max_tokens=0, dry_run=True
+        reply = router.call(task, "", system="", max_tokens=0, dry_run=True)
+        print(
+            json.dumps(
+                {
+                    "task": task,
+                    "would_call_provider": reply.provider,
+                    "would_call_model": reply.model,
+                    "error": reply.error,
+                },
+                indent=2,
+            )
         )
-        print(json.dumps({
-            "task": task,
-            "would_call_provider": reply.provider,
-            "would_call_model": reply.model,
-            "error": reply.error,
-        }, indent=2))
         return 0 if reply.provider != "<chain-exhausted>" else 1
 
     prompt = read_prompt(args)
@@ -251,24 +255,32 @@ def cmd_run(task: str, args) -> int:
     )
 
     if args.json:
-        print(json.dumps({
-            "task": task,
-            "ok": reply.ok,
-            "provider": reply.provider,
-            "model": reply.model,
-            "input_tokens": reply.input_tokens,
-            "output_tokens": reply.output_tokens,
-            "total_tokens": reply.total_tokens,
-            "latency_ms": reply.latency_ms,
-            "text": reply.text,
-            "error": reply.error,
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    "task": task,
+                    "ok": reply.ok,
+                    "provider": reply.provider,
+                    "model": reply.model,
+                    "input_tokens": reply.input_tokens,
+                    "output_tokens": reply.output_tokens,
+                    "total_tokens": reply.total_tokens,
+                    "latency_ms": reply.latency_ms,
+                    "text": reply.text,
+                    "error": reply.error,
+                },
+                indent=2,
+            )
+        )
     else:
         if reply.ok:
             print(reply.text)
-            print(f"\n# {reply.provider}/{reply.model}  "
-                  f"in={reply.input_tokens} out={reply.output_tokens}  "
-                  f"{reply.latency_ms}ms", file=sys.stderr)
+            print(
+                f"\n# {reply.provider}/{reply.model}  "
+                f"in={reply.input_tokens} out={reply.output_tokens}  "
+                f"{reply.latency_ms}ms",
+                file=sys.stderr,
+            )
         else:
             print(f"ERROR: {reply.error}", file=sys.stderr)
 
@@ -311,8 +323,11 @@ def cmd_burn(args) -> int:
         return 2
 
     topics = args.topics or DEFAULT_BURN_TOPICS
-    print(f"Burning {args.provider}/{provider.model}: {args.calls} calls, "
-          f"max_tokens={args.max_tokens}, topics={len(topics)}", file=sys.stderr)
+    print(
+        f"Burning {args.provider}/{provider.model}: {args.calls} calls, "
+        f"max_tokens={args.max_tokens}, topics={len(topics)}",
+        file=sys.stderr,
+    )
 
     ok = 0
     errs = 0
@@ -325,32 +340,38 @@ def cmd_burn(args) -> int:
             f"You are helping drain a quota deliberately. "
             f"Provide a thorough, detailed response (the longer the better) "
             f"on the following topic. Include examples, edge cases, and "
-            f"practical recommendations.\n\nTopic #{i+1}: {topic}"
+            f"practical recommendations.\n\nTopic #{i + 1}: {topic}"
         )
         reply = provider.complete(
-            prompt, max_tokens=args.max_tokens, timeout=args.timeout,
+            prompt,
+            max_tokens=args.max_tokens,
+            timeout=args.timeout,
         )
         if reply.ok:
             ok += 1
             total_in += reply.input_tokens
             total_out += reply.output_tokens
-            print(f"[{i+1}/{args.calls}] {reply.provider}/{reply.model}  "
-                  f"in={reply.input_tokens} out={reply.output_tokens}  "
-                  f"{reply.latency_ms}ms  "
-                  f"total_in={total_in} total_out={total_out}",
-                  file=sys.stderr, flush=True)
+            print(
+                f"[{i + 1}/{args.calls}] {reply.provider}/{reply.model}  "
+                f"in={reply.input_tokens} out={reply.output_tokens}  "
+                f"{reply.latency_ms}ms  "
+                f"total_in={total_in} total_out={total_out}",
+                file=sys.stderr,
+                flush=True,
+            )
         else:
             errs += 1
-            print(f"[{i+1}/{args.calls}] ERROR: {reply.error}",
-                  file=sys.stderr, flush=True)
+            print(f"[{i + 1}/{args.calls}] ERROR: {reply.error}", file=sys.stderr, flush=True)
             time.sleep(min(5, 2 ** min(errs, 5)))
         if args.sleep:
             time.sleep(args.sleep)
 
     wall = int((time.time() - t_start) * 1000)
-    print(f"\n=== BURN DONE: {ok}/{args.calls} ok, {errs} errors, "
-          f"wall={wall}ms, tokens in={total_in} out={total_out} ===",
-          file=sys.stderr)
+    print(
+        f"\n=== BURN DONE: {ok}/{args.calls} ok, {errs} errors, "
+        f"wall={wall}ms, tokens in={total_in} out={total_out} ===",
+        file=sys.stderr,
+    )
     return 0 if ok > 0 else 1
 
 
@@ -358,6 +379,7 @@ def cmd_usage(_args) -> int:
     """Print usage + cost summary from /tmp/rgt_llm_usage.csv."""
     from scripts.llm import usage
     from scripts.llm import pricing
+
     print(usage.summary())
     print()
     print(pricing.cost_report(usage.totals()))
@@ -374,12 +396,14 @@ def cmd_stream(args) -> int:
     spec = args.provider
 
     if spec.startswith("ollama:"):
-        model = spec[len("ollama:"):]
+        model = spec[len("ollama:") :]
         # No way to know the base_url here without re-reading routes.yaml;
         # we default to localhost which covers 95% of usage.
         try:
             for chunk in stream_ollama(
-                "http://localhost:11434", model, prompt,
+                "http://localhost:11434",
+                model,
+                prompt,
                 system=system or None,
                 max_tokens=args.max_tokens,
                 timeout=args.timeout,
@@ -394,6 +418,7 @@ def cmd_stream(args) -> int:
     # OpenAI-compatible: groq, mistral, cohere
     if spec in ("groq", "mistral", "cohere"):
         import os
+
         key_env = {"groq": "GROQ_API_KEY", "mistral": "MISTRAL_API_KEY", "cohere": "COHERE_API_KEY"}[spec]
         key = os.environ.get(key_env)
         if not key:
@@ -412,7 +437,10 @@ def cmd_stream(args) -> int:
         extra = {"User-Agent": "hermes-llm-review/1.0"} if spec == "groq" else None
         try:
             for chunk in stream_openai_chat(
-                base_urls[spec], key, models[spec], prompt,
+                base_urls[spec],
+                key,
+                models[spec],
+                prompt,
                 system=system or None,
                 max_tokens=args.max_tokens,
                 timeout=args.timeout,
@@ -460,8 +488,10 @@ def _print_review(replies, big_label="BIG"):
             print(f"\n--- {spec}: ERROR {reply.error}")
             continue
         print(f"\n{'=' * 60}")
-        print(f"--- {spec} ({reply.provider}/{reply.model})  "
-              f"in={reply.input_tokens} out={reply.output_tokens}  {reply.latency_ms}ms")
+        print(
+            f"--- {spec} ({reply.provider}/{reply.model})  "
+            f"in={reply.input_tokens} out={reply.output_tokens}  {reply.latency_ms}ms"
+        )
         print(f"{'=' * 60}")
         print(reply.text)
 
@@ -503,30 +533,34 @@ def cmd_review(args) -> int:
     wall = int((time.time() - t0) * 1000)
 
     if args.json:
-        print(json.dumps({
-            "task": "review",
-            "big": big,
-            "small": smalls,
-            "wall_ms": wall,
-            "replies": [
+        print(
+            json.dumps(
                 {
-                    "spec": spec,
-                    "ok": r.ok,
-                    "provider": r.provider,
-                    "model": r.model,
-                    "latency_ms": r.latency_ms,
-                    "input_tokens": r.input_tokens,
-                    "output_tokens": r.output_tokens,
-                    "text": r.text,
-                    "error": r.error,
-                }
-                for spec, r in replies
-            ],
-        }, indent=2))
+                    "task": "review",
+                    "big": big,
+                    "small": smalls,
+                    "wall_ms": wall,
+                    "replies": [
+                        {
+                            "spec": spec,
+                            "ok": r.ok,
+                            "provider": r.provider,
+                            "model": r.model,
+                            "latency_ms": r.latency_ms,
+                            "input_tokens": r.input_tokens,
+                            "output_tokens": r.output_tokens,
+                            "text": r.text,
+                            "error": r.error,
+                        }
+                        for spec, r in replies
+                    ],
+                },
+                indent=2,
+            )
+        )
     else:
         _print_review(replies, big_label=big)
-        print(f"\n# wall: {wall}ms, big={big}, small={','.join(smalls)}",
-              file=sys.stderr)
+        print(f"\n# wall: {wall}ms, big={big}, small={','.join(smalls)}", file=sys.stderr)
 
     # exit 0 if at least one model succeeded
     return 0 if any(r.ok for _, r in replies) else 1
@@ -561,23 +595,28 @@ def cmd_fanout(args) -> int:
     wall = int((time.time() - t0) * 1000)
 
     if args.json:
-        print(json.dumps({
-            "wall_ms": wall,
-            "replies": [
+        print(
+            json.dumps(
                 {
-                    "spec": spec,
-                    "ok": r.ok,
-                    "provider": r.provider,
-                    "model": r.model,
-                    "latency_ms": r.latency_ms,
-                    "input_tokens": r.input_tokens,
-                    "output_tokens": r.output_tokens,
-                    "text": r.text,
-                    "error": r.error,
-                }
-                for spec, r in replies
-            ],
-        }, indent=2))
+                    "wall_ms": wall,
+                    "replies": [
+                        {
+                            "spec": spec,
+                            "ok": r.ok,
+                            "provider": r.provider,
+                            "model": r.model,
+                            "latency_ms": r.latency_ms,
+                            "input_tokens": r.input_tokens,
+                            "output_tokens": r.output_tokens,
+                            "text": r.text,
+                            "error": r.error,
+                        }
+                        for spec, r in replies
+                    ],
+                },
+                indent=2,
+            )
+        )
     else:
         _print_review(replies)
         print(f"\n# wall: {wall}ms", file=sys.stderr)

@@ -6,6 +6,7 @@ require extra setup. The ``--provider keyring`` flag selects the cross-platform
 Secret Service provider for local development. ``simulate`` deliberately does
 not need a master-secret provider because policy evaluation is pure logic.
 """
+
 import argparse
 import sys
 from pathlib import Path
@@ -85,6 +86,7 @@ def cmd_set(args: argparse.Namespace) -> int:
         return 0
     finally:
         from rgt_vault.crypto import zeroize_bytearray
+
         zeroize_bytearray(value)
 
 
@@ -139,6 +141,7 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     # Policy simulation does not touch secrets, so evaluate the engine
     # directly without requiring a master-secret provider.
     from rgt_vault.auth import ABACPolicyEngine
+
     policy_text = Path(args.policy).read_text()
     engine = ABACPolicyEngine(policy_text)
     decision = engine.evaluate(args.agent, args.namespace, args.purpose, action=args.action)
@@ -205,8 +208,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     # and might return empty even when secrets exist for other agents).
     with vault.storage._get_conn() as conn:
         rows = conn.execute(
-            "SELECT namespace, COUNT(*) FROM secrets WHERE status = 'ACTIVE' "
-            "GROUP BY namespace ORDER BY namespace"
+            "SELECT namespace, COUNT(*) FROM secrets WHERE status = 'ACTIVE' GROUP BY namespace ORDER BY namespace"
         ).fetchall()
     total = sum(n for _ns, n in rows)
     print(f"active secrets: {total}")
@@ -217,9 +219,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     total_audit = vault.storage.audit_log_count()
     print(f"audit rows:   {total_audit}")
     with vault.storage._get_conn() as conn:
-        last = conn.execute(
-            "SELECT action, timestamp, secret_name FROM audit_logs ORDER BY id DESC LIMIT 1"
-        ).fetchone()
+        last = conn.execute("SELECT action, timestamp, secret_name FROM audit_logs ORDER BY id DESC LIMIT 1").fetchone()
     if last is not None:
         last_action, last_ts, last_name = last
         print(f"last action:  {last_ts}  {last_action}  {last_name or '-'}")
@@ -249,7 +249,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             print("Token file already exists; not re-printing. Delete the file to mint a new one.")
             print("To see the token id (sha256 prefix) used in audit logs, run:")
             print(
-                "  python -c \"import hashlib; "
+                '  python -c "import hashlib; '
                 f"print(hashlib.sha256(open(r'{store_path}').read().strip().encode()).hexdigest()[:8])\""
             )
             return 0
@@ -268,8 +268,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         import uvicorn
     except ModuleNotFoundError:
         print(
-            "Error: the server requires the [server] extra. "
-            "Install it with: pip install 'rgt-vault[server]'",
+            "Error: the server requires the [server] extra. Install it with: pip install 'rgt-vault[server]'",
             file=sys.stderr,
         )
         return 1
@@ -313,11 +312,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Agent Vault CLI")
     parser.add_argument("--db", default="~/.secure-vault/vault.db", help="Path to vault.db")
     parser.add_argument(
-        "--policy", default=None,
+        "--policy",
+        default=None,
         help="Path to policy YAML (recommended; defaults to no policy = default-deny)",
     )
     parser.add_argument(
-        "--provider", default="keyring", choices=["keyring", "platform"],
+        "--provider",
+        default="keyring",
+        choices=["keyring", "platform"],
         help="Master-secret provider (default: keyring for dev convenience)",
     )
 
@@ -330,11 +332,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_set.add_argument("name", help="Secret name")
     value_group = p_set.add_mutually_exclusive_group(required=True)
     value_group.add_argument(
-        "-", dest="value", action="store_true",
+        "-",
+        dest="value",
+        action="store_true",
         help="Read the secret value from stdin (default for piping).",
     )
     value_group.add_argument(
-        "--value-file", dest="value_file", default=None,
+        "--value-file",
+        dest="value_file",
+        default=None,
         help="Read the secret value from a file (recommended for automation).",
     )
     p_set.add_argument("--namespace", default="default")
@@ -398,18 +404,23 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # init (generate the server bearer-token file)
     p_init = subparsers.add_parser("init", help="Generate the server bearer-token file")
-    p_init.add_argument("--token-file", default=None, help="Token file path (default: ~/.config/rgt-vault/server.token)")
+    p_init.add_argument(
+        "--token-file", default=None, help="Token file path (default: ~/.config/rgt-vault/server.token)"
+    )
     p_init.set_defaults(func=cmd_init)
 
     # serve (local HTTP server)
     p_serve = subparsers.add_parser("serve", help="Run the local HTTP server (requires [server] extra)")
     p_serve.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1, loopback only)")
     p_serve.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765)")
-    p_serve.add_argument("--token-file", default=None, help="Token file path (default: ~/.config/rgt-vault/server.token)")
     p_serve.add_argument(
-        "--allow-private-network", action="store_true",
+        "--token-file", default=None, help="Token file path (default: ~/.config/rgt-vault/server.token)"
+    )
+    p_serve.add_argument(
+        "--allow-private-network",
+        action="store_true",
         help="Permit built-in HTTP actions to call loopback / private addresses. "
-             "Default: off. Only enable on trusted networks.",
+        "Default: off. Only enable on trusted networks.",
     )
     p_serve.set_defaults(func=cmd_serve)
 
@@ -433,6 +444,7 @@ def main() -> int:
         # users can run with `RGT_VAULT_DEBUG=1` to get one.
         import os
         import traceback
+
         msg = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
         print(f"Unexpected error: {msg}", file=sys.stderr)
         if os.environ.get("RGT_VAULT_DEBUG"):

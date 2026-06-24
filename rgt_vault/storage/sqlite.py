@@ -55,7 +55,7 @@ class StorageBackend:
 
         for sql_file in sorted(migrations_dir.glob("*.sql")):
             try:
-                version = int(sql_file.name.split('_')[0])
+                version = int(sql_file.name.split("_")[0])
             except ValueError:
                 continue
 
@@ -79,23 +79,23 @@ class StorageBackend:
 
     def _init_db(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        if os.name == 'posix':
+        if os.name == "posix":
             try:
                 os.chmod(self.db_path.parent, 0o700)
             except OSError:
-                pass # Non-fatal if we don't own the parent dir
+                pass  # Non-fatal if we don't own the parent dir
 
         is_new_db = not self.db_path.exists()
-            
+
         with self._get_conn() as conn:
             self._apply_migrations(conn)
-            
-        if is_new_db and os.name == 'posix':
+
+        if is_new_db and os.name == "posix":
             try:
                 os.chmod(self.db_path, 0o600)
             except OSError:
                 pass
-                
+
     def get_vault_id(self) -> str:
         with self._get_conn() as conn:
             cursor = conn.cursor()
@@ -107,7 +107,7 @@ class StorageBackend:
             cursor.execute("INSERT INTO metadata (key, value) VALUES ('vault_id', ?)", (new_id,))
             conn.commit()
             return new_id
-            
+
     def get_key_epoch(self) -> int:
         with self._get_conn() as conn:
             cursor = conn.cursor()
@@ -118,7 +118,7 @@ class StorageBackend:
             cursor.execute("INSERT INTO metadata (key, value) VALUES ('key_epoch', '1')")
             conn.commit()
             return 1
-            
+
     def increment_key_epoch(self) -> int:
         current = self.get_key_epoch()
         new_epoch = current + 1
@@ -135,7 +135,9 @@ class StorageBackend:
             row = cursor.fetchone()
             return row[0] if row else None
 
-    def log_audit(self, action: str, secret_name: Optional[str] = None, details: str = "", policy_hash: str = "") -> None:
+    def log_audit(
+        self, action: str, secret_name: Optional[str] = None, details: str = "", policy_hash: str = ""
+    ) -> None:
         timestamp = _utcnow_iso()
         # Read-prev-then-insert must be atomic, or concurrent writers fork the
         # hash chain. We take a process-level lock (in-process serialization)
@@ -150,10 +152,13 @@ class StorageBackend:
                 prev_hash = row[0] if row else ""
                 raw = f"{prev_hash}|{timestamp}|{action}|{secret_name or ''}|{details}|{policy_hash}"
                 entry_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO audit_logs (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash))
+                """,
+                    (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash),
+                )
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -187,7 +192,15 @@ class StorageBackend:
             (n,) = cursor.execute("SELECT COUNT(*) FROM audit_logs").fetchone()
             return int(n)
 
-    def set_secret(self, namespace: str, name: str, ciphertext: bytes, dek_version: int, secret_id: Optional[str] = None, policy_hash: str = "") -> None:
+    def set_secret(
+        self,
+        namespace: str,
+        name: str,
+        ciphertext: bytes,
+        dek_version: int,
+        secret_id: Optional[str] = None,
+        policy_hash: str = "",
+    ) -> None:
         checksum = hashlib.sha256(ciphertext).hexdigest()
         now = _utcnow_iso()
         if not secret_id:
@@ -203,28 +216,39 @@ class StorageBackend:
                 # half-applied state.
                 cursor.execute("BEGIN IMMEDIATE")
                 # If secret exists, inherit secret_id
-                cursor.execute("SELECT secret_id FROM secrets WHERE namespace = ? AND name = ? LIMIT 1", (namespace, name))
+                cursor.execute(
+                    "SELECT secret_id FROM secrets WHERE namespace = ? AND name = ? LIMIT 1", (namespace, name)
+                )
                 row = cursor.fetchone()
                 if row:
                     secret_id = row[0]
 
-                cursor.execute("UPDATE secrets SET status = 'SUPERSEDED' WHERE namespace = ? AND name = ? AND status = 'ACTIVE'", (namespace, name))
+                cursor.execute(
+                    "UPDATE secrets SET status = 'SUPERSEDED' WHERE namespace = ? AND name = ? AND status = 'ACTIVE'",
+                    (namespace, name),
+                )
                 cursor.execute("SELECT MAX(version) FROM secrets WHERE namespace = ? AND name = ?", (namespace, name))
                 row = cursor.fetchone()
                 next_version = (row[0] + 1) if row and row[0] is not None else 1
 
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO secrets (secret_id, namespace, name, version, ciphertext, checksum, created_at, updated_at, status, dek_version)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
-                """, (secret_id, namespace, name, next_version, ciphertext, checksum, now, now, dek_version))
+                """,
+                    (secret_id, namespace, name, next_version, ciphertext, checksum, now, now, dek_version),
+                )
 
                 # P2-4 audit fix: write the audit entry inside the same
                 # transaction as the secret insert. If either fails, the
                 # other rolls back -- a write that's logged but didn't
                 # happen (or vice versa) would be an integrity gap.
                 self._append_audit_in_tx(
-                    cursor, "SET_SECRET", name,
-                    f"Version {next_version} created in {namespace}", policy_hash,
+                    cursor,
+                    "SET_SECRET",
+                    name,
+                    f"Version {next_version} created in {namespace}",
+                    policy_hash,
                 )
                 conn.commit()
                 return
@@ -232,7 +256,9 @@ class StorageBackend:
                 conn.rollback()
                 raise
 
-    def get_secret(self, namespace: str, name: str, version: Optional[int] = None, policy_hash: str = "") -> Optional[Tuple[bytes, int]]:
+    def get_secret(
+        self, namespace: str, name: str, version: Optional[int] = None, policy_hash: str = ""
+    ) -> Optional[Tuple[bytes, int]]:
         # P0-5 audit fix: combine the read and the audit-log write into one
         # transaction. If the audit write fails (disk full, DB locked, etc.),
         # the read is rolled back too -- an unlogged read is a silent
@@ -243,15 +269,21 @@ class StorageBackend:
             try:
                 cursor.execute("BEGIN IMMEDIATE")
                 if version is not None:
-                    cursor.execute("""
+                    cursor.execute(
+                        """
                         SELECT ciphertext, checksum, dek_version FROM secrets
                         WHERE namespace = ? AND name = ? AND version = ?
-                    """, (namespace, name, version))
+                    """,
+                        (namespace, name, version),
+                    )
                 else:
-                    cursor.execute("""
+                    cursor.execute(
+                        """
                         SELECT ciphertext, checksum, dek_version FROM secrets
                         WHERE namespace = ? AND name = ? AND status = 'ACTIVE' ORDER BY version DESC LIMIT 1
-                    """, (namespace, name))
+                    """,
+                        (namespace, name),
+                    )
 
                 row = cursor.fetchone()
 
@@ -261,14 +293,19 @@ class StorageBackend:
                         # Audit the failure and commit -- the integrity
                         # violation is recorded, then surface the error.
                         self._append_audit_in_tx(
-                            cursor, "GET_SECRET_FAILED", name,
-                            "Checksum mismatch", policy_hash,
+                            cursor,
+                            "GET_SECRET_FAILED",
+                            name,
+                            "Checksum mismatch",
+                            policy_hash,
                         )
                         conn.commit()
                         raise ChecksumError(f"Integrity check failed for secret '{namespace}/{name}'")
 
                     self._append_audit_in_tx(
-                        cursor, "GET_SECRET", name,
+                        cursor,
+                        "GET_SECRET",
+                        name,
                         f"Version {'latest' if version is None else version} accessed from {namespace}",
                         policy_hash,
                     )
@@ -276,8 +313,11 @@ class StorageBackend:
                     return ciphertext, dek_version
 
                 self._append_audit_in_tx(
-                    cursor, "GET_SECRET_FAILED", name,
-                    f"Secret not found in {namespace}", policy_hash,
+                    cursor,
+                    "GET_SECRET_FAILED",
+                    name,
+                    f"Secret not found in {namespace}",
+                    policy_hash,
                 )
                 conn.commit()
                 return None
@@ -285,8 +325,9 @@ class StorageBackend:
                 conn.rollback()
                 raise
 
-    def _append_audit_in_tx(self, cursor, action: str, secret_name: Optional[str],
-                            details: str, policy_hash: str) -> None:
+    def _append_audit_in_tx(
+        self, cursor, action: str, secret_name: Optional[str], details: str, policy_hash: str
+    ) -> None:
         """Append an audit entry inside an already-open transaction.
 
         Used by ``get_secret``, ``set_secret``, ``revoke_secret``, and
@@ -301,31 +342,39 @@ class StorageBackend:
         prev_hash = prev_row[0] if prev_row else ""
         raw = f"{prev_hash}|{timestamp}|{action}|{secret_name or ''}|{details}|{policy_hash}"
         entry_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT INTO audit_logs (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash))
+        """,
+            (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash),
+        )
 
     def list_secrets(self, namespace: str, policy_hash: str = "") -> List[Dict[str, Any]]:
         with self._get_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT secret_id, name, version, created_at, updated_at, status
                 FROM secrets
                 WHERE namespace = ? AND status = 'ACTIVE'
-            """, (namespace,))
+            """,
+                (namespace,),
+            )
             rows = cursor.fetchall()
 
             secrets = []
             for row in rows:
-                secrets.append({
-                    "secret_id": row[0],
-                    "name": row[1],
-                    "latest_version": row[2],
-                    "created_at": row[3],
-                    "updated_at": row[4],
-                    "status": row[5],
-                })
+                secrets.append(
+                    {
+                        "secret_id": row[0],
+                        "name": row[1],
+                        "latest_version": row[2],
+                        "created_at": row[3],
+                        "updated_at": row[4],
+                        "status": row[5],
+                    }
+                )
 
         self.log_audit("LIST_SECRETS", None, f"Listed {len(secrets)} secrets in {namespace}", policy_hash)
         return secrets
@@ -358,7 +407,7 @@ class StorageBackend:
                 cursor.execute("BEGIN IMMEDIATE")
                 cursor.execute(
                     "UPDATE secrets SET ciphertext = ?, checksum = ?, dek_version = ? WHERE id = ?",
-                    (new_ciphertext, new_checksum, new_dek_version, record_id)
+                    (new_ciphertext, new_checksum, new_dek_version, record_id),
                 )
                 conn.commit()
             except Exception:
@@ -381,12 +430,15 @@ class StorageBackend:
             try:
                 cursor.execute("BEGIN IMMEDIATE")
                 rows = cursor.execute(
-                    "SELECT id, namespace, name, ciphertext, dek_version "
-                    "FROM secrets WHERE status = 'ACTIVE'"
+                    "SELECT id, namespace, name, ciphertext, dek_version FROM secrets WHERE status = 'ACTIVE'"
                 ).fetchall()
                 for record_id, namespace, name, ciphertext, dek_version in rows:
                     new_ct, new_ver = rewrite_fn(
-                        record_id, namespace, name, ciphertext, dek_version,
+                        record_id,
+                        namespace,
+                        name,
+                        ciphertext,
+                        dek_version,
                     )
                     new_checksum = hashlib.sha256(new_ct).hexdigest()
                     cursor.execute(
@@ -407,15 +459,11 @@ class StorageBackend:
             secrets = []
             for r in cursor.execute("SELECT * FROM secrets").fetchall():
                 d = dict(r)
-                d["ciphertext"] = base64.b64encode(d["ciphertext"]).decode('utf-8')
+                d["ciphertext"] = base64.b64encode(d["ciphertext"]).decode("utf-8")
                 secrets.append(d)
             audit = [dict(r) for r in cursor.execute("SELECT * FROM audit_logs").fetchall()]
             honeytokens = [dict(r) for r in cursor.execute("SELECT * FROM honeytokens").fetchall()]
-            return {
-                "secrets": secrets,
-                "audit_logs": audit,
-                "honeytokens": honeytokens
-            }
+            return {"secrets": secrets, "audit_logs": audit, "honeytokens": honeytokens}
 
     def import_data(self, data: Dict[str, Any], master_key: Optional[bytes] = None) -> None:
         if not isinstance(data, dict):
@@ -448,27 +496,52 @@ class StorageBackend:
                     ct = base64.b64decode(s["ciphertext"], validate=True)
                 except Exception as e:
                     raise ValueError(f"Failed to decode ciphertext: {e}")
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO secrets (id, secret_id, namespace, name, version, ciphertext, checksum, created_at, updated_at, status, dek_version)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (s["id"], s.get("secret_id", str(uuid.uuid4())), s.get("namespace", "default"), s["name"], s.get("version", 1), ct, s.get("checksum", ""),
-                      s.get("created_at", ""), s.get("updated_at", ""), s.get("status", "ACTIVE" if s.get("is_current") == 1 else "SUPERSEDED"), s.get("dek_version", 1)))
-            
+                """,
+                    (
+                        s["id"],
+                        s.get("secret_id", str(uuid.uuid4())),
+                        s.get("namespace", "default"),
+                        s["name"],
+                        s.get("version", 1),
+                        ct,
+                        s.get("checksum", ""),
+                        s.get("created_at", ""),
+                        s.get("updated_at", ""),
+                        s.get("status", "ACTIVE" if s.get("is_current") == 1 else "SUPERSEDED"),
+                        s.get("dek_version", 1),
+                    ),
+                )
+
             for a in audit_logs:
                 if not isinstance(a, dict) or "id" not in a or "action" not in a or "entry_hash" not in a:
                     raise ValueError("Malformed audit log entry in import data")
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO audit_logs (id, action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (a["id"], a["action"], a.get("secret_name"), a.get("timestamp", ""),
-                      a.get("details", ""), a.get("prev_hash", ""), a["entry_hash"], a.get("policy_hash", "")))
-            
+                """,
+                    (
+                        a["id"],
+                        a["action"],
+                        a.get("secret_name"),
+                        a.get("timestamp", ""),
+                        a.get("details", ""),
+                        a.get("prev_hash", ""),
+                        a["entry_hash"],
+                        a.get("policy_hash", ""),
+                    ),
+                )
+
             for h in honeytokens:
                 if not isinstance(h, dict) or "name" not in h:
                     raise ValueError("Malformed honeytoken entry in import data")
                 cursor.execute(
                     "INSERT INTO honeytokens (namespace, name) VALUES (?, ?)",
-                    (h.get("namespace", "default"), h["name"])
+                    (h.get("namespace", "default"), h["name"]),
                 )
             conn.commit()
 
@@ -479,13 +552,15 @@ class StorageBackend:
             try:
                 cursor.execute("BEGIN IMMEDIATE")
                 cursor.execute(
-                    "UPDATE secrets SET status = 'REVOKED' "
-                    "WHERE namespace = ? AND name = ? AND status = 'ACTIVE'",
+                    "UPDATE secrets SET status = 'REVOKED' WHERE namespace = ? AND name = ? AND status = 'ACTIVE'",
                     (namespace, name),
                 )
                 self._append_audit_in_tx(
-                    cursor, "REVOKE_SECRET", name,
-                    f"Revoked active secret in {namespace}", policy_hash,
+                    cursor,
+                    "REVOKE_SECRET",
+                    name,
+                    f"Revoked active secret in {namespace}",
+                    policy_hash,
                 )
                 conn.commit()
             except Exception:

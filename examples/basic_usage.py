@@ -3,6 +3,7 @@
 Uses KeyringProvider (cross-platform OS keyring) so it runs out of the box.
 For production, seal the master secret with a platform provider (DPAPI/TPM).
 """
+
 import tempfile
 import os
 
@@ -44,8 +45,7 @@ def main():
 
         # 3. Store a secret (as admin).
         print("Setting secret...")
-        vault.set_secret("OPENAI_API_KEY", "sk-1234567890abcdef",
-                         namespace="openai", agent="admin")
+        vault.set_secret("OPENAI_API_KEY", "sk-1234567890abcdef", namespace="openai", agent="admin")
 
         # 4. Fingerprint (debug aid; never reveals plaintext).
         print(f"Fingerprint: {vault.get_fingerprint('OPENAI_API_KEY', namespace='openai')}")

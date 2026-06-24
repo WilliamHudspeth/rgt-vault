@@ -10,30 +10,21 @@ from .base import MasterSecretProvider
 class TPMError(Exception):
     """Raised when a TPM operation fails."""
 
+
 def _run_tpm_cmd(args: List[str], cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
     try:
-        result = subprocess.run(
-            args,
-            capture_output=True,
-            text=True,
-            cwd=str(cwd) if cwd else None,
-            check=False
-        )
+        result = subprocess.run(args, capture_output=True, text=True, cwd=str(cwd) if cwd else None, check=False)
         if result.returncode != 0:
-            raise TPMError(
-                f"TPM command failed: {' '.join(args)}\n"
-                f"stdout: {result.stdout}\nstderr: {result.stderr}"
-            )
+            raise TPMError(f"TPM command failed: {' '.join(args)}\nstdout: {result.stdout}\nstderr: {result.stderr}")
         return result
     except FileNotFoundError:
-        raise TPMError(
-            "tpm2-tools not found. Please install: sudo apt install tpm2-tools"
-        )
+        raise TPMError("tpm2-tools not found. Please install: sudo apt install tpm2-tools")
     except PermissionError:
         raise TPMError(
             "Permission denied. Ensure you have access to the TPM device "
             "(/dev/tpmrm0) or run with appropriate privileges (e.g., tpm2_* group)."
         )
+
 
 class LinuxTPMProvider(MasterSecretProvider):
     def __init__(
@@ -41,7 +32,7 @@ class LinuxTPMProvider(MasterSecretProvider):
         sealed_private_path: str,
         sealed_public_path: str,
         pcr_bank: str = "sha256",
-        tpm_device: str = "/dev/tpmrm0"
+        tpm_device: str = "/dev/tpmrm0",
     ):
         self.private_path = Path(sealed_private_path)
         self.public_path = Path(sealed_public_path)
@@ -64,9 +55,7 @@ class LinuxTPMProvider(MasterSecretProvider):
         self.pcr_list = [0, 7]
         if pcr_file.is_file():
             try:
-                self.pcr_list = [
-                    int(x) for x in pcr_file.read_text().strip().split()
-                ]
+                self.pcr_list = [int(x) for x in pcr_file.read_text().strip().split()]
                 if not self.pcr_list:
                     self.pcr_list = [0, 7]
             except (OSError, ValueError):
@@ -114,42 +103,65 @@ class LinuxTPMProvider(MasterSecretProvider):
             # We deliberately do NOT pass -T here: tpm2-tools' built-in
             # TCTI auto-discovery is more reliable than the explicit
             # -T /dev/tpmrm0 form when invoked via subprocess.
-            _run_tpm_cmd([
-                "tpm2_createprimary",
-                "-C", "o",
-                "-G", "rsa",
-                "-c", primary_ctx,
-            ])
+            _run_tpm_cmd(
+                [
+                    "tpm2_createprimary",
+                    "-C",
+                    "o",
+                    "-G",
+                    "rsa",
+                    "-c",
+                    primary_ctx,
+                ]
+            )
 
-            _run_tpm_cmd([
-                "tpm2_load",
-                "-C", primary_ctx,
-                "-u", str(self.public_path),
-                "-r", str(self.private_path),
-                "-c", ctx_path,
-            ])
+            _run_tpm_cmd(
+                [
+                    "tpm2_load",
+                    "-C",
+                    primary_ctx,
+                    "-u",
+                    str(self.public_path),
+                    "-r",
+                    str(self.private_path),
+                    "-c",
+                    ctx_path,
+                ]
+            )
 
             # Build a policy session explicitly. The shorthand
             # `tpm2_unseal -p pcr:sha256:0,7` is unreliable in modern
             # tpm2-tools when more than one PCR is listed; the explicit
             # session path is the supported pattern.
             pcr_spec = "+".join(f"{self.pcr_bank}:{p}" for p in self.pcr_list)
-            _run_tpm_cmd([
-                "tpm2_startauthsession",
-                "--policy-session",
-                "-S", session_path,
-            ])
-            _run_tpm_cmd([
-                "tpm2_policypcr",
-                "-S", session_path,
-                "-l", pcr_spec,
-            ])
-            _run_tpm_cmd([
-                "tpm2_unseal",
-                "-c", ctx_path,
-                "-o", out_path,
-                "-p", f"session:{session_path}",
-            ])
+            _run_tpm_cmd(
+                [
+                    "tpm2_startauthsession",
+                    "--policy-session",
+                    "-S",
+                    session_path,
+                ]
+            )
+            _run_tpm_cmd(
+                [
+                    "tpm2_policypcr",
+                    "-S",
+                    session_path,
+                    "-l",
+                    pcr_spec,
+                ]
+            )
+            _run_tpm_cmd(
+                [
+                    "tpm2_unseal",
+                    "-c",
+                    ctx_path,
+                    "-o",
+                    out_path,
+                    "-p",
+                    f"session:{session_path}",
+                ]
+            )
 
             with open(out_path, "rb") as f:
                 secret = f.read()
@@ -167,19 +179,19 @@ class LinuxTPMProvider(MasterSecretProvider):
                     pass
             for handle in (ctx_path, primary_ctx, session_path):
                 try:
-                    _run_tpm_cmd([
-                        "tpm2_flushcontext",
-                        "-c", handle,
-                    ])
+                    _run_tpm_cmd(
+                        [
+                            "tpm2_flushcontext",
+                            "-c",
+                            handle,
+                        ]
+                    )
                 except TPMError:
                     pass
 
 
 def seal_master_secret(
-    master_secret: bytes,
-    output_dir: str,
-    pcr_list: List[int] = [0, 7],
-    pcr_bank: str = "sha256"
+    master_secret: bytes, output_dir: str, pcr_list: List[int] = [0, 7], pcr_bank: str = "sha256"
 ) -> tuple[Path, Path]:
     """Seal a master secret to a PCR policy.
 
@@ -219,32 +231,49 @@ def seal_master_secret(
         # accept the comma form, so this is the only place that needs '+'.
         pcr_spec = "+".join(f"{pcr_bank}:{p}" for p in pcr_list)
 
-        _run_tpm_cmd([
-            "tpm2_createpolicy",
-            "--policy-pcr",
-            "-l", pcr_spec,
-            "-L", policy_digest_path,
-        ])
+        _run_tpm_cmd(
+            [
+                "tpm2_createpolicy",
+                "--policy-pcr",
+                "-l",
+                pcr_spec,
+                "-L",
+                policy_digest_path,
+            ]
+        )
 
         # Create a transient RSA primary under the owner hierarchy. Modern
         # tpm2-tools (>=5.0) refuses the legacy transient handle 0x40000001,
         # so we go through an explicit primary context instead.
-        _run_tpm_cmd([
-            "tpm2_createprimary",
-            "-C", "o",
-            "-G", "rsa",
-            "-c", primary_ctx,
-        ])
+        _run_tpm_cmd(
+            [
+                "tpm2_createprimary",
+                "-C",
+                "o",
+                "-G",
+                "rsa",
+                "-c",
+                primary_ctx,
+            ]
+        )
 
-        _run_tpm_cmd([
-            "tpm2_create",
-            "-C", primary_ctx,
-            "-i", secret_file,
-            "-u", str(public_path),
-            "-r", str(private_path),
-            "-L", policy_digest_path,
-            "-g", "sha256",
-        ])
+        _run_tpm_cmd(
+            [
+                "tpm2_create",
+                "-C",
+                primary_ctx,
+                "-i",
+                secret_file,
+                "-u",
+                str(public_path),
+                "-r",
+                str(private_path),
+                "-L",
+                policy_digest_path,
+                "-g",
+                "sha256",
+            ]
+        )
 
         # Persist the PCR list next to the blobs so the unseal code can
         # reconstruct the same policy. Without this, the provider would
@@ -269,7 +298,8 @@ def seal_master_secret(
         try:
             subprocess.run(
                 ["tpm2_flushcontext", "-t"],
-                capture_output=True, check=False,
+                capture_output=True,
+                check=False,
             )
         except FileNotFoundError:
             pass

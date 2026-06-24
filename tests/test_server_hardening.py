@@ -9,6 +9,7 @@ Covers:
   - P0-5: response body cap
   - P1-3/P1-4: cmd_init does not print the existing token
 """
+
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -64,9 +65,11 @@ def _authed(app, token):
 # P0-1 / P0-3 / P0-4: SSRF protection
 # ------------------------------------------------------------------
 
+
 class _SSRFHandler(BaseHTTPRequestHandler):
     """Records requests and replies with a fixed body so we can see
     whether the vault reached us (and prove the SSRF was prevented)."""
+
     received: list = []
 
     def do_GET(self):
@@ -192,10 +195,15 @@ def test_server_allows_loopback_when_opted_in(loopback_http_server):
 
     with tempfile.TemporaryDirectory() as td:
         import keyring as real_keyring  # noqa
+
         # Stub provider
         class _B:
-            def get_secret(self): return b"\x05" * 32
-            def rotate_secret(self): return b"\x05" * 32
+            def get_secret(self):
+                return b"\x05" * 32
+
+            def rotate_secret(self):
+                return b"\x05" * 32
+
         v = VaultManager(
             db_path=os.path.join(td, "vault.db"),
             policy_yaml=POLICY,
@@ -249,6 +257,7 @@ def test_server_blocks_openai_chat_base_url_ssrf(server):
 # P0-2: Action errors do not leak raw exception text
 # ------------------------------------------------------------------
 
+
 def test_action_exception_message_does_not_leak_text(server):
     """If a built-in action raises with text that includes the secret,
     the HTTP response must NOT include that text. Only an opaque error
@@ -297,8 +306,12 @@ def test_unexpected_action_exception_is_sanitized(server, monkeypatch):
     from rgt_vault.vault import VaultManager
 
     class _B:
-        def get_secret(self): return b"\x06" * 32
-        def rotate_secret(self): return b"\x06" * 32
+        def get_secret(self):
+            return b"\x06" * 32
+
+        def rotate_secret(self):
+            return b"\x06" * 32
+
     with tempfile.TemporaryDirectory() as td:
         v = VaultManager(
             db_path=os.path.join(td, "vault.db"),
@@ -309,12 +322,14 @@ def test_unexpected_action_exception_is_sanitized(server, monkeypatch):
         st = TokenStore(os.path.join(td, "server.token"))
         st.write(tok)
         reg = ActionRegistry()
-        reg.register(ActionSpec(
-            name="echo",
-            fn=evil_echo,
-            description="evil",
-            params_schema=[],
-        ))
+        reg.register(
+            ActionSpec(
+                name="echo",
+                fn=evil_echo,
+                description="evil",
+                params_schema=[],
+            )
+        )
         new_app = build_app(v, st, reg)
         c2 = TestClient(new_app)
         c2.headers["Authorization"] = f"Bearer {tok}"
@@ -337,6 +352,7 @@ def test_unexpected_action_exception_is_sanitized(server, monkeypatch):
 # P0-4: scheme allow-list
 # ------------------------------------------------------------------
 
+
 def test_validate_headers_strips_host_header():
     """Caller-supplied Host headers must be dropped; urllib sets the right one."""
     out = _validate_headers({"Host": "evil.example", "X-Trace": "abc"})
@@ -353,15 +369,20 @@ def test_validate_headers_rejects_non_dict():
 # P1-3 / P1-4: cmd_init does not print existing tokens
 # ------------------------------------------------------------------
 
+
 def test_cmd_init_prints_new_token(capsys, tmp_path, monkeypatch):
     """``rgt-vault init`` prints the new token only if it just created one."""
     from click.testing import CliRunner  # noqa
+
     # We don't actually invoke the CLI here -- invoke directly via the
     # main() function so we can assert the output.
     import sys
-    monkeypatch.setattr(sys, "argv", ["rgt-vault", "--db", str(tmp_path / "v.db"), "init",
-                                      "--token-file", str(tmp_path / "tok")])
+
+    monkeypatch.setattr(
+        sys, "argv", ["rgt-vault", "--db", str(tmp_path / "v.db"), "init", "--token-file", str(tmp_path / "tok")]
+    )
     from rgt_vault.cli import main
+
     rc = main()
     assert rc == 0
     out = capsys.readouterr().out
@@ -376,20 +397,22 @@ def test_cmd_init_does_not_print_existing_token(capsys, tmp_path, monkeypatch):
     """Running init twice must NOT re-print the existing token. The first
     run creates the file and prints it; the second run should say "already
     initialized" and not echo the token."""
-    monkeypatch.setattr("sys.argv", ["rgt-vault", "--db", str(tmp_path / "v.db"), "init",
-                                      "--token-file", str(tmp_path / "tok")])
+    monkeypatch.setattr(
+        "sys.argv", ["rgt-vault", "--db", str(tmp_path / "v.db"), "init", "--token-file", str(tmp_path / "tok")]
+    )
     from rgt_vault.cli import main
+
     rc = main()
     assert rc == 0
     first_out = capsys.readouterr().out
-    first_token = [line for line in first_out.splitlines() if line.startswith("Bearer token:")][0].split(": ", 1)[1].strip()
+    first_token = (
+        [line for line in first_out.splitlines() if line.startswith("Bearer token:")][0].split(": ", 1)[1].strip()
+    )
 
     # Second run: same file, same token, but it must NOT be re-printed.
     rc = main()
     assert rc == 0
     second_out = capsys.readouterr().out
-    assert first_token not in second_out, (
-        f"Existing token was re-printed on second init: {second_out!r}"
-    )
+    assert first_token not in second_out, f"Existing token was re-printed on second init: {second_out!r}"
     # The 'already initialized' hint should be present.
     assert "already" in second_out.lower() or "exists" in second_out.lower()

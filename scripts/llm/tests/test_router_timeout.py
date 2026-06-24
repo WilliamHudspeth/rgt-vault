@@ -117,7 +117,9 @@ def test_run_with_timeout_success_returns_reply():
     ok_provider = MagicMock()
     ok_provider.is_available.return_value = True
     ok_provider.complete.return_value = Reply(
-        text="hello", provider="good", model="g",
+        text="hello",
+        provider="good",
+        model="g",
     )
     r._get = MagicMock(return_value=ok_provider)
 

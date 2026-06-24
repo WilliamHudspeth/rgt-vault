@@ -3,6 +3,7 @@
 Offline. Uses a temp CSV path so the global /tmp/rgt_llm_usage.csv
 is never touched.
 """
+
 import unittest
 import tempfile
 from pathlib import Path
@@ -22,12 +23,9 @@ class UsageLogTests(unittest.TestCase):
         self.assertIn("p1,m1", text)
 
     def test_multiple_calls_aggregate(self):
-        usage.log(provider="p1", model="m1", input_tokens=10, output_tokens=20,
-                  latency_ms=100, ok=True, path=self.path)
-        usage.log(provider="p1", model="m1", input_tokens=5, output_tokens=15,
-                  latency_ms=200, ok=True, path=self.path)
-        usage.log(provider="p2", model="m2", input_tokens=1, output_tokens=1,
-                  latency_ms=50, ok=True, path=self.path)
+        usage.log(provider="p1", model="m1", input_tokens=10, output_tokens=20, latency_ms=100, ok=True, path=self.path)
+        usage.log(provider="p1", model="m1", input_tokens=5, output_tokens=15, latency_ms=200, ok=True, path=self.path)
+        usage.log(provider="p2", model="m2", input_tokens=1, output_tokens=1, latency_ms=50, ok=True, path=self.path)
         agg = usage.totals(self.path)
         self.assertEqual(agg[("p1", "m1")]["calls"], 2)
         self.assertEqual(agg[("p1", "m1")]["input_tokens"], 15)
@@ -37,21 +35,33 @@ class UsageLogTests(unittest.TestCase):
 
     def test_thread_safety(self):
         import threading
+
         def worker():
             for _ in range(50):
-                usage.log(provider="p1", model="m1", input_tokens=1,
-                          output_tokens=1, latency_ms=1, ok=True, path=self.path)
+                usage.log(
+                    provider="p1", model="m1", input_tokens=1, output_tokens=1, latency_ms=1, ok=True, path=self.path
+                )
+
         threads = [threading.Thread(target=worker) for _ in range(4)]
-        for t in threads: t.start()
-        for t in threads: t.join()
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
         agg = usage.totals(self.path)
         self.assertEqual(agg[("p1", "m1")]["calls"], 200)
 
     def test_summary_includes_all_rows(self):
-        usage.log(provider="a", model="x", input_tokens=1, output_tokens=1,
-                  latency_ms=10, ok=True, path=self.path)
-        usage.log(provider="b", model="y", input_tokens=2, output_tokens=2,
-                  latency_ms=20, ok=False, error="boom", path=self.path)
+        usage.log(provider="a", model="x", input_tokens=1, output_tokens=1, latency_ms=10, ok=True, path=self.path)
+        usage.log(
+            provider="b",
+            model="y",
+            input_tokens=2,
+            output_tokens=2,
+            latency_ms=20,
+            ok=False,
+            error="boom",
+            path=self.path,
+        )
         s = usage.summary(self.path)
         self.assertIn("a", s)
         self.assertIn("b", s)
@@ -70,12 +80,18 @@ class UsageLogTests(unittest.TestCase):
 
         def worker(pid: int, path: str, n: int) -> None:
             import sys
+
             sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
             from scripts.llm import usage as u
+
             for i in range(n):
                 u.log(
-                    provider=f"p{pid}", model=f"m{pid}",
-                    input_tokens=1, output_tokens=1, latency_ms=1, ok=True,
+                    provider=f"p{pid}",
+                    model=f"m{pid}",
+                    input_tokens=1,
+                    output_tokens=1,
+                    latency_ms=1,
+                    ok=True,
                     path=Path(path),
                 )
 
@@ -93,19 +109,33 @@ class UsageLogTests(unittest.TestCase):
         with open(self.path) as f:
             rows = list(_csv.DictReader(f))
         # Exactly n_per * 3 data rows, no duplicates, no interleaved header.
-        self.assertEqual(len(rows), 3 * n_per, f"expected {3*n_per} rows, got {len(rows)}")
+        self.assertEqual(len(rows), 3 * n_per, f"expected {3 * n_per} rows, got {len(rows)}")
         # All rows must have all 10 fields.
         for r in rows:
-            self.assertEqual(set(r.keys()), {
-                "ts", "provider", "model", "task_type", "spec",
-                "input_tokens", "output_tokens", "latency_ms", "ok", "error",
-            }, f"row has wrong fields: {r.keys()}")
+            self.assertEqual(
+                set(r.keys()),
+                {
+                    "ts",
+                    "provider",
+                    "model",
+                    "task_type",
+                    "spec",
+                    "input_tokens",
+                    "output_tokens",
+                    "latency_ms",
+                    "ok",
+                    "error",
+                },
+                f"row has wrong fields: {r.keys()}",
+            )
         # Count per (provider, model) must be exactly n_per.
         from collections import Counter
+
         c = Counter((r["provider"], r["model"]) for r in rows)
         for i in range(3):
-            self.assertEqual(c[(f"p{i}", f"m{i}")], n_per,
-                             f"provider p{i} got {c[(f'p{i}', f'm{i}')]} rows, want {n_per}")
+            self.assertEqual(
+                c[(f"p{i}", f"m{i}")], n_per, f"provider p{i} got {c[(f'p{i}', f'm{i}')]} rows, want {n_per}"
+            )
 
     def test_log_always_writes_even_on_zero_tokens(self):
         """OPUS-AFK-5: the old docstring said no-op on all-zero numeric

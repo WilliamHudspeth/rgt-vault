@@ -13,31 +13,20 @@ class MacOSKeychainProvider(MasterSecretProvider):
     def get_secret(self) -> bytes:
         try:
             result = subprocess.run(
-                [
-                    "security", "find-generic-password",
-                    "-s", self.service_name,
-                    "-a", self.account_name,
-                    "-w"
-                ],
+                ["security", "find-generic-password", "-s", self.service_name, "-a", self.account_name, "-w"],
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
             )
             secret = result.stdout.strip()
             if not secret:
                 raise PermissionError("Keychain item exists but password is empty.")
             return secret.encode("utf-8")
         except subprocess.CalledProcessError as e:
-            raise PermissionError(
-                f"Failed to read keychain item: {e.stderr.strip()}"
-            )
+            raise PermissionError(f"Failed to read keychain item: {e.stderr.strip()}")
 
-def seal_master_secret(
-    master_secret: bytes,
-    service_name: str,
-    account_name: str,
-    updatable: bool = False
-) -> None:
+
+def seal_master_secret(master_secret: bytes, service_name: str, account_name: str, updatable: bool = False) -> None:
     # mkstemp creates the file with 0o600 (owner read/write only), avoiding
     # the world-readable exposure that NamedTemporaryFile has on permissive umasks.
     fd, tmp_path = tempfile.mkstemp()
@@ -45,11 +34,16 @@ def seal_master_secret(
         with os.fdopen(fd, "w") as tmp:
             tmp.write(master_secret.decode("utf-8") if isinstance(master_secret, bytes) else master_secret)
         cmd = [
-            "security", "add-generic-password",
-            "-s", service_name,
-            "-a", account_name,
-            "-w", tmp_path,
-            "-T", "/usr/bin/security"
+            "security",
+            "add-generic-password",
+            "-s",
+            service_name,
+            "-a",
+            account_name,
+            "-w",
+            tmp_path,
+            "-T",
+            "/usr/bin/security",
         ]
         if updatable:
             cmd.append("-U")
