@@ -54,17 +54,26 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/wshb/rgt-vault"
-Repository = "https://github.com/wshb/rgt-vault"
-Issues = "https://github.com/wshb/rgt-vault/issues"
-Changelog = "https://github.com/wshb/rgt-vault/blob/main/CHANGELOG.md"
-Security = "https://github.com/wshb/rgt-vault/blob/main/SECURITY.md"
+Homepage = "https://github.com/WilliamHudspeth/rgt-vault"
+Repository = "https://github.com/WilliamHudspeth/rgt-vault"
+Issues = "https://github.com/WilliamHudspeth/rgt-vault/issues"
+Changelog = "https://github.com/WilliamHudspeth/rgt-vault/blob/master/CHANGELOG.md"
+Security = "https://github.com/WilliamHudspeth/rgt-vault/blob/master/SECURITY.md"
 
 [project.scripts]
 rgt-vault = "rgt_vault.cli:main"
 
-[tool.setuptools.packages.find]
-include = ["rgt_vault*"]
+[tool.setuptools]
+packages = [
+    "rgt_vault",
+    "rgt_vault.hooks",
+    "rgt_vault.providers",
+    "rgt_vault.server",
+    "rgt_vault.storage",
+]
+
+[tool.setuptools.package-dir]
+rgt_vault = "python"
 
 [tool.setuptools.package-data]
 "rgt_vault.storage" = ["migrations/*.sql"]

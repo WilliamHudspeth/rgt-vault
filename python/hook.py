@@ -788,12 +788,17 @@ class WebhookHook(AuditHook):
 # --------------------------------------------------------------------
 
 
-def install_freeze_signal_handler(hook: AuditHook, *, sig: int = signal.SIGUSR1) -> None:
+def install_freeze_signal_handler(hook: AuditHook, *, sig: Optional[int] = None) -> None:
     """Install a POSIX signal handler that toggles the hook's frozen
     state. ``kill -USR1 <pid>`` freezes; ``kill -USR2 <pid>`` unfreezes.
 
+    On Windows, POSIX signals are unavailable; this function is a no-op.
     Idempotent; safe to call multiple times (overwrites prior handler).
     """
+    if sig is None:
+        sig = getattr(signal, "SIGUSR1", None)
+    if sig is None:
+        return  # Windows — no POSIX signals
 
     def _usr1(_signum, _frame):
         hook.freeze(reason="USR1 signal")
