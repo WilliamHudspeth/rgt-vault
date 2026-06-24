@@ -1,31 +1,31 @@
-# rgt-vault Documentation
+# RGT Vault Documentation
 
-Welcome to the `rgt-vault` documentation. This directory has been reorganized to make it easier to navigate.
+Welcome to the RGT Vault documentation. This hub points to all resources necessary for understanding, adopting, and maintaining RGT Vault.
 
-## 🏗️ Architecture
-- [Core Architecture](architecture/core-architecture.md)
-- [Capability Security](architecture/capability-security.md)
-- [Enterprise Security Requirements](architecture/requirements-enterprise-security.md)
+## Navigation
 
-## 🛡️ Security & Threat Model
-- [Threat Model](security/threat-model.md)
-- [Root SECURITY.md](../SECURITY.md)
+* **[Getting Started](getting-started/)**
+  * [Installation](getting-started/installation.md)
+  * Quickstart (coming soon)
 
-## 📖 Guides
-- [Usage Guide (CLI, Python API, Policies)](guides/usage.md)
-- [Installation Guide](guides/install.md)
-- [MCP Integration](guides/mcp.md)
-- [Migration Guide (v0.2 -> v0.3)](guides/migration.md)
+* **[Concepts](concepts/)**
+  * Capabilities (coming soon)
+  * Security Model (coming soon)
+  * Threat Model (coming soon)
 
-## 🔍 Audits
-- [Audit v0.1](audits/audit-v0.1.md)
-- [Audit v0.2](audits/audit-v0.2.md)
+* **[Architecture](architecture/)**
+  * Overview (coming soon)
+  * Execution Flow (coming soon)
+  * Cryptography (coming soon)
 
-## 📋 Program & Reviews
-- [Release Checklist](program/release-checklist.md)
-- [End of Life (EOL) Notice](program/eol.md)
-- [Security Gates](program/release-security-gates.md)
-- [Review Checklists](reviews/)
+* **[Guides](guides/)**
+  * [CLI Reference](guides/usage.md)
+  * [MCP Server](guides/mcp.md)
+  * [Migration Guide](guides/migration.md)
 
-## 📜 Architecture Decision Records (ADRs)
-- [ADR Directory](adr/README.md)
+* **[Reference](reference/)**
+  * Configuration (coming soon)
+  * HTTP API (coming soon)
+
+* **[Archive](archive/)**
+  * Historical Audits, Reviews, and Program Management Docs
