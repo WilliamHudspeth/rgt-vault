@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rgt-vault"
-version = "0.2.0"
+version = "0.3.0"
 description = "A secure, policy-controlled secrets vault for AI agents"
 authors = [
     { name = "William Hudspeth Blackburn", email = "williamhudspethblackburn@gmail.com" }
