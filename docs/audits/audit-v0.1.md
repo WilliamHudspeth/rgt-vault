@@ -325,7 +325,7 @@ on a high-risk provider.
 
 ### P3 — Low
 
-- **P3-1:** `ARCHITECTURE.md` "Cryptographic Self-Test" line says Argon2id
+- **P3-1:** `core-architecture.md` "Cryptographic Self-Test" line says Argon2id
   is "minimal time cost (4 iterations)" — correct but the memory cost
   number could use a citation.
 - **P3-2:** `CHANGELOG.md` line 113 references a fixed `llm_guide.py`

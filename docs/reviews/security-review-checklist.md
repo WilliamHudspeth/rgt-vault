@@ -29,7 +29,7 @@ Required for any ticket with `security:*` label OR `comp:crypto`, `comp:auth`, `
 - [ ] Reviewer identity recorded in commit message (`Reviewed-by:`) or PR comment
 - [ ] **Author is not the final reviewer** (for comp:crypto, comp:auth, comp:keyring, comp:audit)
 - [ ] If any finding is a regression, file a `regression` label and add to next milestone
-- [ ] Findings documented in `AUDIT.md` if they affect the public threat model
+- [ ] Findings documented in `audit-v0.1.md` if they affect the public threat model
 
 ## After Approval
 

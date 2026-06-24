@@ -31,7 +31,7 @@ If a release passes these gates but a vulnerability is discovered post-release:
 
 1. File a `sev:blocker` (or appropriate severity) ticket immediately.
 2. The Security Champion coordinates the rollback / patch release.
-3. The post-mortem (added to `AUDIT.md`) explains what gate was insufficient and how it will be tightened.
+3. The post-mortem (added to `audit-v0.1.md`) explains what gate was insufficient and how it will be tightened.
 
 ## Why these gates specifically
 

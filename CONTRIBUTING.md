@@ -26,7 +26,7 @@ it does not require a real TPM/DPAPI/Keychain.
 1. Open an issue first for non-trivial changes so we can agree on the approach.
 2. Keep PRs focused; one logical change per PR.
 3. **Every change to crypto, authorization, audit, or storage requires tests.**
-4. Update docs (`README.md`, `ARCHITECTURE.md`, `SECURITY.md`, `llm_guide.py`)
+4. Update docs (`README.md`, `core-architecture.md`, `SECURITY.md`, `llm_guide.py`)
    when behavior changes. Documentation must not overstate guarantees — if a
    protection is partial or best-effort, say so.
 5. Add a `CHANGELOG.md` entry under "Unreleased".

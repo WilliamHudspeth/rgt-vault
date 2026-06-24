@@ -11,7 +11,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.3.0] — 2026-06-24
 
 Status: Capability security refactor merged to master.
-See `CAPABILITY_SECURITY.md`, `MIGRATION_GUIDE.md`, and
+See `capability-security.md`, `migration.md`, and
 `BRANCH_SUMMARY.md` for the full design.
 
 ### Maintenance mode (Go-migration cutover, RGT-164)
@@ -26,10 +26,10 @@ See `CAPABILITY_SECURITY.md`, `MIGRATION_GUIDE.md`, and
 
 ### End-of-life notice (RGT-165)
 
-- **`EOL.md` published at the repo root (RGT-165).** Sets the Python
+- **`eol.md` published at the repo root (RGT-165).** Sets the Python
   line's EOL date at **2026-12-22** (6-month soak from the maintenance
   notice on 2026-06-22). Documents the migration path, the
-  [crypto parity gaps](EOL.md#crypto-parity-gaps) that the Go line must
+  [crypto parity gaps](docs/program/eol.md#crypto-parity-gaps) that the Go line must
   close before `v0.3.0` ships, and the "what users should do today"
   table (pin to `v0.2.x`; plan to migrate to the Go line once
   crypto-integration and persistence land).
@@ -40,7 +40,7 @@ See `CAPABILITY_SECURITY.md`, `MIGRATION_GUIDE.md`, and
   the Store still doesn't encrypt-at-rest and the keychain manager
   is not yet ported from Python; `v1.0.0` should be reserved for a
   tagged release that closes those gaps.)
-- **Top-level `README.md` maintenance banner now links to `EOL.md`**
+- **Top-level `README.md` maintenance banner now links to `eol.md`**
   so the EOL date is reachable from the repo root, not just from the
   Go line's README.
 - **What this PR does NOT do** (intentionally — these are terminal-state
@@ -52,7 +52,7 @@ See `CAPABILITY_SECURITY.md`, `MIGRATION_GUIDE.md`, and
     once Store crypto integration lands (RGT-145 / RGT-146).
   - The RGT-165 ticket's referenced doc
     `docs/architecture/agentic-patterns-and-go-migration.md` does not
-    exist in the repo; the new `EOL.md` is the canonical reference
+    exist in the repo; the new `eol.md` is the canonical reference
     until the architecture doc is regenerated.
 
 ### Added
@@ -88,7 +88,7 @@ See `CAPABILITY_SECURITY.md`, `MIGRATION_GUIDE.md`, and
   `{capability, agent_id, capability_token, payload,
   capability_version}`. Bearer-token gated. 4xx/5xx mappings
   documented in the endpoint docstring and in
-  `CAPABILITY_SECURITY.md`. Handler exceptions are sanitized
+  `capability-security.md`. Handler exceptions are sanitized
   the same way `/use` does.
 - **`GET /v1/capabilities`** HTTP endpoint. Read-only listing
   of the registered capabilities (name, description, supported
@@ -241,7 +241,7 @@ See `CAPABILITY_SECURITY.md`, `MIGRATION_GUIDE.md`, and
 
 ## [0.2.0] — 2026-06-16
 
-### Security (v0.2.0 hardening pass — see [AUDIT-v2.md](AUDIT-v2.md))
+### Security (v0.2.0 hardening pass — see [audit-v0.2.md](docs/audits/audit-v0.2.md))
 
 - **P0-1: SSRF in built-in HTTP actions closed.** A new
   `_validate_outbound_url` gates every outbound HTTP request made by
@@ -292,9 +292,9 @@ See `CAPABILITY_SECURITY.md`, `MIGRATION_GUIDE.md`, and
 - **`tests/test_audit_v2_hardening.py`** (6 tests): chain verify on
   tamper, verify on orphan insert, verify walks the full log,
   `set_secret` atomic audit, `revoke_secret` atomic audit.
-- **`AUDIT-v2.md`** — the v0.2.0 audit document.
+- **`audit-v0.2.md`** — the v0.2.0 audit document.
 
-### Security (prior audit pass — see [AUDIT.md](AUDIT.md))
+### Security (prior audit pass — see [audit-v0.1.md](docs/audits/audit-v0.1.md))
 
 ### Fixed
 - **Audit-chain verification mismatch on null `secret_name`.** `log_audit`
@@ -331,7 +331,7 @@ See `CAPABILITY_SECURITY.md`, `MIGRATION_GUIDE.md`, and
   the seal path used. Without this, any change to the provider's
   hardcoded PCR list would silently break previously-sealed blobs.
 
-### Security (audit pass — see [AUDIT.md](AUDIT.md))
+### Security (audit pass — see [audit-v0.1.md](docs/audits/audit-v0.1.md))
 
 - **P0-1: LinuxTPMProvider no longer exposes plaintext master secret via
   the temp file written by `tpm2_unseal`.** The unseal target file is now
@@ -411,7 +411,7 @@ See `CAPABILITY_SECURITY.md`, `MIGRATION_GUIDE.md`, and
   file 0600).
 - **`tests/test_cli.py`** — 4 new tests for stdin / `--value-file`
   value sources and the `cmd_get` zeroization-bypass warning.
-- **`AUDIT.md`** — the full production-readiness audit (P0–P3
+- **`audit-v0.1.md`** — the full production-readiness audit (P0–P3
   findings, dependency map, security-boundary map, call graph, grading).
 - **CLI parity.** `rgt-vault` now exposes `set`, `get`, `list`, `revoke`,
   `fingerprint`, `rotate {master,dek}`, `verify-audit`, `audit`, and
@@ -544,7 +544,7 @@ See `CAPABILITY_SECURITY.md`, `MIGRATION_GUIDE.md`, and
   DEK unwrap, and `import_vault`.
 - **Benchmarks** (`benchmarks/bench.py`) and a Performance table in the README.
 - **Formal threat model** (`docs/threat-model.md`) and Mermaid architecture
-  diagrams; `ROADMAP.md` and `RELEASE_CHECKLIST.md`.
+  diagrams; `ROADMAP.md` and `release-checklist.md`.
 - Tooling config in `pyproject.toml` (ruff/mypy/bandit/pytest/coverage) and a
   richer `[dev]` extra; project URLs.
 

@@ -26,7 +26,7 @@ Required for every PR / ticket transition to Code Review state.
 ## Operational Review
 
 - [ ] **No new top-level imports of deprecated stdlib / third-party modules**
-- [ ] **No new global state** — or if added, documented in `ARCHITECTURE.md`
+- [ ] **No new global state** — or if added, documented in `core-architecture.md`
 - [ ] **No new files at the repo root** without explicit justification
 - [ ] **Migration path documented** — if any DB schema / config format changes
 

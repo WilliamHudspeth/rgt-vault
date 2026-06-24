@@ -40,3 +40,4 @@ go/server
 .vscode/
 .idea/
 .DS_Store
+test-env/

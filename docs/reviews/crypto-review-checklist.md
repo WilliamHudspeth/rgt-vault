@@ -54,4 +54,4 @@ This is the highest-risk area in the project. Use this in conjunction with `secu
 - [ ] PR approved by Crypto Maintainer (per `reviewer-matrix.md`)
 - [ ] Author is **not** the final reviewer (no self-approval on `comp:crypto`)
 - [ ] If any finding is a regression, file a `regression` label and add to next milestone
-- [ ] Findings documented in `AUDIT.md` if they affect the public threat model
+- [ ] Findings documented in `audit-v0.1.md` if they affect the public threat model

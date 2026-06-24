@@ -12,10 +12,10 @@
 >   fixes. The Python line will be **archived 6 months after v0.3.0 ships**.
 > - **Why:** the [v0.3 capability-based execution layer](go/) (RGT-128,
 >   RGT-166) is fundamentally a Go architecture; reimplementing it in Python
->   would lock in tech debt. See [`EOL.md`](EOL.md) for the full migration
+>   would lock in tech debt. See [`eol.md`](docs/program/eol.md) for the full migration
 >   plan and the 2026-12-22 EOL date.
 >
-> Tracked by RGT-164 (maintenance mode notice) → RGT-165 (EOL archive notice; see [`EOL.md`](EOL.md) for the full migration plan and 2026-12-22 EOL date).
+> Tracked by RGT-164 (maintenance mode notice) → RGT-165 (EOL archive notice; see [`eol.md`](docs/program/eol.md) for the full migration plan and 2026-12-22 EOL date).
 
 A local-first secrets manager designed for autonomous AI systems. It combines
 AES-256-GCM encryption, Argon2id key derivation, ABAC authorization, secret
@@ -24,7 +24,7 @@ exposure in LLM-powered applications.
 
 > **Status: `v0.2.0` — Security Preview.** Suitable for evaluation and
 > feedback, not yet for protecting production secrets. APIs and on-disk formats
-> may change before `v1.0.0`. Read the [threat model](docs/threat-model.md) and
+> may change before `v1.0.0`. Read the [threat model](docs/security/threat-model.md) and
 > [SECURITY.md](SECURITY.md) before relying on it.
 
 ## Features
@@ -49,7 +49,7 @@ exposure in LLM-powered applications.
 `rgt-vault` protects secret **confidentiality and integrity at rest** against an
 attacker who steals `vault.db` / `keychain.json` but not the master secret. It
 is **not** an HSM and does not defend against a compromised host or live
-process. The full [threat model](docs/threat-model.md) (protects / partially
+process. The full [threat model](docs/security/threat-model.md) (protects / partially
 protects / does not protect) and the formal guarantees in
 [SECURITY.md](SECURITY.md) are the authoritative references — read them before
 relying on it.
@@ -161,12 +161,12 @@ curl -s localhost:8765/v1/secrets/default/OPENAI_API_KEY/use \
 Built-in actions: `openai_chat`, `http_get_with_auth`, `http_post_with_auth`,
 and `echo` (a no-secret diagnostic). The server binds to loopback with no TLS;
 exposing it beyond `127.0.0.1` requires a reverse proxy you place in front, and
-widens the surface the [threat model](docs/threat-model.md) discusses. See
+widens the surface the [threat model](docs/security/threat-model.md) discusses. See
 `GET /openapi.json` for the full schema.
 
 ## Architecture
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full cryptographic design. In
+See [core-architecture.md](docs/architecture/core-architecture.md) for the full cryptographic design. In
 brief:
 
 ```

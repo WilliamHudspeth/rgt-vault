@@ -6,7 +6,7 @@ Required for tickets labeled `effort:L`, `effort:XL`, or `type:design`.
 
 - [ ] **Fits roadmap** — the change supports a documented milestone (v0.2 / v0.3 / v0.4 / v0.5 / v1.0)
 - [ ] **Aligns with the project's threat model** — see `docs/threat-model.md`
-- [ ] **Aligns with the project's architecture** — see `ARCHITECTURE.md`
+- [ ] **Aligns with the project's architecture** — see `core-architecture.md`
 - [ ] **Doesn't conflict with planned work** — check RGT-* in the relevant milestone epic
 
 ## Design Quality
