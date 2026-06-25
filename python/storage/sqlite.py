@@ -514,8 +514,8 @@ class StorageBackend:
                     raise ValueError(f"Failed to decode ciphertext: {e}")
                 cursor.execute(
                     """
-                    INSERT INTO secrets (id, secret_id, namespace, name, version, ciphertext, checksum, created_at, updated_at, status, dek_version)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO secrets (id, secret_id, namespace, name, version, ciphertext, checksum, created_at, updated_at, status, dek_version, note, require_2fa)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         s["id"],
@@ -529,6 +529,10 @@ class StorageBackend:
                         s.get("updated_at", ""),
                         s.get("status", "ACTIVE" if s.get("is_current") == 1 else "SUPERSEDED"),
                         s.get("dek_version", 1),
+                        # Preserve per-secret metadata so a 2FA-gated secret is
+                        # never silently downgraded on import.
+                        s.get("note", ""),
+                        1 if s.get("require_2fa") else 0,
                     ),
                 )
 

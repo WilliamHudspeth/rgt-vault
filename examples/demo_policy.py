@@ -167,8 +167,12 @@ def main() -> int:
 
     passed = sum(1 for r in results if r)
     print("\n" + "=" * 56)
-    print(f" {passed}/{len(results)} checks passed."
-          " The secret value never left the vault.")
+    print(f" {passed}/{len(results)} checks passed.")
+    print(" The agent's callback only ever received a buffer the vault")
+    print(" wiped on return — the secret value was never handed back to a")
+    print(" caller. (This demo runs the broker in-process; the operator-")
+    print(" token boundary that stops self-approval is covered by the")
+    print(" server tests and the deploy/ daemon.)")
     print("=" * 56)
     return 0 if passed == len(results) else 1
 

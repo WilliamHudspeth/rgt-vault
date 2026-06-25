@@ -148,6 +148,16 @@ def test_gate_denial_blocks_decryption():
             v.execute("agent", "ns", "p", "K", lambda buf: bytes(buf))
 
 
+def test_require_2fa_flag_survives_export_import():
+    # A 2FA-gated secret must not be silently downgraded on re-import.
+    with tempfile.TemporaryDirectory() as tmp:
+        v = _vault(tmp)
+        v.set_secret("API", "sk-1", namespace="ns", agent="admin", require_2fa=True)
+        dump = v.storage.export_data()
+        v.storage.import_data(dump)
+        assert v.storage.requires_2fa("ns", "API") is True
+
+
 def test_note_and_2fa_flag_persist_and_list():
     with tempfile.TemporaryDirectory() as tmp:
         v = _vault(tmp)

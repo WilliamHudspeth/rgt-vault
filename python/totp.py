@@ -103,6 +103,61 @@ def verify(
     return False
 
 
+class ReplayGuardedVerifier:
+    """Callable TOTP verifier that rejects a code once it has been used.
+
+    Plain TOTP codes stay valid for the whole step plus the skew window
+    (~90s with the default ±1). Without replay protection, one observed
+    approval code could approve several pending requests inside that window.
+    This verifier records the time-step counter of each accepted code and
+    refuses any code whose counter is <= the last accepted one, so a code is
+    good for exactly one approval.
+
+    Thread-safe; used as ``broker = ApprovalBroker(totp_verifier=verifier)``.
+    """
+
+    def __init__(
+        self,
+        secret: str,
+        *,
+        digits: int = DEFAULT_DIGITS,
+        period: int = DEFAULT_PERIOD,
+        algorithm: str = DEFAULT_ALGORITHM,
+        window: int = 1,
+    ):
+        import threading
+
+        self._secret = secret
+        self._digits = digits
+        self._period = period
+        self._algorithm = algorithm
+        self._window = window
+        self._last_counter = -1
+        self._lock = threading.Lock()
+
+    def __call__(self, code: str, *, timestamp: float | None = None) -> bool:
+        if not code or not code.strip().isdigit():
+            return False
+        code = code.strip()
+        if timestamp is None:
+            timestamp = time.time()
+        base = int(timestamp // self._period)
+        try:
+            key = _b32decode(self._secret)
+        except Exception:
+            return False
+        with self._lock:
+            for offset in range(-self._window, self._window + 1):
+                counter = base + offset
+                if counter <= self._last_counter:
+                    continue  # already consumed (or older) — no replay
+                candidate = _hotp(key, counter, digits=self._digits, algorithm=self._algorithm)
+                if hmac.compare_digest(candidate, code):
+                    self._last_counter = counter
+                    return True
+        return False
+
+
 def provisioning_uri(
     secret: str,
     account_name: str,

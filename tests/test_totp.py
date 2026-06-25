@@ -58,6 +58,29 @@ def test_verify_rejects_malformed_input(bad):
     assert totp.verify(secret, bad) is False
 
 
+def test_replay_guarded_verifier_rejects_reuse():
+    secret = totp.generate_secret()
+    v = totp.ReplayGuardedVerifier(secret)
+    now = 1_000_000.0
+    code = totp.generate(secret, timestamp=now)
+    # First use accepts; immediate reuse of the same code is rejected.
+    assert v(code, timestamp=now) is True
+    assert v(code, timestamp=now) is False
+    # A fresh code from a later step is accepted.
+    later = now + 60
+    assert v(totp.generate(secret, timestamp=later), timestamp=later) is True
+
+
+def test_replay_guarded_verifier_rejects_older_counter():
+    secret = totp.generate_secret()
+    v = totp.ReplayGuardedVerifier(secret)
+    now = 2_000_000.0
+    # Consume the current step, then a code from a prior step must be rejected.
+    assert v(totp.generate(secret, timestamp=now), timestamp=now) is True
+    old = totp.generate(secret, timestamp=now - 60)
+    assert v(old, timestamp=now) is False
+
+
 def test_provisioning_uri_shape():
     secret = totp.generate_secret()
     uri = totp.provisioning_uri(secret, "alice@example.com", issuer="rgt-vault")

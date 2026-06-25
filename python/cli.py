@@ -264,13 +264,13 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def _load_totp_verifier(secret_file):
-    """Return a TOTP verifier callable from a base32 secret file, or None."""
+    """Return a replay-guarded TOTP verifier from a base32 secret file, or None."""
     if not secret_file:
         return None
     from rgt_vault import totp
 
     secret = Path(secret_file).expanduser().read_text().strip()
-    return lambda code: totp.verify(secret, code)
+    return totp.ReplayGuardedVerifier(secret)
 
 
 def cmd_enroll_2fa(args: argparse.Namespace) -> int:
@@ -354,6 +354,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if operator_file:
         op_path, _op_token = load_or_create_token(Path(operator_file))
         operator_store = TokenStore(op_path)
+    elif broker is not None:
+        # require-approval without a separate operator token means the
+        # approve/deny endpoints accept the SAME token agents use to call
+        # /use — so an agent holding it could approve its own request. Warn
+        # loudly; production should pass --operator-token-file.
+        print(
+            "WARNING: --require-approval is on but no --operator-token-file was given. "
+            "The approve/deny endpoints will accept the agent token, so an agent could "
+            "self-approve. Pass --operator-token-file to separate the operator scope.",
+            file=sys.stderr,
+        )
 
     registry = ActionRegistry()
     register_builtin_actions(registry)

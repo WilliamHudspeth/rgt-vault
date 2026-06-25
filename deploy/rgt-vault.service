@@ -14,13 +14,14 @@ User=rgtvault
 Group=rgtvault
 
 # Vault state lives under this account's home, mode 0700, owned by rgtvault.
-Environment=RGT_VAULT_HOME=/var/lib/rgt-vault
 WorkingDirectory=/var/lib/rgt-vault
 
 # Loopback only. Put a TLS reverse proxy in front if you must expose it.
-ExecStart=/opt/rgt-vault/.venv/bin/python -m rgt_vault.cli serve \
-    --host 127.0.0.1 --port 8765 \
+# NOTE: --db is a GLOBAL option and must precede the 'serve' subcommand.
+ExecStart=/opt/rgt-vault/.venv/bin/python -m rgt_vault.cli \
     --db /var/lib/rgt-vault/vault.db \
+    serve \
+    --host 127.0.0.1 --port 8765 \
     --token-file /var/lib/rgt-vault/agent.token \
     --operator-token-file /var/lib/rgt-vault/operator.token \
     --require-approval \

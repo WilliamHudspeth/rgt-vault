@@ -31,9 +31,19 @@ fi
 echo "==> Preparing state dir ${STATE_DIR} (0700, owned by ${VAULT_USER})"
 install -d -o "${VAULT_USER}" -g "${VAULT_USER}" -m 0700 "${STATE_DIR}"
 
-echo "==> Installing app + venv into ${APP_DIR}"
+echo "==> Installing app source into ${APP_DIR}"
 install -d -o root -g root -m 0755 "${APP_DIR}"
-cp -r "${REPO_ROOT}/." "${APP_DIR}/"
+# Copy only tracked source — never the dev .venv, .git, caches, or any local
+# vault state that might sit in the working tree (which would land in a
+# world-readable /opt). Prefer 'git archive'; fall back to a filtered copy.
+if git -C "${REPO_ROOT}" rev-parse --git-dir >/dev/null 2>&1; then
+    git -C "${REPO_ROOT}" archive --format=tar HEAD | tar -x -C "${APP_DIR}"
+else
+    tar -C "${REPO_ROOT}" \
+        --exclude=.git --exclude=.venv --exclude=.pytest_cache \
+        --exclude=.hypothesis --exclude='*.token' --exclude='*.secret' \
+        -cf - python pyproject.toml MANIFEST.in requirements.txt README.md | tar -x -C "${APP_DIR}"
+fi
 python3 -m venv "${APP_DIR}/.venv"
 "${APP_DIR}/.venv/bin/python" -m pip install --quiet --upgrade pip
 "${APP_DIR}/.venv/bin/python" -m pip install --quiet -e "${APP_DIR}[server,tui]"
@@ -65,9 +75,12 @@ Done. The daemon is running as '${VAULT_USER}' on http://127.0.0.1:8765.
   Operator (keep for the human):    ${STATE_DIR}/operator.token
 
 The agent token can list/use secrets; only the operator token can approve.
-Open the operator console from the human's account:
+Open the operator console from the human's account (the app is installed
+only in ${APP_DIR}/.venv, so use its full path or pip-install rgt-vault[tui]
+into your own environment):
 
-  rgt-vault tui --url http://127.0.0.1:8765 \\
+  ${APP_DIR}/.venv/bin/python -m rgt_vault.cli tui \\
+      --url http://127.0.0.1:8765 \\
       --token "\$(sudo cat ${STATE_DIR}/operator.token)"
 
 Check status:   systemctl status rgt-vault

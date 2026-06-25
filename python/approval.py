@@ -108,17 +108,23 @@ class ApprovalBroker:
         with self._lock:
             self._pending[request.request_id] = pending
 
-        decided = pending.event.wait(timeout=self._timeout)
+        pending.event.wait(timeout=self._timeout)
+        # The decision is the single source of truth — read and remove it under
+        # the lock. This closes the boundary race where an operator decides in
+        # the instant between wait() timing out and consult() cleaning up: if a
+        # decision was recorded, we honor it; only a genuinely absent decision
+        # is treated as a (fail-closed) timeout.
         with self._lock:
             self._pending.pop(request.request_id, None)
+            decision = pending.decision
 
-        if not decided or pending.decision is None:
+        if decision is None:
             return ApprovalDecision(
                 allowed=False,
                 reason=f"approval timed out after {self._timeout:.0f}s",
                 decided_by="system",
             )
-        return pending.decision
+        return decision
 
     # ---- operator side ------------------------------------------------- #
 
