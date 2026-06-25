@@ -345,17 +345,30 @@ def cmd_serve(args: argparse.Namespace) -> int:
     vault = _build_vault(args, approval_gate=broker)
     token_path, _token = load_or_create_token(Path(args.token_file) if args.token_file else None)
     store = TokenStore(token_path)
+
+    # Optional separate operator-token scope: when set, approving/denying
+    # agent requests requires THIS token, not the agent token. This is the
+    # split that makes "the agent cannot self-approve" true.
+    operator_store = None
+    operator_file = getattr(args, "operator_token_file", None)
+    if operator_file:
+        op_path, _op_token = load_or_create_token(Path(operator_file))
+        operator_store = TokenStore(op_path)
+
     registry = ActionRegistry()
     register_builtin_actions(registry)
     app = build_app(
         vault,
         store,
         registry,
+        operator_token_store=operator_store,
         broker=broker,
         allow_private_network=args.allow_private_network,
     )
 
-    print(f"rgt-vault server: http://{args.host}:{args.port}  (token file: {token_path})")
+    print(f"rgt-vault server: http://{args.host}:{args.port}  (agent token: {token_path})")
+    if operator_store is not None:
+        print(f"operator token (approve/deny scope): {operator_file}")
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         print(
             f"WARNING: binding to {args.host} exposes the vault beyond loopback. "
@@ -503,6 +516,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=120.0,
         help="Seconds an agent request waits for approval before auto-deny (default: 120).",
+    )
+    p_serve.add_argument(
+        "--operator-token-file",
+        default=None,
+        help="Separate token for the approve/deny (operator) scope. When set, the "
+        "agent token cannot approve its own requests.",
     )
     p_serve.set_defaults(func=cmd_serve)
 

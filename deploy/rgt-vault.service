@@ -1,0 +1,50 @@
+[Unit]
+Description=rgt-vault secrets daemon (capability vault with human approval)
+Documentation=https://github.com/WilliamHudspeth/rgt-vault
+After=network.target
+
+[Service]
+Type=simple
+
+# --- the trust boundary ------------------------------------------------ #
+# The daemon runs as its own locked-down account. Agents never share this
+# user, so they cannot read the vault DB, the keychain, or process memory.
+# They reach the vault only over the loopback HTTP API with a scoped token.
+User=rgtvault
+Group=rgtvault
+
+# Vault state lives under this account's home, mode 0700, owned by rgtvault.
+Environment=RGT_VAULT_HOME=/var/lib/rgt-vault
+WorkingDirectory=/var/lib/rgt-vault
+
+# Loopback only. Put a TLS reverse proxy in front if you must expose it.
+ExecStart=/opt/rgt-vault/.venv/bin/python -m rgt_vault.cli serve \
+    --host 127.0.0.1 --port 8765 \
+    --db /var/lib/rgt-vault/vault.db \
+    --token-file /var/lib/rgt-vault/agent.token \
+    --operator-token-file /var/lib/rgt-vault/operator.token \
+    --require-approval \
+    --totp-secret-file /var/lib/rgt-vault/totp.secret
+
+Restart=on-failure
+RestartSec=2
+
+# --- defense in depth -------------------------------------------------- #
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+# Only the vault's own state dir is writable.
+ReadWritePaths=/var/lib/rgt-vault
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

@@ -103,6 +103,38 @@ def test_pending_request_listed_and_approved_with_2fa(client_and_broker):
     assert result["resp"].status_code == 200
 
 
+def test_agent_token_cannot_approve_when_operator_scope_set(tmp_path, master_provider):
+    """The boundary claim: with a separate operator token, the agent token
+    is rejected on the approve/deny endpoints (it cannot self-approve)."""
+    broker = ApprovalBroker(timeout=5)
+    vault = VaultManager(
+        db_path=str(tmp_path / "vault.db"),
+        policy_yaml=POLICY,
+        master_provider=master_provider,
+        approval_gate=broker,
+    )
+    agent_token = generate_token()
+    agent_store = TokenStore(path=tmp_path / "agent.token")
+    agent_store.write(agent_token)
+    operator_token = generate_token()
+    operator_store = TokenStore(path=tmp_path / "operator.token")
+    operator_store.write(operator_token)
+
+    registry = ActionRegistry()
+    register_builtin_actions(registry)
+    app = build_app(vault, agent_store, registry, operator_token_store=operator_store, broker=broker)
+    client = TestClient(app)
+
+    # Agent token is accepted on agent endpoints but rejected on operator ones.
+    assert client.get("/v1/secrets", params={"namespace": "default", "agent": "tester"},
+                      headers={"Authorization": f"Bearer {agent_token}"}).status_code == 200
+    assert client.get("/v1/requests",
+                      headers={"Authorization": f"Bearer {agent_token}"}).status_code == 401
+    # Operator token is accepted on the operator endpoint.
+    assert client.get("/v1/requests",
+                      headers={"Authorization": f"Bearer {operator_token}"}).status_code == 200
+
+
 def test_deny_blocks_agent(client_and_broker):
     client, broker, _ = client_and_broker
     client.post("/v1/secrets", json={
