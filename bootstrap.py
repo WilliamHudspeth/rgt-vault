@@ -59,7 +59,7 @@ def main() -> None:
     print("\nInstalling rgt-vault and dependencies...")
     # Use `python -m pip` (not pip.exe) — avoids Windows Smart App Control
     # blocking the pip binary in new virtual environments.
-    extras = "server,mcp,dev"
+    extras = "server,mcp,tui,dev"
     if sys.platform == "win32":
         extras += ",windows"
     run(str(venv_python), "-m", "pip", "install", "--quiet", "--upgrade", "pip")
@@ -109,11 +109,23 @@ def main() -> None:
   Activate:
     {activate}
 
-  Store a secret:
-    {python} -m rgt_vault.cli set MY_KEY --value "my_secret"
+  See the whole story in 10 seconds (store -> approve -> deny -> audit):
+    {python} examples/demo_policy.py
 
-  Start the HTTP server (port 8765):
-    {python} -m rgt_vault.cli serve --port 8765
+  --- Operator workflow (human approves agent secret use) ---
+
+  1. Enroll a 2FA secret for approvals (scan the printed QR/URI):
+    {python} -m rgt_vault.cli enroll-2fa
+
+  2. Start the daemon with live approval:
+    {python} -m rgt_vault.cli serve --require-approval \\
+        --totp-secret-file ~/.config/rgt-vault/totp.secret
+
+  3. In another terminal, open the operator console:
+    {python} -m rgt_vault.cli tui
+
+  Now agent secret requests pop up in the TUI for you to approve
+  (with TOTP) or deny. The agent only ever sees titles, never values.
 
   Start the MCP server (for AI agents / Claude Desktop):
     {python} python/server/mcp_server.py

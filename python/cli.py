@@ -29,11 +29,12 @@ def _build_provider(name: str) -> MasterSecretProvider:
     raise VaultError(f"Unknown provider '{name}'. Use 'keyring' or 'platform'.")
 
 
-def _build_vault(args: argparse.Namespace) -> VaultManager:
+def _build_vault(args: argparse.Namespace, *, approval_gate=None) -> VaultManager:
     return VaultManager(
         db_path=args.db,
         policy_yaml=Path(args.policy).read_text() if args.policy else "",
         master_provider=_build_provider(args.provider),
+        approval_gate=approval_gate,
     )
 
 
@@ -262,6 +263,64 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_totp_verifier(secret_file):
+    """Return a TOTP verifier callable from a base32 secret file, or None."""
+    if not secret_file:
+        return None
+    from rgt_vault import totp
+
+    secret = Path(secret_file).expanduser().read_text().strip()
+    return lambda code: totp.verify(secret, code)
+
+
+def cmd_enroll_2fa(args: argparse.Namespace) -> int:
+    """Generate a TOTP secret for approval 2FA, save it, and print the URI."""
+    from rgt_vault import totp
+
+    out = Path(args.out).expanduser()
+    if out.exists() and not args.force:
+        print(f"{out} already exists. Use --force to overwrite.", file=sys.stderr)
+        return 1
+    secret = totp.generate_secret()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(secret)
+    try:
+        out.chmod(0o600)
+    except OSError:
+        pass
+    print(f"TOTP secret written to: {out}")
+    print("Add it to your authenticator app via this URI (or type the secret):")
+    print("  " + totp.provisioning_uri(secret, args.account, issuer="rgt-vault"))
+    print(f"  secret: {secret}")
+    print("\nStart the daemon with:  rgt-vault serve --require-approval --totp-secret-file " + str(out))
+    return 0
+
+
+def cmd_tui(args: argparse.Namespace) -> int:
+    """Launch the operator TUI against a running daemon."""
+    try:
+        from rgt_vault.tui import run_tui
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    token = args.token
+    if not token:
+        from rgt_vault.server.auth import DEFAULT_TOKEN_PATH, TokenStore
+
+        store = TokenStore(Path(args.token_file) if args.token_file else DEFAULT_TOKEN_PATH)
+        if not store.exists():
+            print("No token provided and no token file found. Run 'rgt-vault init' first.", file=sys.stderr)
+            return 1
+        token = store.read()
+
+    try:
+        return run_tui(args.url, token, namespace=args.namespace)
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     """Run the local HTTP server (loopback-only by default)."""
     try:
@@ -273,11 +332,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
         )
         return 1
 
+    from rgt_vault.approval import ApprovalBroker
     from rgt_vault.server.actions import ActionRegistry, register_builtin_actions
     from rgt_vault.server.app import build_app
     from rgt_vault.server.auth import TokenStore, load_or_create_token
 
-    vault = _build_vault(args)
+    broker = None
+    if getattr(args, "require_approval", False):
+        verifier = _load_totp_verifier(getattr(args, "totp_secret_file", None))
+        broker = ApprovalBroker(timeout=args.approval_timeout, totp_verifier=verifier)
+
+    vault = _build_vault(args, approval_gate=broker)
     token_path, _token = load_or_create_token(Path(args.token_file) if args.token_file else None)
     store = TokenStore(token_path)
     registry = ActionRegistry()
@@ -286,6 +351,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         vault,
         store,
         registry,
+        broker=broker,
         allow_private_network=args.allow_private_network,
     )
 
@@ -422,7 +488,40 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Permit built-in HTTP actions to call loopback / private addresses. "
         "Default: off. Only enable on trusted networks.",
     )
+    p_serve.add_argument(
+        "--require-approval",
+        action="store_true",
+        help="Gate every secret lease on live operator approval via the TUI.",
+    )
+    p_serve.add_argument(
+        "--totp-secret-file",
+        default=None,
+        help="Base32 TOTP secret file (from 'enroll-2fa') used to verify 2FA approvals.",
+    )
+    p_serve.add_argument(
+        "--approval-timeout",
+        type=float,
+        default=120.0,
+        help="Seconds an agent request waits for approval before auto-deny (default: 120).",
+    )
     p_serve.set_defaults(func=cmd_serve)
+
+    # enroll-2fa (generate a TOTP secret for approval 2FA)
+    p_2fa = subparsers.add_parser("enroll-2fa", help="Generate a TOTP secret for approval 2FA")
+    p_2fa.add_argument("--out", default="~/.config/rgt-vault/totp.secret", help="Where to write the base32 secret")
+    p_2fa.add_argument("--account", default="operator", help="Account label for the authenticator app")
+    p_2fa.add_argument("--force", action="store_true", help="Overwrite an existing secret file")
+    p_2fa.set_defaults(func=cmd_enroll_2fa)
+
+    # tui (operator console)
+    p_tui = subparsers.add_parser("tui", help="Launch the operator TUI (requires [tui] extra)")
+    p_tui.add_argument("--url", default="http://127.0.0.1:8765", help="Daemon base URL (default: http://127.0.0.1:8765)")
+    p_tui.add_argument("--token", default=None, help="Operator bearer token (default: read from --token-file)")
+    p_tui.add_argument(
+        "--token-file", default=None, help="Token file path (default: ~/.config/rgt-vault/server.token)"
+    )
+    p_tui.add_argument("--namespace", default="default", help="Namespace to store secrets under (default: default)")
+    p_tui.set_defaults(func=cmd_tui)
 
     return parser
 

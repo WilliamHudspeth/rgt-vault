@@ -28,6 +28,7 @@ except ModuleNotFoundError as e:  # pragma: no cover - exercised only without ex
         "The rgt-vault HTTP server requires the [server] extra. Install it with: pip install 'rgt-vault[server]'"
     ) from e
 
+from rgt_vault.approval import ApprovalBroker, ApprovalError
 from rgt_vault.exceptions import (
     ActionExecutionError,
     ActionNotFoundError,
@@ -52,6 +53,18 @@ class SetSecretBody(BaseModel):
     namespace: str = "default"
     agent: str = "cli"
     purpose: str = ""
+    note: str = ""
+    require_2fa: bool = False
+
+
+class ApproveBody(BaseModel):
+    totp_code: Optional[str] = None
+    operator: str = "operator"
+
+
+class DenyBody(BaseModel):
+    reason: str = "denied by operator"
+    operator: str = "operator"
 
 
 class UseBody(BaseModel):
@@ -108,6 +121,8 @@ def build_app(
     token_store: TokenStore,
     registry: Optional[ActionRegistry] = None,
     *,
+    operator_token_store: Optional[TokenStore] = None,
+    broker: Optional["ApprovalBroker"] = None,
     allow_private_network: bool = False,
 ) -> "FastAPI":
     """Construct the FastAPI app over an existing vault, token store, and registry.
@@ -127,6 +142,15 @@ def build_app(
     # Stash on the registry so per-action calls can consult the default.
     registry.default_allow_private_network = allow_private_network
 
+    # Resolve the approval broker: explicit arg wins, else adopt the vault's
+    # gate if it happens to be a broker. None means single-process/no live
+    # approval (the operator request endpoints then report nothing pending).
+    from rgt_vault.approval import ApprovalBroker as _Broker
+
+    active_broker: Optional[_Broker] = broker
+    if active_broker is None and isinstance(getattr(vault, "approval_gate", None), _Broker):
+        active_broker = vault.approval_gate
+
     app = FastAPI(
         title="rgt-vault",
         version="0.2.0",
@@ -145,6 +169,22 @@ def build_app(
         client = request.client.host if request.client else "?"
         vault.audit(
             "HTTP_API",
+            None,
+            f"token={token_id} ip={client} {request.method} {request.url.path}",
+        )
+        return token_id
+
+    # Operator scope: approving/denying agent requests (and the TUI's
+    # privileged actions) require the operator token when one is configured.
+    # If no separate operator store is set, fall back to the main token so
+    # single-token dev setups still work.
+    _operator_store = operator_token_store or token_store
+
+    def require_operator_token(request: Request, authorization: Optional[str] = Header(None)) -> str:
+        token_id = _operator_store.verify(authorization)  # raises ServerAuthError -> 401
+        client = request.client.host if request.client else "?"
+        vault.audit(
+            "HTTP_OPERATOR",
             None,
             f"token={token_id} ip={client} {request.method} {request.url.path}",
         )
@@ -181,6 +221,8 @@ def build_app(
             namespace=body.namespace,
             agent=body.agent,
             purpose=body.purpose,
+            note=body.note,
+            require_2fa=body.require_2fa,
         )
         return {"ok": True, "namespace": body.namespace, "name": body.name}
 
@@ -231,6 +273,59 @@ def build_app(
     ) -> Dict[str, Any]:
         items = vault.list_secrets(namespace, agent=agent, purpose=purpose)
         return {"namespace": namespace, "secrets": items}
+
+    # ---- operator approval endpoints (the TUI's back end) -------------- #
+
+    def _require_broker() -> "ApprovalBroker":
+        if active_broker is None:
+            raise HTTPException(status_code=409, detail="No approval broker is active on this server.")
+        return active_broker
+
+    @app.get("/v1/requests")
+    def list_requests(token_id: str = Depends(require_operator_token)) -> Dict[str, Any]:
+        """Pending agent requests awaiting an operator decision (titles only —
+        the secret value is never part of a request)."""
+        pending = _require_broker().list_pending()
+        return {
+            "requests": [
+                {
+                    "request_id": r.request_id,
+                    "agent": r.agent,
+                    "namespace": r.namespace,
+                    "secret_name": r.secret_name,
+                    "purpose": r.purpose,
+                    "action": r.action,
+                    "require_2fa": r.require_2fa,
+                    "created_at": r.created_at,
+                }
+                for r in pending
+            ]
+        }
+
+    @app.post("/v1/requests/{request_id}/approve")
+    def approve_request(
+        request_id: str,
+        body: ApproveBody,
+        token_id: str = Depends(require_operator_token),
+    ) -> Dict[str, Any]:
+        try:
+            _require_broker().approve(request_id, totp_code=body.totp_code, operator=body.operator)
+        except ApprovalError as e:
+            # Bad/missing 2FA or unknown id is a client error.
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True, "request_id": request_id, "decision": "approved"}
+
+    @app.post("/v1/requests/{request_id}/deny")
+    def deny_request(
+        request_id: str,
+        body: DenyBody,
+        token_id: str = Depends(require_operator_token),
+    ) -> Dict[str, Any]:
+        try:
+            _require_broker().deny(request_id, reason=body.reason, operator=body.operator)
+        except ApprovalError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True, "request_id": request_id, "decision": "denied"}
 
     @app.post("/v1/secrets/{namespace}/{name}/revoke")
     def revoke(
