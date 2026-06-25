@@ -71,6 +71,27 @@ local user account (or a container/VM) whose home and vault directory the
 agent's account cannot read. The token split and the loopback API are the
 same; only the OS mechanism for the separate account differs.
 
+## What the TOTP second factor actually buys
+
+Be precise about this rather than security-theatrical. Once you have a
+separate operator account, a separate operator token, and the approval
+console, the TOTP prompt on an approval defends against exactly one thing:
+
+> **a stolen or misused operator token.**
+
+If the operator token leaks (copied from the workstation, left in a shell
+history, exfiltrated by something running as the human's user), 2FA means
+the holder still cannot approve a release of a 2FA-flagged secret without
+also having the live authenticator code.
+
+What it does **not** add: if the operator's workstation is fully trusted and
+uncompromised, the token already lives there and the TOTP is closer to demo
+value than security value. That is a fine reason to keep it — it makes the
+human-in-the-loop step legible in a demo — but the honest framing is "second
+factor against a stolen operator token," not "makes approval unbreakable."
+2FA is therefore opt-in per secret (`require_2fa`), so you can reserve the
+friction for the credentials that actually warrant it.
+
 ## What is explicitly out of scope
 
 RGT Vault does **not** defend against full host compromise, a kernel-level

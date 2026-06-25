@@ -93,6 +93,32 @@ vault.execute_capability(
 * **✓ Agent-Oriented Security Model**
   Designed specifically for autonomous systems and LLM agents.
 
+## See it in 30 seconds
+
+```bash
+git clone https://github.com/WilliamHudspeth/rgt-vault
+cd rgt-vault
+python bootstrap.py
+
+# Watch an agent file a GitHub issue without ever seeing the token:
+python examples/github_issue_demo.py
+```
+
+The agent requests a capability, a human approves it (with a TOTP code) in
+the Approval Center, the vault uses the secret internally, and the agent
+gets back only the result — never the credential. The same story for other
+services:
+
+```bash
+python examples/openai_demo.py    # agent calls OpenAI, never holds sk-...
+python examples/slack_demo.py     # agent posts to Slack, never holds the webhook
+python examples/demo_policy.py    # the full policy + approval story, 7 checks
+```
+
+These run offline and deterministically (the outbound call is stubbed). See
+[the trust boundary doc](docs/concepts/trust-boundary.md) for what is and
+isn't actually guaranteed.
+
 ## Quick Start
 
 ```bash
