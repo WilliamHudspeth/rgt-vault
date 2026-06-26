@@ -20,8 +20,10 @@ import logging
 from typing import Any, Dict, Optional
 
 try:
-    from fastapi import Depends, FastAPI, Header, HTTPException, Request
+    from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
     from fastapi.responses import JSONResponse
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.middleware.trustedhost import TrustedHostMiddleware
     from pydantic import BaseModel, Field
 except ModuleNotFoundError as e:  # pragma: no cover - exercised only without extra
     raise ImportError(
@@ -157,6 +159,96 @@ def build_app(
         description="Local HTTP surface for the rgt-vault secrets manager.",
     )
 
+    # 1. RGT-436 / RGT-119: DNS Rebinding Protection
+    # Rejects requests with suspicious Host headers. Default to loopback.
+    # In production, these should be configurable.
+    allowed_hosts = ["localhost", "127.0.0.1", "[::1]", "testserver"]
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=allowed_hosts,
+    )
+
+    # 2. RGT-436: CORS Hardening
+    # By default, do not configure a permissive CORS policy.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[],
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
+    # 3. RGT-454 / RGT-453 / RGT-438: Security Headers, Content-Type Enforcement, and Cookies
+    @app.middleware("http")
+    async def secure_http_headers_middleware(request: Request, call_next):
+        # A. Enforce Content-Type for POST, PUT, PATCH on API endpoints (RGT-453)
+        if request.method in ("POST", "PUT", "PATCH") and request.url.path.startswith("/v1/"):
+            content_type = request.headers.get("content-type", "")
+            
+            content_length = request.headers.get("content-length")
+            is_chunked = request.headers.get("transfer-encoding", "").lower() == "chunked"
+            has_body = (content_length and int(content_length) > 0) or is_chunked
+            
+            if has_body or content_type:
+                if "application/json" not in content_type:
+                    return JSONResponse(
+                        status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                        content={"error": "UnsupportedMediaType", "detail": "Content-Type must be application/json"},
+                    )
+
+        # Process the request
+        response = await call_next(request)
+
+        # B. HTTP Security Headers (RGT-454)
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Frame-Options"] = "DENY"
+
+        # C. Content Security Policy (RGT-454)
+        # Apply strict sandbox policy to APIs, but allow resources for Docs page
+        path = request.url.path
+        if path in ("/docs", "/redoc"):
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "img-src 'self' data: https://fastapi.tiangolo.com; "
+                "frame-ancestors 'none';"
+            )
+        else:
+            response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; sandbox;"
+
+        # D. X-Content-Type-Options (RGT-453 / RGT-438)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+
+        # E. Content-Disposition (RGT-453 / RGT-438)
+        # Enforce attachment disposition for all API responses to prevent content sniffing and rendering in browsers.
+        if not (path.startswith("/docs") or path.startswith("/redoc") or path == "/openapi.json"):
+            if "Content-Disposition" not in response.headers:
+                response.headers["Content-Disposition"] = 'attachment; filename="response.json"'
+
+        # F. Secure Cookie Flags (RGT-453)
+        # Scan and apply Secure, HttpOnly, and SameSite=Strict to any Set-Cookie headers
+        cookie_headers = response.headers.getlist("set-cookie")
+        if cookie_headers:
+            del response.headers["set-cookie"]
+            for cookie in cookie_headers:
+                parts = [p.strip() for p in cookie.split(";") if p.strip()]
+                has_httponly = any(p.lower() == "httponly" for p in parts)
+                has_secure = any(p.lower() == "secure" for p in parts)
+                has_samesite = any(p.lower().startswith("samesite") for p in parts)
+
+                if not has_httponly:
+                    parts.append("HttpOnly")
+                if not has_secure:
+                    parts.append("Secure")
+                if not has_samesite:
+                    parts.append("SameSite=Strict")
+
+                response.headers.append("Set-Cookie", "; ".join(parts))
+
+        return response
+
     def require_token(request: Request, authorization: Optional[str] = Header(None)) -> str:
         """Auth dependency: verify the bearer token and audit the request.
 
@@ -190,17 +282,17 @@ def build_app(
         )
         return token_id
 
-    def _register_error(exc_type: type, status: int) -> None:
+    def _register_error(exc_type: type, status_code: int) -> None:
         async def handler(request: Request, exc: Exception) -> JSONResponse:
             return JSONResponse(
-                status_code=status,
+                status_code=status_code,
                 content={"error": exc_type.__name__, "detail": str(exc)},
             )
 
         app.add_exception_handler(exc_type, handler)
 
-    for exc_type, status in _STATUS_MAP.items():
-        _register_error(exc_type, status)
+    for exc_type, status_code in _STATUS_MAP.items():
+        _register_error(exc_type, status_code)
     # Honeytoken access and rate-limit breaches raise builtin PermissionError.
     _register_error(PermissionError, 403)
 

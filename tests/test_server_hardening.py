@@ -416,3 +416,104 @@ def test_cmd_init_does_not_print_existing_token(capsys, tmp_path, monkeypatch):
     assert first_token not in second_out, f"Existing token was re-printed on second init: {second_out!r}"
     # The 'already initialized' hint should be present.
     assert "already" in second_out.lower() or "exists" in second_out.lower()
+
+
+# ------------------------------------------------------------------
+# Milestone 1: HTTP Headers & CORS Hardening Verification
+# ------------------------------------------------------------------
+
+def test_http_security_headers_are_present(server):
+    """Verify that all standard security headers are applied to API responses."""
+    app, token = server
+    c = _authed(app, token)
+    r = c.get("/healthz")
+    assert r.status_code == 200
+
+    # Strict-Transport-Security (RGT-454)
+    assert r.headers["Strict-Transport-Security"] == "max-age=63072000; includeSubDomains; preload"
+    
+    # Referrer-Policy (RGT-454)
+    assert r.headers["Referrer-Policy"] == "no-referrer"
+    
+    # X-Frame-Options (RGT-454)
+    assert r.headers["X-Frame-Options"] == "DENY"
+    
+    # Content-Security-Policy (RGT-454)
+    assert "default-src 'none'" in r.headers["Content-Security-Policy"]
+    assert "frame-ancestors 'none'" in r.headers["Content-Security-Policy"]
+    assert "sandbox" in r.headers["Content-Security-Policy"]
+    
+    # X-Content-Type-Options (RGT-453 / RGT-438)
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    
+    # Content-Disposition (RGT-453 / RGT-438)
+    assert r.headers["Content-Disposition"] == 'attachment; filename="response.json"'
+
+
+def test_docs_security_headers(server):
+    """Verify that the Swagger UI (/docs) uses a specialized CSP but remains non-embeddable."""
+    app, token = server
+    c = _authed(app, token)
+    r = c.get("/docs")
+    assert r.status_code == 200
+    
+    csp = r.headers["Content-Security-Policy"]
+    assert "default-src 'self'" in csp
+    assert "frame-ancestors 'none'" in csp
+    assert "https://cdn.jsdelivr.net" in csp
+
+
+def test_dns_rebinding_protection(server):
+    """Verify that requests with unauthorized Host headers are rejected (RGT-436)."""
+    app, token = server
+    c = _authed(app, token)
+    
+    # Send request with an invalid Host header
+    # By default, TrustedHostMiddleware returns 400 Bad Request
+    r = c.get("/healthz", headers={"Host": "evil-domain.com"})
+    assert r.status_code == 400
+
+
+def test_post_request_enforces_json_content_type(server):
+    """Verify that POST requests require Content-Type: application/json (RGT-453)."""
+    app, token = server
+    c = _authed(app, token)
+    
+    # Send POST request without application/json
+    r = c.post(
+        "/v1/secrets",
+        headers={"Content-Type": "text/plain"},
+        content="plain-text-payload"
+    )
+    assert r.status_code == 415
+    assert "application/json" in r.json()["detail"]
+
+
+def test_cors_disabled_by_default(server):
+    """Verify that cross-origin requests are blocked/unallowed by default (RGT-436)."""
+    app, token = server
+    c = _authed(app, token)
+    
+    r = c.options("/healthz", headers={"Origin": "http://evil.com"})
+    assert "Access-Control-Allow-Origin" not in r.headers
+
+
+def test_secure_cookie_flags_enforced(server):
+    """Verify that any Set-Cookie headers get secure flags appended automatically (RGT-453)."""
+    app, token = server
+    
+    # Add a mock endpoint that sets a vulnerable cookie to verify middleware mitigation
+    from fastapi import Response
+    @app.get("/test-cookie-leak")
+    def set_bad_cookie(response: Response):
+        response.headers.append("Set-Cookie", "session=123")
+        return {"ok": True}
+        
+    c = _authed(app, token)
+    r = c.get("/test-cookie-leak")
+    assert r.status_code == 200
+    
+    cookie_header = r.headers.get("set-cookie", "")
+    assert "HttpOnly" in cookie_header
+    assert "Secure" in cookie_header
+    assert "SameSite=Strict" in cookie_header
