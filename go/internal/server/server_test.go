@@ -562,3 +562,47 @@ func BenchmarkHealthCheck(b *testing.B) {
 		resp.Body.Close()
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Milestone 2 tests: Server header stripping and XML policy caching
+// ---------------------------------------------------------------------------
+
+func TestServerHeaderAndDebugStripped(t *testing.T) {
+	ts, _ := setupTestServer(t)
+	defer ts.Close()
+
+	resp, _ := doJSON(t, "GET", ts.URL+"/healthz", "", nil)
+
+	// Verify server metadata headers are stripped (RGT-452)
+	if serverHeader := resp.Header.Get("Server"); serverHeader != "" {
+		t.Errorf("Expected Server header to be empty, got %q", serverHeader)
+	}
+	if poweredBy := resp.Header.Get("X-Powered-By"); poweredBy != "" {
+		t.Errorf("Expected X-Powered-By header to be empty, got %q", poweredBy)
+	}
+}
+
+func TestXMLPoliciesCacheDisabled(t *testing.T) {
+	ts, _ := setupTestServer(t)
+	defer ts.Close()
+
+	paths := []string{"/crossdomain.xml", "/clientaccesspolicy.xml"}
+	for _, path := range paths {
+		resp, _ := doJSON(t, "GET", ts.URL+path, "", nil)
+
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("Expected 404 for %s, got %d", path, resp.StatusCode)
+		}
+
+		// Verify Cache-Control directives (RGT-437)
+		if cc := resp.Header.Get("Cache-Control"); cc != "no-store, no-cache, must-revalidate, max-age=0" {
+			t.Errorf("Expected strict Cache-Control for %s, got %q", path, cc)
+		}
+		if pragma := resp.Header.Get("Pragma"); pragma != "no-cache" {
+			t.Errorf("Expected Pragma: no-cache, got %q", pragma)
+		}
+		if expires := resp.Header.Get("Expires"); expires != "0" {
+			t.Errorf("Expected Expires: 0, got %q", expires)
+		}
+	}
+}

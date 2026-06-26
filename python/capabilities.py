@@ -88,29 +88,68 @@ class CapabilitySpec:
     handler: Callable[[Dict[str, Any], CapabilityContext], Any]
     description: str = ""
     supported_versions: Set[int] = field(default_factory=lambda: {1})
-    params_schema: List[str] = field(default_factory=list)
+    params_schema: Any = field(default_factory=list)
 
     def supports_version(self, version: int) -> bool:
         return int(version) in self.supported_versions
 
     def validate_payload(self, payload: Mapping[str, Any]) -> None:
-        """Lightweight payload validation.
-
-        We don't pull in pydantic / jsonschema just for this. The check
-        is: ``payload`` is a dict, every key is in ``params_schema`` if
-        a schema was declared, and every value is one of the basic
-        JSON types. Handlers do their own type-specific checks.
-        """
+        """Dynamic schema validation using TypeAdapter or JSON Schema."""
         if not isinstance(payload, Mapping):
             raise ValidationError("capability payload must be a dict")
+
+        from pydantic import BaseModel
+        if isinstance(self.params_schema, type) and issubclass(self.params_schema, BaseModel):
+            from pydantic import TypeAdapter, ValidationError as PydanticValidationError
+            try:
+                TypeAdapter(self.params_schema).validate_python(payload)
+                return
+            except PydanticValidationError as e:
+                raise ValidationError(f"Payload validation failed: {e}")
+
+        if isinstance(self.params_schema, dict):
+            try:
+                import jsonschema
+                try:
+                    jsonschema.validate(instance=payload, schema=self.params_schema)
+                    return
+                except jsonschema.ValidationError as e:
+                    raise ValidationError(f"Payload validation failed: {e.message}")
+            except ImportError:
+                # Custom fallback validator for JSON Schema
+                required = self.params_schema.get("required", [])
+                for field in required:
+                    if field not in payload:
+                        raise ValidationError(f"Payload validation failed: Missing required field '{field}'")
+                properties = self.params_schema.get("properties", {})
+                for k, v in payload.items():
+                    if k not in properties and self.params_schema.get("additionalProperties") is False:
+                        raise ValidationError(f"Payload validation failed: Additional properties not allowed '{k}'")
+                    if k in properties:
+                        prop_schema = properties[k]
+                        expected_type = prop_schema.get("type")
+                        if expected_type == "string" and not isinstance(v, str):
+                            raise ValidationError(f"Payload validation failed: '{k}' must be a string")
+                        elif expected_type == "integer" and not isinstance(v, int):
+                            raise ValidationError(f"Payload validation failed: '{k}' must be an integer")
+                        elif expected_type == "boolean" and not isinstance(v, bool):
+                            raise ValidationError(f"Payload validation failed: '{k}' must be a boolean")
+                        elif expected_type == "object" and not isinstance(v, dict):
+                            raise ValidationError(f"Payload validation failed: '{k}' must be a dict")
+                        elif expected_type == "array" and not isinstance(v, list):
+                            raise ValidationError(f"Payload validation failed: '{k}' must be a list")
+                return
+
         if not self.params_schema:
             return
-        unknown = set(payload) - set(self.params_schema)
-        if unknown:
-            raise ValidationError(
-                f"capability {self.name!r} got unknown param(s): "
-                f"{sorted(unknown)}. Allowed: {sorted(self.params_schema)}"
-            )
+
+        if isinstance(self.params_schema, (list, set, tuple)):
+            unknown = set(payload) - set(self.params_schema)
+            if unknown:
+                raise ValidationError(
+                    f"capability {self.name!r} got unknown param(s): "
+                    f"{sorted(unknown)}. Allowed: {sorted(self.params_schema)}"
+                )
 
 
 class CapabilityRegistry:
@@ -148,12 +187,19 @@ class CapabilityRegistry:
         versions = set(int(v) for v in (supported_versions or {1}))
         if not versions or any(v < 1 for v in versions):
             raise ValueError("supported_versions must be positive ints")
+        from pydantic import BaseModel
+        if isinstance(params_schema, type) and issubclass(params_schema, BaseModel):
+            schema_val = params_schema
+        elif isinstance(params_schema, dict):
+            schema_val = params_schema
+        else:
+            schema_val = list(params_schema or [])
         spec = CapabilitySpec(
             name=name,
             handler=handler,
             description=description,
             supported_versions=versions,
-            params_schema=list(params_schema or []),
+            params_schema=schema_val,
         )
         with self._lock:
             if name in self._specs:

@@ -12,6 +12,8 @@ builds:
     binary: rgt-vault
     env:
       - CGO_ENABLED=0
+    flags:
+      - -buildmode=pie
     goos:
       - linux
       - darwin

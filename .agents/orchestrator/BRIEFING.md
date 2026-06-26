@@ -26,9 +26,12 @@ Complete all tickets in the `[Epic] API, HTTP Headers & Configuration Hardening`
    - Escalate: report to parent (sub-orchestrators only, last resort)
 4. **Succession**: Self-succeed when spawn count >= 16.
 - **Work items**:
-  - [TBD]
-- **Current phase**: 1
-- **Current focus**: Decomposing epic and finding tickets
+  - Milestone 1: HTTP Headers & CORS Hardening [done]
+  - Milestone 2: Server Config & Info Leakage Prevention [done]
+  - Milestone 3: API Security & Content Allowlisting [done]
+  - Milestone 4: Build Hardening & Dependency Governance [done]
+- **Current phase**: 4
+- **Current focus**: Complete Project
 
 ## 🔒 Key Constraints
 - Integrity mode: development (existing open-source code is acceptable, but verify key decisions with Opus/Claude)
@@ -42,7 +45,9 @@ Complete all tickets in the `[Epic] API, HTTP Headers & Configuration Hardening`
 - Updated: not yet
 
 ## Key Decisions Made
-- [TBD]
+- Decomposed the Epic into 4 distinct security hardening milestones.
+- Standardized symlink resolution for `rgt_vault` module testing.
+- Implemented robust dynamic and static validation checks in pytest.
 
 ## Team Roster
 | Agent | Type | Work Item | Status | Conv ID |
@@ -51,17 +56,23 @@ Complete all tickets in the `[Epic] API, HTTP Headers & Configuration Hardening`
 | worker_m1 | teamwork_preview_worker | Implement Milestone 1 | completed | 78022842-808c-4f2a-a098-d724788e4e76 |
 | worker_m1_test | teamwork_preview_worker | Test & Update Milestone 1 | completed | c0796dd3-b5e9-4ef1-92bb-2bfad8f192f8 |
 | explorer_m2 | teamwork_preview_explorer | Explore Milestone 2 | completed | 29ab427f-f5b5-448d-b467-20aeaa18feb0 |
-| worker_m2 | teamwork_preview_worker | Implement Milestone 2 | in-progress | 6f11aa2b-92dd-4bb6-86a1-8deec0dff37c |
+| worker_m2 | teamwork_preview_worker | Implement Milestone 2 | failed | 6f11aa2b-92dd-4bb6-86a1-8deec0dff37c |
+| worker_m2_retry | teamwork_preview_worker | Implement Milestone 2 | completed | f99023da-82c2-42cd-8129-acf59a7c1b49 |
+| worker_m2_verify | teamwork_preview_worker | Verify & Update Milestone 2 | cancelled | a904f9a1-9ce6-4185-9e95-ceb41a1480bb |
+| explorer_m3 | teamwork_preview_explorer | Explore Milestone 3 | completed | b895138a-14a5-4191-9ab5-4d5c6290f04b |
+| worker_m3 | teamwork_preview_worker | Implement Milestone 3 | completed | d9028ee0-9607-46c9-ba2a-5d86e0e133df |
+| explorer_m4 | teamwork_preview_explorer | Explore Milestone 4 | completed | 9ddae48c-6de8-4fd1-84ee-53f6ad341060 |
+| worker_m4 | teamwork_preview_worker | Implement Milestone 4 | completed | 3dbbbb52-e7b0-4a96-b8fc-540ca968b82e |
 
 ## Succession Status
 - Succession required: no
-- Spawn count: 5 / 16
-- Pending subagents: 6f11aa2b-92dd-4bb6-86a1-8deec0dff37c
+- Spawn count: 11 / 16
+- Pending subagents: none
 - Predecessor: none
 - Successor: not yet spawned
 
 ## Active Timers
-- Heartbeat cron: not started
+- Heartbeat cron: killed
 - Safety timer: none
 - On succession: kill all timers before spawning successor
 - On context truncation: run `manage_task(Action="list")` — re-create if missing

@@ -129,6 +129,10 @@ rules:
     agent: system
     namespace: "*"
     action: read
+  - effect: allow
+    agent: system
+    namespace: "*"
+    action: revoke
 """
 
 

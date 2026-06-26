@@ -892,7 +892,7 @@ class VaultManager:
         with self.lease_secret(secret_name, agent, namespace, purpose) as secret_buffer:
             return callback(secret_buffer)
 
-    def list_secrets(self, namespace: str, agent: str, purpose: str = "") -> List[Dict[str, Any]]:
+    def list_secrets(self, namespace: str, agent: str, purpose: str = "", limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         self._hook_consult("list", agent, namespace, purpose)
         decision = self.auth.evaluate(agent, namespace, purpose, action="read")
         if not decision["allowed"]:
@@ -902,10 +902,18 @@ class VaultManager:
                 f"Action: list, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}",
             )
             raise PolicyDeniedError(f"Unauthorized to access namespace '{namespace}'")
-        return self.storage.list_secrets(namespace, policy_hash=self.policy_hash)
+        return self.storage.list_secrets(namespace, policy_hash=self.policy_hash, limit=limit, offset=offset)
 
     def revoke_secret(self, namespace: str, name: str, agent: str = "system") -> None:
         self._hook_consult("revoke", agent, namespace, secret_name=name)
+        decision = self.auth.evaluate(agent, namespace, "*", action="revoke")
+        if not decision["allowed"]:
+            self._log_audit(
+                "POLICY_DENIED",
+                name,
+                f"Action: revoke, Agent: {agent}, Namespace: {namespace}, Reason: {decision['reason']}",
+            )
+            raise PolicyDeniedError("Unauthorized to revoke secret.")
         self.storage.revoke_secret(namespace, name, policy_hash=self.policy_hash)
 
         # RGT-161 dual-write: mirror the revoke to the Go shadow server.

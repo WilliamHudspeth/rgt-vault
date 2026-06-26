@@ -33,6 +33,7 @@ func NewRouter(h *handlers.Handlers, mw *Middleware) chi.Router {
 
 	// Global middleware stack (applied to all routes)
 	r.Use(mw.CORSMiddleware)
+	r.Use(mw.SecurityHeadersMiddleware)
 	r.Use(mw.LoggingMiddleware)
 	r.Use(mw.AuthMiddleware)
 
@@ -40,6 +41,8 @@ func NewRouter(h *handlers.Handlers, mw *Middleware) chi.Router {
 	// Public routes (auth skipped by AuthMiddleware for /healthz)
 	// -----------------------------------------------------------------------
 	r.Get("/healthz", h.HealthCheck)
+	r.Get("/crossdomain.xml", h.BlockXMLPolicy)
+	r.Get("/clientaccesspolicy.xml", h.BlockXMLPolicy)
 
 	// -----------------------------------------------------------------------
 	// API v1 routes (all authenticated)

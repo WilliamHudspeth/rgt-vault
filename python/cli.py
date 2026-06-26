@@ -133,7 +133,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 def cmd_revoke(args: argparse.Namespace) -> int:
     vault = _build_vault(args)
-    vault.revoke_secret(args.namespace, args.name)
+    vault.revoke_secret(args.namespace, args.name, agent=args.agent)
     print(f"Secret '{args.namespace}/{args.name}' revoked.")
     return 0
 
@@ -394,7 +394,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
             "internal services (SSRF). Only enable on trusted networks.",
             file=sys.stderr,
         )
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info", server_header=False)
     return 0
 
 
@@ -457,6 +457,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_revoke = subparsers.add_parser("revoke", help="Revoke the active version of a secret")
     p_revoke.add_argument("name", help="Secret name")
     p_revoke.add_argument("--namespace", default="default")
+    p_revoke.add_argument("--agent", default="cli")
     p_revoke.set_defaults(func=cmd_revoke)
 
     # simulate

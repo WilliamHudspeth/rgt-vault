@@ -29,11 +29,12 @@ class StorageBackend:
 
     @contextlib.contextmanager
     def _get_conn(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=5.0)
         try:
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("PRAGMA synchronous = NORMAL")
+            conn.execute("PRAGMA busy_timeout = 5000")
             yield conn
         finally:
             conn.close()
@@ -352,7 +353,11 @@ class StorageBackend:
             (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash),
         )
 
-    def list_secrets(self, namespace: str, policy_hash: str = "") -> List[Dict[str, Any]]:
+    def list_secrets(self, namespace: str, policy_hash: str = "", limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        if limit < 1 or limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        if offset < 0:
+            raise ValueError("offset must be >= 0")
         with self._get_conn() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -360,8 +365,9 @@ class StorageBackend:
                 SELECT secret_id, name, version, created_at, updated_at, status, note, require_2fa
                 FROM secrets
                 WHERE namespace = ? AND status = 'ACTIVE'
+                LIMIT ? OFFSET ?
             """,
-                (namespace,),
+                (namespace, limit, offset),
             )
             rows = cursor.fetchall()
 

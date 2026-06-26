@@ -43,6 +43,16 @@ func (mw *Middleware) CORSMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// SecurityHeadersMiddleware strips sensitive headers.
+func (mw *Middleware) SecurityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Del("Server")
+		w.Header().Del("X-Powered-By")
+		next.ServeHTTP(w, r)
+	})
+}
+
+
 // LoggingMiddleware logs each request with method, path, status, and duration.
 func (mw *Middleware) LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -63,8 +73,8 @@ func (mw *Middleware) LoggingMiddleware(next http.Handler) http.Handler {
 // On success, it sets the token ID in the request context.
 func (mw *Middleware) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip auth for health check endpoint
-		if r.URL.Path == "/healthz" || r.Method == http.MethodOptions {
+		// Skip auth for health check and XML policy endpoints
+		if r.URL.Path == "/healthz" || r.URL.Path == "/crossdomain.xml" || r.URL.Path == "/clientaccesspolicy.xml" || r.Method == http.MethodOptions {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -20,7 +20,7 @@ import logging
 from typing import Any, Dict, Optional
 
 try:
-    from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+    from fastapi import Depends, FastAPI, Header, HTTPException, Request, status, Response
     from fastapi.responses import JSONResponse
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -47,6 +47,37 @@ from rgt_vault.server.auth import TokenStore
 from rgt_vault.vault import VaultManager
 
 logger = logging.getLogger("rgt_vault.server")
+
+
+class StrictURLNormalizationMiddleware:
+    def __init__(self, app: Any):
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> Any:
+        if scope["type"] == "http":
+            import urllib.parse
+            path = scope.get("path", "")
+            raw_path = scope.get("raw_path", b"").decode("utf-8", errors="ignore")
+            decoded_raw_path = urllib.parse.unquote(raw_path)
+
+            for p in (path, decoded_raw_path):
+                has_control = any(ord(c) < 32 or ord(c) == 127 for c in p)
+                if ".." in p or "\\" in p or "//" in p or has_control:
+                    response_body = b'{"error":"BadRequest","detail":"Invalid URI path"}'
+                    await send({
+                        "type": "http.response.start",
+                        "status": 400,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(response_body)).encode("ascii")),
+                        ]
+                    })
+                    await send({
+                        "type": "http.response.body",
+                        "body": response_body,
+                    })
+                    return
+        await self.app(scope, receive, send)
 
 
 class SetSecretBody(BaseModel):
@@ -153,11 +184,72 @@ def build_app(
     if active_broker is None and isinstance(getattr(vault, "approval_gate", None), _Broker):
         active_broker = vault.approval_gate
 
+    import os
+    is_prod = os.getenv("APP_ENV") == "production"
+
     app = FastAPI(
         title="rgt-vault",
-        version="0.2.0",
+        version="0.2.0" if not is_prod else "",
         description="Local HTTP surface for the rgt-vault secrets manager.",
+        debug=os.getenv("RGT_VAULT_DEBUG", "0") == "1",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None if is_prod else "/openapi.json",
     )
+
+    if not is_prod:
+        from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
+        from fastapi.responses import HTMLResponse
+
+        SWAGGER_UI_VERSION = "5.17.14"
+        REDOC_VERSION = "2.1.3"
+        SWAGGER_JS_INTEGRITY = "sha384-wmyclcVGX/WhUkdkATwhaK1X1JtiNrr2EoYJ+diV3vj4v6OC5yCeSu+yW13SYJep"
+        SWAGGER_CSS_INTEGRITY = "sha384-wxLW6kwyHktdDGr6Pv1zgm/VGJh99lfUbzSn6HNHBENZlCN7W602k9VkGdxuFvPn"
+        REDOC_JS_INTEGRITY = "sha384-R8e5ippgVo+kphHRsZE026R4rLIN/ORakEnRnOJ3S7BauiXHeD2EnvDpCcPYV4O/"
+
+        @app.get("/docs", include_in_schema=False)
+        async def custom_swagger_ui_html(request: Request) -> HTMLResponse:
+            swagger_js = f"https://cdn.jsdelivr.net/npm/swagger-ui-dist@{SWAGGER_UI_VERSION}/swagger-ui-bundle.js"
+            swagger_css = f"https://cdn.jsdelivr.net/npm/swagger-ui-dist@{SWAGGER_UI_VERSION}/swagger-ui.css"
+            
+            response = get_swagger_ui_html(
+                openapi_url=app.openapi_url or "/openapi.json",
+                title=app.title + " - Swagger UI",
+                oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
+                swagger_js_url=swagger_js,
+                swagger_css_url=swagger_css,
+                swagger_favicon_url="https://fastapi.tiangolo.com/img/favicon.png",
+            )
+            
+            html = response.body.decode("utf-8")
+            html = html.replace(
+                f'href="{swagger_css}"',
+                f'href="{swagger_css}" integrity="{SWAGGER_CSS_INTEGRITY}" crossorigin="anonymous"'
+            )
+            html = html.replace(
+                f'src="{swagger_js}"',
+                f'src="{swagger_js}" integrity="{SWAGGER_JS_INTEGRITY}" crossorigin="anonymous"'
+            )
+            return HTMLResponse(content=html, status_code=response.status_code)
+
+        @app.get("/redoc", include_in_schema=False)
+        async def custom_redoc_html(request: Request) -> HTMLResponse:
+            redoc_js = f"https://cdn.jsdelivr.net/npm/redoc@{REDOC_VERSION}/bundles/redoc.standalone.js"
+            
+            response = get_redoc_html(
+                openapi_url=app.openapi_url or "/openapi.json",
+                title=app.title + " - ReDoc",
+                redoc_js_url=redoc_js,
+                redoc_favicon_url="https://fastapi.tiangolo.com/img/favicon.png",
+            )
+            
+            html = response.body.decode("utf-8")
+            html = html.replace(
+                f'src="{redoc_js}"',
+                f'src="{redoc_js}" integrity="{REDOC_JS_INTEGRITY}" crossorigin="anonymous"'
+            )
+            return HTMLResponse(content=html, status_code=response.status_code)
+
 
     # 1. RGT-436 / RGT-119: DNS Rebinding Protection
     # Rejects requests with suspicious Host headers. Default to loopback.
@@ -178,9 +270,71 @@ def build_app(
         allow_headers=["Authorization", "Content-Type"],
     )
 
+    app.add_middleware(StrictURLNormalizationMiddleware)
+
+    # CSRF Double-Submit Cookie Middleware (RGT-447)
+    @app.middleware("http")
+    async def csrf_middleware(request: Request, call_next):
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            csrf_cookie = request.cookies.get("csrf_token")
+            new_csrf_token = None
+            if not csrf_cookie:
+                import secrets
+                new_csrf_token = secrets.token_urlsafe(32)
+
+            response = await call_next(request)
+            if new_csrf_token:
+                response.set_cookie(
+                    "csrf_token",
+                    new_csrf_token,
+                    httponly=True,
+                    secure=True,
+                    samesite="strict",
+                )
+            return response
+
+        # For state-changing methods:
+        # 1. Bypass validation for requests containing a valid Bearer token in the 'Authorization' header.
+        auth_header = request.headers.get("authorization", "")
+        is_valid_bearer = False
+        if auth_header.startswith("Bearer "):
+            try:
+                token_store.verify(auth_header)
+                is_valid_bearer = True
+            except Exception:
+                _op_store = operator_token_store or token_store
+                try:
+                    _op_store.verify(auth_header)
+                    is_valid_bearer = True
+                except Exception:
+                    pass
+
+        if is_valid_bearer:
+            return await call_next(request)
+
+        # 2. Perform Double-Submit Cookie CSRF check
+        csrf_cookie = request.cookies.get("csrf_token")
+        csrf_header = request.headers.get("x-csrf-token") or request.headers.get("x-xsrf-token")
+
+        if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"error": "Forbidden", "detail": "CSRF token validation failed"},
+            )
+
+        return await call_next(request)
+
     # 3. RGT-454 / RGT-453 / RGT-438: Security Headers, Content-Type Enforcement, and Cookies
     @app.middleware("http")
     async def secure_http_headers_middleware(request: Request, call_next):
+        # Accept Header validation (RGT-445)
+        accept_header = request.headers.get("accept", "")
+        if accept_header and not any(mime in accept_header for mime in ("application/json", "*/*", "application/*")):
+            return JSONResponse(
+                status_code=status.HTTP_406_NOT_ACCEPTABLE,
+                content={"error": "NotAcceptable", "detail": "Server only supports application/json responses"}
+            )
+
         # A. Enforce Content-Type for POST, PUT, PATCH on API endpoints (RGT-453)
         if request.method in ("POST", "PUT", "PATCH") and request.url.path.startswith("/v1/"):
             content_type = request.headers.get("content-type", "")
@@ -247,6 +401,11 @@ def build_app(
 
                 response.headers.append("Set-Cookie", "; ".join(parts))
 
+        for key in ("server", "x-powered-by"):
+            if hasattr(response.headers, "pop"):
+                response.headers.pop(key, None)
+            elif key in response.headers:
+                del response.headers[key]
         return response
 
     def require_token(request: Request, authorization: Optional[str] = Header(None)) -> str:
@@ -305,6 +464,26 @@ def build_app(
             "actions": [s.name for s in registry.list()],
         }
 
+    @app.get("/crossdomain.xml", response_class=Response)
+    @app.get("/clientaccesspolicy.xml", response_class=Response)
+    def serve_restrictive_xml_policy():
+        """Disable Flash and Silverlight policies and prevent caching of response."""
+        empty_policy = (
+            '<?xml version="1.0"?>\n'
+            '<!DOCTYPE cross-domain-policy SYSTEM "http://www.adobe.com/xml/dtds/cross-domain-policy.dtd">\n'
+            '<cross-domain-policy>\n'
+            '  <site-control permitted-cross-domain-policies="none"/>\n'
+            '</cross-domain-policy>'
+        )
+        headers = {
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Type": "application/xml"
+        }
+        return Response(content=empty_policy, status_code=404, headers=headers)
+
     @app.post("/v1/secrets")
     def set_secret(request: Request, body: SetSecretBody, token_id: str = Depends(require_token)) -> Dict[str, Any]:
         vault.set_secret(
@@ -361,9 +540,15 @@ def build_app(
         namespace: str,
         agent: str,
         purpose: str = "",
+        limit: int = 100,
+        offset: int = 0,
         token_id: str = Depends(require_token),
     ) -> Dict[str, Any]:
-        items = vault.list_secrets(namespace, agent=agent, purpose=purpose)
+        if limit < 1 or limit > 1000:
+            raise HTTPException(status_code=400, detail="'limit' must be between 1 and 1000.")
+        if offset < 0:
+            raise HTTPException(status_code=400, detail="'offset' must be >= 0.")
+        items = vault.list_secrets(namespace, agent=agent, purpose=purpose, limit=limit, offset=offset)
         return {"namespace": namespace, "secrets": items}
 
     # ---- operator approval endpoints (the TUI's back end) -------------- #
@@ -424,9 +609,10 @@ def build_app(
         request: Request,
         namespace: str,
         name: str,
+        agent: str = "system",
         token_id: str = Depends(require_token),
     ) -> Dict[str, Any]:
-        vault.revoke_secret(namespace, name)
+        vault.revoke_secret(namespace, name, agent=agent)
         return {"ok": True, "namespace": namespace, "name": name}
 
     @app.post("/v1/rotate")
@@ -567,6 +753,7 @@ def build_app(
                 )
         return {"agent": agent, "capabilities": authorized}
 
+    app.vault = vault
     return app
 
 

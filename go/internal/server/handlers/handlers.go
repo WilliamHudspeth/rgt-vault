@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -271,12 +272,31 @@ func writeError(w http.ResponseWriter, err error) {
 
 // HealthCheck returns server health information. No auth required.
 func (h *Handlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	version := "0.3.0"
+	if os.Getenv("APP_ENV") == "production" {
+		version = ""
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":    "ok",
 		"vault_id":  h.Store.VaultID(),
 		"key_epoch": h.Store.KeyEpoch(),
-		"version":   "0.3.0",
+		"version":   version,
 	})
+}
+
+// BlockXMLPolicy serves restrictive policies with a 404 status and disables caching.
+func (h *Handlers) BlockXMLPolicy(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusNotFound)
+	w.Write([]byte(`<?xml version="1.0"?>
+<!DOCTYPE cross-domain-policy SYSTEM "http://www.adobe.com/xml/dtds/cross-domain-policy.dtd">
+<cross-domain-policy>
+  <site-control permitted-cross-domain-policies="none"/>
+</cross-domain-policy>`))
 }
 
 // ---------------------------------------------------------------------------

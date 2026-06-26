@@ -140,7 +140,7 @@ def test_revoke(server):
     app, token = server
     c = _authed(app, token)
     c.post("/v1/secrets", json={"name": "API_KEY", "value": "sk-abc", "agent": "tester"})
-    r = c.post("/v1/secrets/default/API_KEY/revoke")
+    r = c.post("/v1/secrets/default/API_KEY/revoke?agent=tester")
     assert r.status_code == 200
     r = c.get("/v1/secrets", params={"namespace": "default", "agent": "tester"})
     assert "API_KEY" not in [s["name"] for s in r.json()["secrets"]]

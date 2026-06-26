@@ -517,3 +517,283 @@ def test_secure_cookie_flags_enforced(server):
     assert "HttpOnly" in cookie_header
     assert "Secure" in cookie_header
     assert "SameSite=Strict" in cookie_header
+
+
+def test_server_header_and_debug_disclosure_stripped(server):
+    """Verify component version disclosures and server headers are stripped (RGT-452)."""
+    app, token = server
+    c = _authed(app, token)
+    
+    # 1. Verify headers are not disclosed
+    r = c.get("/healthz")
+    assert "Server" not in r.headers
+    assert "X-Powered-By" not in r.headers
+    
+    # 2. Verify debug mode is false on the app instance
+    assert app.debug is False
+
+
+def test_crossdomain_and_clientaccesspolicy_cache_disabled(server):
+    """Verify crossdomain/clientaccesspolicy files return 404 and disable caching (RGT-437)."""
+    app, token = server
+    c = _authed(app, token)
+    
+    for path in ["/crossdomain.xml", "/clientaccesspolicy.xml"]:
+        r = c.get(path)
+        assert r.status_code == 404
+        assert r.headers["Cache-Control"] == "no-store, no-cache, must-revalidate, max-age=0"
+        assert r.headers["Pragma"] == "no-cache"
+        assert r.headers["Expires"] == "0"
+
+
+def test_production_environment_hides_documentation(monkeypatch, tmp_path, master_provider):
+    """Verify that in production mode, docs and openapi.json are disabled (RGT-452)."""
+    monkeypatch.setenv("APP_ENV", "production")
+    vault = VaultManager(
+        db_path=str(tmp_path / "vault.db"),
+        policy_yaml=POLICY,
+        master_provider=master_provider,
+    )
+    token = generate_token()
+    store = TokenStore(tmp_path / "server.token")
+    store.write(token)
+    registry = ActionRegistry()
+    register_builtin_actions(registry)
+    app = build_app(vault, store, registry)
+    c = _authed(app, token)
+    
+    # Docs should be disabled in production
+    assert c.get("/docs").status_code == 404
+    assert c.get("/redoc").status_code == 404
+    assert c.get("/openapi.json").status_code == 404
+    # The application version should also be suppressed/cleared
+    assert app.version == ""
+
+
+# ------------------------------------------------------------------
+# Milestone 3 Security Controls tests (RGT-443 to RGT-448)
+# ------------------------------------------------------------------
+
+def test_m3_uri_normalization(server):
+    """Verify URI normalization blocks path traversal and control characters (RGT-443)."""
+    app, token = server
+    c = _authed(app, token)
+    
+    # Test path traversal sequences
+    assert c.get("/v1/secrets/..%2fsecrets").status_code == 400
+    assert c.get("/v1/secrets/default\\\\key").status_code == 400
+    assert c.get("/v1//secrets").status_code == 400
+    assert c.get("/v1/secrets/default/key%2f..%2fuse").status_code == 400
+    
+    # Test control characters
+    assert c.get("/v1/secrets/default/key%0Ause").status_code == 400
+    assert c.get("/v1/secrets/default/key%00use").status_code == 400
+
+
+def test_m3_csrf_protection(server):
+    """Verify Double-Submit Cookie CSRF protection and Bearer bypass (RGT-447)."""
+    app, token = server
+    c = TestClient(app)
+    
+    # Safe request generates CSRF token
+    r = c.get("/healthz")
+    assert r.status_code == 200
+    csrf_token = r.cookies.get("csrf_token")
+    assert csrf_token is not None
+    
+    # POST without CSRF token should return 403 Forbidden
+    r = c.post("/v1/secrets", json={"name": "csrf_key", "value": "val", "agent": "tester"})
+    assert r.status_code == 403
+    assert r.json()["error"] == "Forbidden"
+    
+    # POST with mismatched CSRF token should return 403 Forbidden
+    c.cookies.set("csrf_token", csrf_token)
+    r = c.post("/v1/secrets", json={"name": "csrf_key", "value": "val", "agent": "tester"}, headers={"X-CSRF-Token": "mismatch"})
+    assert r.status_code == 403
+    
+    # POST with matching CSRF token but missing Bearer auth should return 401 Unauthorized (not 403)
+    r = c.post("/v1/secrets", json={"name": "csrf_key", "value": "val", "agent": "tester"}, headers={"X-CSRF-Token": csrf_token})
+    assert r.status_code == 401
+    
+    # POST with valid Bearer token should bypass CSRF verification entirely
+    c_authed = _authed(app, token)
+    r = c_authed.post("/v1/secrets", json={"name": "csrf_key", "value": "val", "agent": "tester"})
+    assert r.status_code == 200
+
+
+def test_m3_accept_header_validation(server):
+    """Verify Accept header negotiation rejects unsupported formats (RGT-445)."""
+    app, token = server
+    c = _authed(app, token)
+    
+    # Accept: application/xml should return 406 Not Acceptable
+    r = c.get("/healthz", headers={"Accept": "application/xml"})
+    assert r.status_code == 406
+    assert r.json()["error"] == "NotAcceptable"
+    
+    # Accept: application/json should return 200 OK
+    r = c.get("/healthz", headers={"Accept": "application/json"})
+    assert r.status_code == 200
+    
+    # Accept: */* should return 200 OK
+    r = c.get("/healthz", headers={"Accept": "*/*"})
+    assert r.status_code == 200
+
+
+def test_m3_query_limits_and_pagination(server):
+    """Verify pagination limits and bounds on secrets listing (RGT-448)."""
+    app, token = server
+    c = _authed(app, token)
+    
+    # Validate bounds raise 400
+    assert c.get("/v1/secrets", params={"namespace": "default", "agent": "tester", "limit": 0}).status_code == 400
+    assert c.get("/v1/secrets", params={"namespace": "default", "agent": "tester", "limit": 1001}).status_code == 400
+    assert c.get("/v1/secrets", params={"namespace": "default", "agent": "tester", "offset": -1}).status_code == 400
+    
+    # Insert mock secrets
+    for i in range(5):
+        c.post("/v1/secrets", json={"name": f"pagination_key_{i}", "value": f"val_{i}", "agent": "tester"})
+        
+    # Test limit
+    r = c.get("/v1/secrets", params={"namespace": "default", "agent": "tester", "limit": 2})
+    assert r.status_code == 200
+    secrets = r.json()["secrets"]
+    assert len(secrets) == 2
+    
+    # Test offset
+    r = c.get("/v1/secrets", params={"namespace": "default", "agent": "tester", "limit": 2, "offset": 2})
+    assert r.status_code == 200
+    secrets_offset = r.json()["secrets"]
+    assert len(secrets_offset) == 2
+    assert secrets[0]["name"] != secrets_offset[0]["name"]
+
+
+def test_m3_json_schema_validation_capability(server):
+    """Verify JSON Schema and Pydantic model validation on Capability execution (RGT-446)."""
+    app, token = server
+    c = _authed(app, token)
+    
+    # Register a capability using a Pydantic model for validation
+    from pydantic import BaseModel, Field
+    class MockParams(BaseModel):
+        email: str
+        age: int = Field(..., ge=0)
+        
+    def cap_handler(payload, ctx):
+        return {"ok": True, "email": payload["email"]}
+        
+    app.vault.capability_registry.register(
+        name="custom.m3_pydantic",
+        handler=cap_handler,
+        supported_versions={1},
+        params_schema=MockParams,
+    )
+    
+    # Test execution validation: missing field (email)
+    r = c.post(
+        "/v1/capabilities/execute",
+        json={
+            "capability": "custom.m3_pydantic",
+            "agent_id": "tester",
+            "capability_token": "dummy",
+            "capability_version": 1,
+            "payload": {"age": 25},
+        }
+    )
+    # Pydantic validation fails -> 400 ValidationError
+    assert r.status_code == 400
+    assert "ValidationError" in r.json()["error"]
+    
+    # Test execution validation: invalid field type
+    r = c.post(
+        "/v1/capabilities/execute",
+        json={
+            "capability": "custom.m3_pydantic",
+            "agent_id": "tester",
+            "capability_token": "dummy",
+            "capability_version": 1,
+            "payload": {"email": "test@example.com", "age": -5},
+        }
+    )
+    assert r.status_code == 400
+    assert "ValidationError" in r.json()["error"]
+    
+    # Test execution validation: valid payload
+    spec = app.vault.capability_registry.get("custom.m3_pydantic")
+    spec.validate_payload({"email": "test@example.com", "age": 30}) # passes without error
+    
+    # Test JSON Schema dict validation
+    json_schema = {
+        "type": "object",
+        "required": ["email"],
+        "properties": {
+            "email": {"type": "string"},
+            "age": {"type": "integer"},
+        },
+        "additionalProperties": False,
+    }
+    app.vault.capability_registry.register(
+        name="custom.m3_jsonschema",
+        handler=cap_handler,
+        supported_versions={1},
+        params_schema=json_schema,
+    )
+    spec_json = app.vault.capability_registry.get("custom.m3_jsonschema")
+    
+    # Missing required email
+    from rgt_vault.exceptions import ValidationError
+    import pytest
+    with pytest.raises(ValidationError):
+        spec_json.validate_payload({"age": 30})
+        
+    # Additional property not allowed
+    with pytest.raises(ValidationError):
+        spec_json.validate_payload({"email": "test@example.com", "extra": "prop"})
+        
+    # Valid schema payload passes
+    spec_json.validate_payload({"email": "test@example.com", "age": 30})
+
+
+def test_m3_multi_level_revocation_auth(server):
+    """Verify ABAC policy is evaluated during secret revocation (RGT-444)."""
+    app, token = server
+    c = _authed(app, token)
+    
+    # Create a secret
+    c.post("/v1/secrets", json={"name": "key_to_revoke", "value": "secret", "agent": "tester"})
+    
+    # Revoke with unauthorized agent (e.g. intruder)
+    r = c.post("/v1/secrets/default/key_to_revoke/revoke?agent=intruder")
+    assert r.status_code == 403
+    assert r.json()["error"] == "PolicyDeniedError"
+    
+    # Revoke with authorized agent (tester)
+    r = c.post("/v1/secrets/default/key_to_revoke/revoke?agent=tester")
+    assert r.status_code == 200
+
+
+def test_swagger_ui_and_redoc_sri_hashes(server):
+    """Verify that Swagger UI and ReDoc pages implement Subresource Integrity (RGT-451)."""
+    app, token = server
+    c = _authed(app, token)
+    
+    # 1. Verify Swagger UI
+    r_docs = c.get("/docs")
+    assert r_docs.status_code == 200
+    html_docs = r_docs.text
+    # Ensure pinned version is used
+    assert "/npm/swagger-ui-dist@5.17.14/" in html_docs
+    # Ensure integrity attributes exist for both script and stylesheet
+    assert 'integrity="sha384-wmyclcVGX/WhUkdkATwhaK1X1JtiNrr2EoYJ+diV3vj4v6OC5yCeSu+yW13SYJep"' in html_docs
+    assert 'integrity="sha384-wxLW6kwyHktdDGr6Pv1zgm/VGJh99lfUbzSn6HNHBENZlCN7W602k9VkGdxuFvPn"' in html_docs
+    assert 'crossorigin="anonymous"' in html_docs
+    
+    # 2. Verify ReDoc
+    r_redoc = c.get("/redoc")
+    assert r_redoc.status_code == 200
+    html_redoc = r_redoc.text
+    assert "/npm/redoc@2.1.3/" in html_redoc
+    assert 'integrity="sha384-R8e5ippgVo+kphHRsZE026R4rLIN/ORakEnRnOJ3S7BauiXHeD2EnvDpCcPYV4O/"' in html_redoc
+    assert 'crossorigin="anonymous"' in html_redoc
+
+

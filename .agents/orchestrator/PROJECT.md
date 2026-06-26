@@ -11,9 +11,9 @@
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
 | 1 | HTTP Headers & CORS Hardening | RGT-454, RGT-453, RGT-438, RGT-436 | None | DONE |
-| 2 | Server Config & Information Leakage Prevention | RGT-452, RGT-442, RGT-437 | M1 | PLANNED |
-| 3 | API Security & Content Allowlisting | RGT-448, RGT-447, RGT-446, RGT-445, RGT-444, RGT-443 | M2 | PLANNED |
-| 4 | Build Hardening & Dependency Governance | RGT-451, RGT-450, RGT-449 | M3 | PLANNED |
+| 2 | Server Config & Information Leakage Prevention | RGT-452, RGT-442, RGT-437 | M1 | DONE |
+| 3 | API Security & Content Allowlisting | RGT-448, RGT-447, RGT-446, RGT-445, RGT-444, RGT-443 | M2 | DONE |
+| 4 | Build Hardening & Dependency Governance | RGT-451, RGT-450, RGT-449 | M3 | DONE |
 
 ## Interface Contracts
 ### API ↔ Web Client
