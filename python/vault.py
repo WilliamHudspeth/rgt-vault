@@ -2,6 +2,7 @@ import base64
 import binascii
 import contextlib
 import hashlib
+import hmac
 import json
 import os
 import threading
@@ -220,11 +221,11 @@ class VaultManager:
     def _get_aad(self, namespace: str, name: str) -> bytes:
         return f"{self.vault_id}:{namespace}:{name}".encode()
 
-    def audit(self, event: str, secret_name: Optional[str], details: str) -> None:
-        self._log_audit(event, secret_name, details)
+    def audit(self, event: str, secret_name: Optional[str], details: str, agent_id: Optional[str] = None) -> None:
+        self._log_audit(event, secret_name, details, agent_id=agent_id)
 
-    def _log_audit(self, action: str, secret_name: Optional[str] = None, details: str = "") -> None:
-        self.storage.log_audit(action, secret_name, details, self.policy_hash)
+    def _log_audit(self, action: str, secret_name: Optional[str] = None, details: str = "", agent_id: Optional[str] = None) -> None:
+        self.storage.log_audit(action, secret_name, details, self.policy_hash, agent_id=agent_id)
 
     def _validate_string_param(self, param_name: str, value: Any, max_len: int, allow_empty: bool = False):
         if not isinstance(value, str):
@@ -1089,7 +1090,7 @@ class VaultManager:
                 f"{entry.get('details', '')}|{entry.get('policy_hash', '')}"
             )
             expected_hash = hashlib.sha256(expected_raw.encode("utf-8")).hexdigest()
-            if entry.get("entry_hash") != expected_hash:
+            if not hmac.compare_digest(entry.get("entry_hash") or "", expected_hash):
                 return False
             prev_hash = entry.get("entry_hash") or ""
         return True

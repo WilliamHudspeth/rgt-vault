@@ -137,7 +137,12 @@ class StorageBackend:
             return row[0] if row else None
 
     def log_audit(
-        self, action: str, secret_name: Optional[str] = None, details: str = "", policy_hash: str = ""
+        self,
+        action: str,
+        secret_name: Optional[str] = None,
+        details: str = "",
+        policy_hash: str = "",
+        agent_id: Optional[str] = None,
     ) -> None:
         timestamp = _utcnow_iso()
         # Read-prev-then-insert must be atomic, or concurrent writers fork the
@@ -155,10 +160,10 @@ class StorageBackend:
                 entry_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
                 cursor.execute(
                     """
-                    INSERT INTO audit_logs (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO audit_logs (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash, agent_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                    (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash),
+                    (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash, agent_id),
                 )
                 conn.commit()
             except Exception:
@@ -329,7 +334,13 @@ class StorageBackend:
                 raise
 
     def _append_audit_in_tx(
-        self, cursor, action: str, secret_name: Optional[str], details: str, policy_hash: str
+        self,
+        cursor,
+        action: str,
+        secret_name: Optional[str],
+        details: str,
+        policy_hash: str,
+        agent_id: Optional[str] = None,
     ) -> None:
         """Append an audit entry inside an already-open transaction.
 
@@ -347,10 +358,10 @@ class StorageBackend:
         entry_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
         cursor.execute(
             """
-            INSERT INTO audit_logs (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO audit_logs (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash, agent_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-            (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash),
+            (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash, agent_id),
         )
 
     def list_secrets(self, namespace: str, policy_hash: str = "", limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
