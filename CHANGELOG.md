@@ -5,6 +5,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Storage**: Optimized `VaultManager._migrate_legacy_secrets` to avoid loading all records into memory, significantly improving startup time for vaults with large numbers of secrets.
+
 ### Added
 - **Server API**: Added `GET /v1/capabilities/list` endpoint to allow agents to discover which capabilities they are authorized for under the current ABAC policy.
 - **TPM Provider**: Automated `.priv`/`.pub` swap during master key rotation (`rotate_secret` implemented in `LinuxTPMProvider`).

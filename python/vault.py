@@ -179,10 +179,7 @@ class VaultManager:
         P1-2 audit fix: the entire rewrite is a single SQLite transaction.
         A crash mid-migration leaves no half-upgraded rows.
         """
-        active_secrets = self.storage.iter_all_active_secrets()
-        legacy_secrets = [s for s in active_secrets if s[4] == 0]
-
-        if not legacy_secrets:
+        if not self.storage.has_legacy_secrets():
             return
 
         encoded_key = keyring.get_password("rgt_vault", "master_key")
@@ -191,9 +188,6 @@ class VaultManager:
         old_fernet = Fernet(encoded_key.encode("utf-8"))
 
         def _rewrite(record_id, namespace, name, ciphertext, dek_version):
-            if dek_version != 0:
-                # Already migrated; leave it.
-                return ciphertext, dek_version
             try:
                 plaintext = old_fernet.decrypt(ciphertext)
             except InvalidToken:
@@ -205,7 +199,7 @@ class VaultManager:
             new_ciphertext = encrypt(plaintext, self.dek, aad)
             return new_ciphertext, 1
 
-        self.storage.bulk_rewrite_active_secrets(_rewrite)
+        self.storage.bulk_rewrite_legacy_secrets(_rewrite)
 
     @staticmethod
     def _normalize_master(secret: Any) -> MasterSecret:

@@ -430,6 +430,13 @@ class StorageBackend:
                 conn.rollback()
                 raise
 
+    def has_legacy_secrets(self) -> bool:
+        """Returns True if any active secrets have dek_version=0."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            row = cursor.execute("SELECT 1 FROM secrets WHERE status = 'ACTIVE' AND dek_version = 0 LIMIT 1").fetchone()
+            return row is not None
+
     def bulk_rewrite_active_secrets(self, rewrite_fn) -> int:
         """Apply ``rewrite_fn(record_id, namespace, name, ciphertext, dek_version) ->
         (new_ciphertext, new_dek_version)`` to every ACTIVE secret, in a
@@ -445,23 +452,70 @@ class StorageBackend:
             cursor = conn.cursor()
             try:
                 cursor.execute("BEGIN IMMEDIATE")
-                rows = cursor.execute(
+                cursor.execute(
                     "SELECT id, namespace, name, ciphertext, dek_version FROM secrets WHERE status = 'ACTIVE'"
-                ).fetchall()
-                for record_id, namespace, name, ciphertext, dek_version in rows:
-                    new_ct, new_ver = rewrite_fn(
-                        record_id,
-                        namespace,
-                        name,
-                        ciphertext,
-                        dek_version,
-                    )
-                    new_checksum = hashlib.sha256(new_ct).hexdigest()
-                    cursor.execute(
-                        "UPDATE secrets SET ciphertext = ?, checksum = ?, dek_version = ? WHERE id = ?",
-                        (new_ct, new_checksum, new_ver, record_id),
-                    )
-                    rewritten += 1
+                )
+                
+                while True:
+                    rows = cursor.fetchmany(1000)
+                    if not rows:
+                        break
+                        
+                    for record_id, namespace, name, ciphertext, dek_version in rows:
+                        new_ct, new_ver = rewrite_fn(
+                            record_id,
+                            namespace,
+                            name,
+                            ciphertext,
+                            dek_version,
+                        )
+                        new_checksum = hashlib.sha256(new_ct).hexdigest()
+                        conn.execute(
+                            "UPDATE secrets SET ciphertext = ?, checksum = ?, dek_version = ? WHERE id = ?",
+                            (new_ct, new_checksum, new_ver, record_id),
+                        )
+                        rewritten += 1
+                conn.commit()
+                return rewritten
+            except Exception:
+                conn.rollback()
+                raise
+
+    def bulk_rewrite_legacy_secrets(self, rewrite_fn) -> int:
+        """Apply ``rewrite_fn`` to every ACTIVE secret with dek_version=0, in a
+        single SQLite transaction.
+        
+        Using fetchmany() minimizes memory overhead for large databases.
+        """
+        rewritten = 0
+        with self._audit_lock, self._get_conn() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute("BEGIN IMMEDIATE")
+                cursor.execute(
+                    "SELECT id, namespace, name, ciphertext, dek_version FROM secrets WHERE status = 'ACTIVE' AND dek_version = 0"
+                )
+                
+                while True:
+                    rows = cursor.fetchmany(1000)
+                    if not rows:
+                        break
+                        
+                    for record_id, namespace, name, ciphertext, dek_version in rows:
+                        new_ct, new_ver = rewrite_fn(
+                            record_id,
+                            namespace,
+                            name,
+                            ciphertext,
+                            dek_version,
+                        )
+                        new_checksum = hashlib.sha256(new_ct).hexdigest()
+                        # Use connection to execute update so we don't clobber the select cursor
+                        conn.execute(
+                            "UPDATE secrets SET ciphertext = ?, checksum = ?, dek_version = ? WHERE id = ?",
+                            (new_ct, new_checksum, new_ver, record_id),
+                        )
+                        rewritten += 1
                 conn.commit()
                 return rewritten
             except Exception:
