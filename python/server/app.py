@@ -448,6 +448,32 @@ def build_app(
                 for s in specs
             ]
         }
+    @app.get("/v1/capabilities/list")
+    def list_authorized_capabilities(
+        agent: str,
+        namespace: str = "*",
+        purpose: str = "*",
+        token_id: str = Depends(require_token)
+    ) -> Dict[str, Any]:
+        """Discovery API for agents to see what capabilities they are authorized for.
+
+        Evaluates the ABAC policy for the given agent (and optional namespace/purpose context)
+        across all registered capabilities.
+        """
+        specs = vault.capability_registry.list()
+        authorized = []
+        for s in specs:
+            decision = vault.auth.evaluate(agent, namespace, purpose, action=s.name)
+            if decision.get("allowed"):
+                authorized.append(
+                    {
+                        "name": s.name,
+                        "description": s.description,
+                        "supported_versions": sorted(s.supported_versions),
+                        "params_schema": list(s.params_schema),
+                    }
+                )
+        return {"agent": agent, "capabilities": authorized}
 
     return app
 

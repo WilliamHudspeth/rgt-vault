@@ -6,6 +6,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Server API**: Added `GET /v1/capabilities/list` endpoint to allow agents to discover which capabilities they are authorized for under the current ABAC policy.
 - **TPM Provider**: Automated `.priv`/`.pub` swap during master key rotation (`rotate_secret` implemented in `LinuxTPMProvider`).
 - **Docs**: Added developer guidelines for SecureBuffer patterns (`docs/guides/secure-buffer-patterns.md`) to document partial zeroization best practices.
 - **TUI Live Audit Log Streamer**: Added a real-time audit log viewer to the Go TUI (`modeAudit`). Press `a` from the dashboard to stream audit events directly from the server.
