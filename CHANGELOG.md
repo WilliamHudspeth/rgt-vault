@@ -9,6 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Storage**: Optimized `VaultManager._migrate_legacy_secrets` to avoid loading all records into memory, significantly improving startup time for vaults with large numbers of secrets.
 
 ### Added
+- **Docs**: Added Postgres storage backend evaluation and design doc (`docs/architecture/postgres_storage.md`) with a read-only PoC in `python/storage/postgres.py`.
 - **Server API**: Added `GET /v1/capabilities/list` endpoint to allow agents to discover which capabilities they are authorized for under the current ABAC policy.
 - **TPM Provider**: Automated `.priv`/`.pub` swap during master key rotation (`rotate_secret` implemented in `LinuxTPMProvider`).
 - **Docs**: Added developer guidelines for SecureBuffer patterns (`docs/guides/secure-buffer-patterns.md`) to document partial zeroization best practices.
