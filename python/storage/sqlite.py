@@ -19,6 +19,15 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _sanitize_log_field(value: str) -> str:
+    """Encode CRLF and other control characters to prevent log injection (RGT-415).
+
+    Log entries are stored in SQLite but may also be forwarded to syslog or
+    SIEM systems where newline injection could forge fake log lines.
+    """
+    return value.replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+
+
 class StorageBackend:
     def __init__(self, db_path: Union[str, Path] = DEFAULT_DB_PATH):
         self.db_path = Path(db_path)
@@ -145,6 +154,8 @@ class StorageBackend:
         agent_id: Optional[str] = None,
     ) -> None:
         timestamp = _utcnow_iso()
+        safe_details = _sanitize_log_field(details)
+        safe_action = _sanitize_log_field(action)
         # Read-prev-then-insert must be atomic, or concurrent writers fork the
         # hash chain. We take a process-level lock (in-process serialization)
         # and BEGIN IMMEDIATE (cross-process write lock) so the SELECT of the
@@ -156,14 +167,14 @@ class StorageBackend:
                 cursor.execute("SELECT entry_hash FROM audit_logs ORDER BY id DESC LIMIT 1")
                 row = cursor.fetchone()
                 prev_hash = row[0] if row else ""
-                raw = f"{prev_hash}|{timestamp}|{action}|{secret_name or ''}|{details}|{policy_hash}"
+                raw = f"{prev_hash}|{timestamp}|{safe_action}|{secret_name or ''}|{safe_details}|{policy_hash}"
                 entry_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
                 cursor.execute(
                     """
                     INSERT INTO audit_logs (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash, agent_id)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                    (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash, agent_id),
+                    (safe_action, secret_name, timestamp, safe_details, prev_hash, entry_hash, policy_hash, agent_id),
                 )
                 conn.commit()
             except Exception:
@@ -351,17 +362,19 @@ class StorageBackend:
         transaction.
         """
         timestamp = _utcnow_iso()
+        safe_details = _sanitize_log_field(details)
+        safe_action = _sanitize_log_field(action)
         cursor.execute("SELECT entry_hash FROM audit_logs ORDER BY id DESC LIMIT 1")
         prev_row = cursor.fetchone()
         prev_hash = prev_row[0] if prev_row else ""
-        raw = f"{prev_hash}|{timestamp}|{action}|{secret_name or ''}|{details}|{policy_hash}"
+        raw = f"{prev_hash}|{timestamp}|{safe_action}|{secret_name or ''}|{safe_details}|{policy_hash}"
         entry_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
         cursor.execute(
             """
             INSERT INTO audit_logs (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash, agent_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-            (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash, agent_id),
+            (safe_action, secret_name, timestamp, safe_details, prev_hash, entry_hash, policy_hash, agent_id),
         )
 
     def list_secrets(self, namespace: str, policy_hash: str = "", limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:

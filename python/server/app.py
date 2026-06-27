@@ -17,6 +17,7 @@ action, returning only the action's result.
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any, Dict, Optional
 
 try:
@@ -287,7 +288,7 @@ def build_app(
                 response.set_cookie(
                     "csrf_token",
                     new_csrf_token,
-                    httponly=True,
+                    httponly=False,
                     secure=True,
                     samesite="strict",
                 )
@@ -316,7 +317,8 @@ def build_app(
         csrf_cookie = request.cookies.get("csrf_token")
         csrf_header = request.headers.get("x-csrf-token") or request.headers.get("x-xsrf-token")
 
-        if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
+        import hmac
+        if not csrf_cookie or not csrf_header or not hmac.compare_digest(csrf_cookie, csrf_header):
             return JSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
                 content={"error": "Forbidden", "detail": "CSRF token validation failed"},
@@ -392,7 +394,8 @@ def build_app(
                 has_secure = any(p.lower() == "secure" for p in parts)
                 has_samesite = any(p.lower().startswith("samesite") for p in parts)
 
-                if not has_httponly:
+                is_csrf = parts and parts[0].startswith("csrf_token=")
+                if not has_httponly and not is_csrf:
                     parts.append("HttpOnly")
                 if not has_secure:
                     parts.append("Secure")
@@ -425,10 +428,8 @@ def build_app(
         )
         return token_id
 
-    # Operator scope: approving/denying agent requests (and the TUI's
-    # privileged actions) require the operator token when one is configured.
-    # If no separate operator store is set, fall back to the main token so
-    # single-token dev setups still work.
+    if is_prod and operator_token_store is None:
+        logger.warning("OPERATOR TOKEN FALLBACK ACTIVE IN PRODUCTION — configure separate operator token store")
     _operator_store = operator_token_store or token_store
 
     def require_operator_token(request: Request, authorization: Optional[str] = Header(None)) -> str:
@@ -441,11 +442,23 @@ def build_app(
         )
         return token_id
 
+    def _make_incident_id() -> str:
+        return uuid.uuid4().hex[:12]
+
     def _register_error(exc_type: type, status_code: int) -> None:
         async def handler(request: Request, exc: Exception) -> JSONResponse:
+            incident_id = _make_incident_id()
+            logger.warning(
+                "incident=%s status=%s error=%s path=%s",
+                incident_id, status_code, exc_type.__name__, request.url.path,
+            )
             return JSONResponse(
                 status_code=status_code,
-                content={"error": exc_type.__name__, "detail": str(exc)},
+                content={
+                    "error": exc_type.__name__,
+                    "detail": str(exc),
+                    "incident_id": incident_id,
+                },
             )
 
         app.add_exception_handler(exc_type, handler)
@@ -454,6 +467,21 @@ def build_app(
         _register_error(exc_type, status_code)
     # Honeytoken access and rate-limit breaches raise builtin PermissionError.
     _register_error(PermissionError, 403)
+
+    # RGT-420: global last-resort handler — catches any unhandled exception
+    # so stack traces are never exposed in responses (RGT-421).
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        incident_id = _make_incident_id()
+        logger.exception("unhandled exception incident=%s path=%s", incident_id, request.url.path)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "InternalServerError",
+                "detail": "An unexpected error occurred. Contact support.",
+                "incident_id": incident_id,
+            },
+        )
 
     @app.get("/healthz")
     def healthz() -> Dict[str, Any]:

@@ -65,6 +65,8 @@ def is_valid_email_syntax(email: str) -> bool:
         return False
     if len(email) > 254:
         return False
+    if ".." in email:
+        return False
     return bool(_EMAIL_RE.match(email))
 
 

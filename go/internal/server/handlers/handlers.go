@@ -6,6 +6,9 @@
 package handlers
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -134,9 +137,20 @@ func (s *Store) AddAuditEntry(event, principal, detail string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.auditSeq++
-	hash := fmt.Sprintf("sha256:%04d", s.auditSeq)
+
+	prevHash := ""
+	if len(s.auditLog) > 0 {
+		prevHash = s.auditLog[len(s.auditLog)-1].Hash
+	}
+
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	raw := fmt.Sprintf("%s|%s|%s|%s|%s", prevHash, timestamp, event, principal, detail)
+	hasher := sha256.New()
+	hasher.Write([]byte(raw))
+	hash := hex.EncodeToString(hasher.Sum(nil))
+
 	s.auditLog = append(s.auditLog, AuditEntry{
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Timestamp: timestamp,
 		Event:     event,
 		Principal: principal,
 		Detail:    detail,
@@ -160,8 +174,27 @@ func (s *Store) GetAuditLog(limit int) []AuditEntry {
 	return result
 }
 
-// VerifyAuditChain always returns true in this stub.
+// VerifyAuditChain walks every entry in the in-memory audit log and recomputes the SHA-256 chain hash.
 func (s *Store) VerifyAuditChain() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if len(s.auditLog) == 0 {
+		return true
+	}
+
+	prevHash := ""
+	for _, entry := range s.auditLog {
+		raw := fmt.Sprintf("%s|%s|%s|%s|%s", prevHash, entry.Timestamp, entry.Event, entry.Principal, entry.Detail)
+		hasher := sha256.New()
+		hasher.Write([]byte(raw))
+		expectedHash := hex.EncodeToString(hasher.Sum(nil))
+
+		if subtle.ConstantTimeCompare([]byte(entry.Hash), []byte(expectedHash)) != 1 {
+			return false
+		}
+		prevHash = entry.Hash
+	}
 	return true
 }
 

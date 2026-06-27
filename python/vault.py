@@ -236,6 +236,21 @@ class VaultManager:
         if len(value) > max_len:
             raise ValidationError(f"'{param_name}' exceeds the maximum allowed length of {max_len} characters.")
 
+        from rgt_vault.input_validation import (
+            validate_name,
+            validate_namespace,
+            validate_agent,
+            validate_free_text,
+        )
+        if param_name == "name":
+            validate_name(value)
+        elif param_name == "namespace":
+            validate_namespace(value)
+        elif param_name == "agent":
+            validate_agent(value)
+        elif param_name in ("note", "purpose"):
+            validate_free_text(value, max_len=max_len)
+
     def _hook_consult(
         self,
         operation: str,
@@ -894,6 +909,10 @@ class VaultManager:
             return callback(secret_buffer)
 
     def list_secrets(self, namespace: str, agent: str, purpose: str = "", limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        self._validate_string_param("namespace", namespace, max_len=128)
+        self._validate_string_param("agent", agent, max_len=128)
+        if purpose:
+            self._validate_string_param("purpose", purpose, max_len=256)
         self._hook_consult("list", agent, namespace, purpose)
         decision = self.auth.evaluate(agent, namespace, purpose, action="read")
         if not decision["allowed"]:
@@ -906,6 +925,9 @@ class VaultManager:
         return self.storage.list_secrets(namespace, policy_hash=self.policy_hash, limit=limit, offset=offset)
 
     def revoke_secret(self, namespace: str, name: str, agent: str = "system") -> None:
+        self._validate_string_param("namespace", namespace, max_len=128)
+        self._validate_string_param("name", name, max_len=256)
+        self._validate_string_param("agent", agent, max_len=128)
         self._hook_consult("revoke", agent, namespace, secret_name=name)
         decision = self.auth.evaluate(agent, namespace, "*", action="revoke")
         if not decision["allowed"]:
@@ -927,6 +949,10 @@ class VaultManager:
             )
 
     def simulate(self, agent: str, namespace: str, purpose: str, action: str = "read") -> Dict[str, Any]:
+        self._validate_string_param("agent", agent, max_len=128)
+        self._validate_string_param("namespace", namespace, max_len=128)
+        if purpose:
+            self._validate_string_param("purpose", purpose, max_len=256)
         self._hook_consult("simulate", agent, namespace, purpose)
         self._log_audit("SIMULATION_RUN", None, f"Agent: {agent}, Namespace: {namespace}, Action: {action}")
         return self.auth.evaluate(agent, namespace, purpose, action)
