@@ -9,14 +9,55 @@ Uses the shared _http.post_json helper for OPUS-102/103/104 hardening
 
 from __future__ import annotations
 
+import http.client
+import ipaddress
 import json
+import socket
+import ssl
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from .. import usage as usage_tracker
 from ..types import Provider, Reply
 from . import _http
+
+
+def _validate_base_url(url: str, allow_remote: bool = False) -> str:
+    """SSRF guard for provider base_url (RGT-109).
+
+    Resolves the hostname once at construction time and rejects link-local /
+    metadata addresses unconditionally, and non-loopback addresses unless
+    allow_remote=True. NOTE: this is a resolve-then-connect check, so it does
+    not close a DNS-rebinding TOCTOU window between validation and the actual
+    request — that's an accepted gap here (the Go client handles this
+    properly via net.Dialer.Control; see RGT-197).
+    """
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError(f"Invalid scheme '{parsed.scheme}'. Must be 'http' or 'https'.")
+    if not parsed.hostname:
+        raise ValueError("URL must include a hostname.")
+
+    try:
+        addrinfo = socket.getaddrinfo(parsed.hostname, None)
+    except socket.gaierror as e:
+        raise ValueError(f"Failed to resolve hostname: {parsed.hostname}") from e
+
+    for info in addrinfo:
+        ip_str = info[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if ip.is_link_local:
+            raise ValueError(f"Resolved IP {ip} is a link-local/metadata address, which is forbidden.")
+        if not allow_remote and not ip.is_loopback:
+            raise ValueError(f"Resolved IP {ip} is a non-loopback address. Set allow_remote=True to permit.")
+
+    normalized = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+    return normalized.rstrip("/")
 
 
 class OllamaProvider(Provider):
@@ -38,9 +79,10 @@ class OllamaProvider(Provider):
         *,
         base_url: str = "http://localhost:11434",
         name: str | None = None,
+        allow_remote: bool = False,
     ):
         self.model = model
-        self.base_url = base_url.rstrip("/")
+        self.base_url = _validate_base_url(base_url, allow_remote=allow_remote)
         self.name = name or f"ollama:{model}"
 
     def is_available(self) -> bool:
@@ -64,7 +106,21 @@ class OllamaProvider(Provider):
         try:
             with urllib.request.urlopen(f"{self.base_url}/api/tags", timeout=3) as r:
                 data = json.loads(r.read())
-        except Exception:
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            socket.timeout,
+            json.JSONDecodeError,
+            http.client.HTTPException,
+            ssl.SSLError,
+            ConnectionError,
+        ) as e:
+            usage_tracker.log(
+                provider=self.name,
+                model=self.model,
+                ok=False,
+                error=f"is_available probe failed: {type(e).__name__}: {e}",
+            )
             return False
         tags = {m.get("name", "") for m in data.get("models", [])}
         if not tags:

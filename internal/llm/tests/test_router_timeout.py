@@ -20,8 +20,8 @@ import threading
 import time
 from unittest.mock import MagicMock
 
-from scripts.llm.router import TASK_CODE_REVIEW, RouteConfig, Router
-from scripts.llm.types import Reply
+from internal.llm.router import TASK_CODE_REVIEW, RouteConfig, Router
+from internal.llm.types import Reply
 
 
 class _HangingProvider:

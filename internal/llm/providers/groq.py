@@ -59,6 +59,7 @@ class GroqProvider(Provider):
                     "User-Agent": "hermes-llm-review/1.0",
                 },
                 timeout=timeout,
+                retries=3,
             )
         except HTTPStatusError as e:
             usage_tracker.log(
@@ -95,6 +96,10 @@ class GroqProvider(Provider):
                 error=f"unexpected response shape: {e}",
                 raw=resp,
             )
+        if text is None:
+            err = "provider returned null content"
+            usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=err)
+            return Reply(text="", provider=self.name, model=self.model, latency_ms=latency, error=err, raw=resp)
         usage = resp.get("usage", {})
         in_tok = usage.get("prompt_tokens", 0)
         out_tok = usage.get("completion_tokens", 0)

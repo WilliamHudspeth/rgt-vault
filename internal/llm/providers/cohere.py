@@ -74,8 +74,16 @@ class CohereProvider(Provider):
         latency = timer_ms(t0)
         try:
             content = resp["message"]["content"]
-            text = content[0]["text"] if isinstance(content, list) else str(content)
-        except (KeyError, IndexError, TypeError) as e:
+            if content is None:
+                text = None
+            elif isinstance(content, list):
+                text = next(
+                    (b.get("text") for b in content if isinstance(b, dict) and b.get("type") == "text"),
+                    None,
+                )
+            else:
+                text = str(content)
+        except (KeyError, TypeError) as e:
             usage_tracker.log(
                 provider=self.name,
                 model=self.model,
@@ -91,6 +99,10 @@ class CohereProvider(Provider):
                 error=f"unexpected response shape: {e}",
                 raw=resp,
             )
+        if text is None:
+            err = "provider returned null/no-text-block content"
+            usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=err)
+            return Reply(text="", provider=self.name, model=self.model, latency_ms=latency, error=err, raw=resp)
         usage = resp.get("usage", {})
         tokens = usage.get("tokens", {})
         in_tok = tokens.get("input_tokens", 0)

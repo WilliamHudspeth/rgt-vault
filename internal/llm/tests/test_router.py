@@ -5,14 +5,14 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from scripts.llm.router import (
+from internal.llm.router import (
     TASK_CODE_REVIEW,
     TASK_GENERAL,
     RouteConfig,
     Router,
     build_provider,
 )
-from scripts.llm.types import Reply
+from internal.llm.types import Reply
 
 
 class _FakeProvider:
@@ -48,7 +48,7 @@ class BuildProviderTests(unittest.TestCase):
                 self.assertEqual(cls_name, type(p).__name__)
 
     def test_ollama_strips_prefix(self):
-        from scripts.llm.providers.ollama import OllamaProvider
+        from internal.llm.providers.ollama import OllamaProvider
 
         p = build_provider("ollama:llama3.2:3b")
         self.assertIsInstance(p, OllamaProvider)
@@ -90,7 +90,7 @@ class ChainConfigTests(unittest.TestCase):
         # The chains dict must be populated.
         self.assertGreater(len(loaded.chains), 0, "empty yaml should fall back to default chains")
         # Specifically, the default code-review chain should be present.
-        from scripts.llm.router import TASK_CODE_REVIEW
+        from internal.llm.router import TASK_CODE_REVIEW
 
         self.assertIn(TASK_CODE_REVIEW, loaded.chains)
 
@@ -101,7 +101,7 @@ class ChainConfigTests(unittest.TestCase):
         with tempfile_patch() as p:
             p.write_text(yaml.safe_dump({"providers": {"groq": {"model": "x"}}}))
             loaded = RouteConfig.load(p)
-        from scripts.llm.router import TASK_CODE_REVIEW
+        from internal.llm.router import TASK_CODE_REVIEW
 
         self.assertIn(TASK_CODE_REVIEW, loaded.chains, "providers-only yaml should still get default chains")
         # The providers section should be preserved.
@@ -114,7 +114,7 @@ class ChainConfigTests(unittest.TestCase):
         with tempfile_patch() as p:
             p.write_text(yaml.safe_dump({"chains": {}}))
             loaded = RouteConfig.load(p)
-        from scripts.llm.router import TASK_CODE_REVIEW
+        from internal.llm.router import TASK_CODE_REVIEW
 
         self.assertIn(TASK_CODE_REVIEW, loaded.chains, "explicit empty chains should fall back")
 

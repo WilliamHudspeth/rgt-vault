@@ -27,14 +27,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _common import WORKSPACE_ID, is_active, label_set, list_issues
+from _common import WORKSPACE_ID, is_active, label_set, list_issues, list_members
 
 
-def member_lookup():
-    """Best-effort: get member id -> name. Returns {} if API doesn't support it."""
-    # The list endpoint doesn't always include assignee_name; this is a placeholder.
-    # The dashboard uses assignee_id which is sufficient for violation reporting.
-    return {}
+def member_lookup(workspace_id=WORKSPACE_ID):
+    """member_id -> display name, via /api/workspaces/{id}/members (RGT-99).
+
+    Falls back to {} (violations then show raw UUIDs, same as before) if the
+    API call fails, rather than raising — this is a reporting nicety, not a
+    correctness-critical path.
+    """
+    try:
+        return list_members(workspace_id)
+    except Exception:
+        return {}
 
 
 def main():
@@ -43,12 +49,14 @@ def main():
     parser.add_argument("--workspace-id", default=WORKSPACE_ID)
     args = parser.parse_args()
 
-    issues = list_issues(args.workspace_id, limit=1000)
+    issues = list_issues(args.workspace_id)
     # The list endpoint already returns everything wip_audit needs
     # (status, project_id, labels, identifier, priority, assignee).
-    # See dashboard.py for the O(N^2) + 200-truncation rationale.
+    # See dashboard.py for the O(N^2) rationale. list_issues() now paginates
+    # internally (RGT-89), so no magic limit= is needed here anymore.
     full_issues = [i for i in issues if i.get("status") or i.get("labels")]
 
+    members = member_lookup(args.workspace_id)
     now = datetime.now(timezone.utc)
 
     # Per-engineer buckets
@@ -79,12 +87,25 @@ def main():
                 by_assignee_xl.setdefault(assignee_id, 0)
                 by_assignee_xl[assignee_id] += 1
 
-        # Ready issues older than 30 days
-        # "Ready" in our workflow is status=todo+priority labels. Or status=backlog.
-        if status in ("todo", "backlog") and created_dt and (now - created_dt).days > 30:
-            ready_old.append((t, (now - created_dt).days))
+        # Ready issues older than 30 days (RGT-99).
+        # "Ready" = status=todo only — backlog is explicitly excluded (a
+        # ticket can sit in backlog indefinitely by design; only todo means
+        # "queued to start").
+        #
+        # Multica exposes no status-transition history (/history and
+        # /activity both 404 — confirmed 2026-07-27), so there is no real
+        # "entered Ready" timestamp available. created_at is actively wrong
+        # here (an old ticket freshly moved to todo would be flagged
+        # instantly). updated_at is the documented fallback: it's not exact
+        # (any edit, including a bot comment, resets it), but it's a much
+        # closer proxy for "untouched while queued" than created_at.
+        if status == "todo" and updated_dt and (now - updated_dt).days > 30:
+            ready_old.append((t, (now - updated_dt).days))
 
-        # Code Review older than 7 days (in_review status)
+        # Code Review older than 7 days (in_review status). Same limitation
+        # as above: updated_at resets on any edit, so this under-counts
+        # tickets that were commented on but not actually reviewed. Flagged
+        # as a known approximation, not silently presented as exact.
         if status == "in_review" and updated_dt and (now - updated_dt).days > 7:
             code_review_old.append((t, (now - updated_dt).days))
 
@@ -99,6 +120,7 @@ def main():
                     "type": "wip_overflow",
                     "rule": "max 3 active issues per engineer",
                     "assignee_id": member_id,
+                    "assignee_name": members.get(member_id, member_id),
                     "actual": active_count,
                     "limit": 3,
                     "tickets": [t["identifier"] for t in tickets],
@@ -111,6 +133,7 @@ def main():
                     "type": "xl_overflow",
                     "rule": "max 1 XL issue per engineer",
                     "assignee_id": member_id,
+                    "assignee_name": members.get(member_id, member_id),
                     "actual": xl_count,
                     "limit": 1,
                     "tickets": [t["identifier"] for t in tickets if "effort:XL" in label_set(t)],
@@ -122,11 +145,11 @@ def main():
         violations.append(
             {
                 "type": "ready_stale",
-                "rule": "Ready/Backlog issues older than 30 days",
+                "rule": "Ready (todo) issues older than 30 days (approx., based on updated_at)",
                 "ticket": t["identifier"],
                 "days_old": days,
                 "limit_days": 30,
-                "title": t["title"][:60],
+                "title": t.get("title", "")[:60],
             }
         )
 
@@ -138,7 +161,7 @@ def main():
                 "ticket": t["identifier"],
                 "days_in_review": days,
                 "limit_days": 7,
-                "title": t["title"][:60],
+                "title": t.get("title", "")[:60],
             }
         )
 

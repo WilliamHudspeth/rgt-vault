@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.llm.router import Router
+from internal.llm.router import Router
 
 
 def check_providers(router: Router) -> dict:
@@ -128,7 +128,7 @@ def main() -> int:
 
     # Multica
     print("\n[2] MULTICA REACHABILITY")
-    from scripts.program._common import WORKSPACE_ID
+    from internal.program._common import WORKSPACE_ID
 
     ok, msg = check_multica(WORKSPACE_ID)
     print(f"  {'OK' if ok else 'FAIL'}: {msg}")

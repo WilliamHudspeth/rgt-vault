@@ -51,14 +51,15 @@ release_gate = _import_program_module("release_gate")
 
 
 def test_get_issue_resolves_via_list_then_direct(monkeypatch):
-    """get_issue must call list_issues(limit=1000) (not 200), then hit
-    the direct /api/issues/{uuid} endpoint, not another list call."""
+    """get_issue must call list_issues() (which now paginates internally,
+    RGT-89 — no more magic-limit band-aid), then hit the direct
+    /api/issues/{uuid} endpoint, not another list call."""
     _common = sys.modules["scripts.program._common"]
 
     calls = []
 
-    def fake_list_issues(workspace_id, limit=200):
-        calls.append(("list", workspace_id, limit))
+    def fake_list_issues(workspace_id):
+        calls.append(("list", workspace_id))
         return [
             {"id": "uuid-1", "identifier": "RGT-1"},
             {"id": "uuid-2", "identifier": "RGT-2"},
@@ -78,10 +79,10 @@ def test_get_issue_resolves_via_list_then_direct(monkeypatch):
     got = _common.get_issue("RGT-2", workspace_id="ws-x")
     assert got == {"id": "uuid-2", "identifier": "RGT-2", "full": True}
 
-    # Must have used limit >= 1000 (was 200 before the fix).
+    # Exactly one list call — no need for a magic large limit anymore,
+    # since list_issues() itself paginates until it has every ticket.
     list_calls = [c for c in calls if c[0] == "list"]
     assert len(list_calls) == 1
-    assert list_calls[0][2] >= 1000, f"list_issues called with limit={list_calls[0][2]}, expected >= 1000"
 
     # Must have hit the direct endpoint, not another list.
     get_calls = [c for c in calls if c[0] == "get"]
@@ -143,7 +144,7 @@ def test_release_gate_uses_list_response_directly(monkeypatch):
     fake_get_issue = mock.MagicMock()
     monkeypatch.setattr(rg, "list_projects", fake_list_projects)
     monkeypatch.setattr(rg, "list_issues", fake_list_issues)
-    monkeypatch.setattr(rg, "get_issue", fake_get_issue)
+    monkeypatch.setattr(rg, "get_issue", fake_get_issue, raising=False)
 
     gates = rg.check_milestone("v0.3.0", workspace_id="ws-x")
     fake_get_issue.assert_not_called()
@@ -209,7 +210,7 @@ def test_dashboard_uses_list_response_directly(monkeypatch):
     fake_get_issue = mock.MagicMock(side_effect=AssertionError("get_issue must not be called"))
 
     monkeypatch.setattr(dashboard, "list_issues", fake_list_issues)
-    monkeypatch.setattr(dashboard, "get_issue", fake_get_issue)
+    monkeypatch.setattr(dashboard, "get_issue", fake_get_issue, raising=False)
     monkeypatch.setattr(dashboard, "list_projects", lambda w: [])
 
     out = dashboard.compute_dashboard(workspace_id="ws-x")
@@ -237,8 +238,8 @@ def test_wip_audit_uses_list_response_directly(monkeypatch):
     fake_get_issue = mock.MagicMock(side_effect=AssertionError("get_issue must not be called"))
 
     monkeypatch.setattr(wip_audit, "list_issues", fake_list_issues)
-    monkeypatch.setattr(wip_audit, "get_issue", fake_get_issue)
-    monkeypatch.setattr(wip_audit, "member_lookup", lambda: {"m1": "Alice"})
+    monkeypatch.setattr(wip_audit, "get_issue", fake_get_issue, raising=False)
+    monkeypatch.setattr(wip_audit, "member_lookup", lambda workspace_id=None: {"m1": "Alice"})
 
     # Run main with --json to /tmp/wip_audit_test.json
     import json

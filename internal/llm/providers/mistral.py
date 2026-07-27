@@ -89,6 +89,10 @@ class MistralProvider(Provider):
                 error=f"unexpected response shape: {e}",
                 raw=resp,
             )
+        if text is None:
+            err = "provider returned null content"
+            usage_tracker.log(provider=self.name, model=self.model, latency_ms=latency, ok=False, error=err)
+            return Reply(text="", provider=self.name, model=self.model, latency_ms=latency, error=err, raw=resp)
         u = resp.get("usage", {})
         in_tok = u.get("prompt_tokens", 0)
         out_tok = u.get("completion_tokens", 0)

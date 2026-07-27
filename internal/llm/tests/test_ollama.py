@@ -31,7 +31,7 @@ class FakeResponse:
 
 
 def test_is_available_exact_match(monkeypatch):
-    from scripts.llm.providers.ollama import OllamaProvider
+    from internal.llm.providers.ollama import OllamaProvider
 
     def fake_urlopen(url, timeout=None):
         return FakeResponse(json.dumps({"models": [{"name": "qwen2.5:7b"}, {"name": "llama3.2:3b"}]}).encode())
@@ -43,7 +43,7 @@ def test_is_available_exact_match(monkeypatch):
 
 def test_is_available_family_match(monkeypatch):
     """qwen2.5:7b (configured) matches qwen2.5:latest (installed)."""
-    from scripts.llm.providers.ollama import OllamaProvider
+    from internal.llm.providers.ollama import OllamaProvider
 
     def fake_urlopen(url, timeout=None):
         return FakeResponse(json.dumps({"models": [{"name": "qwen2.5:latest"}, {"name": "llama3.2:3b"}]}).encode())
@@ -54,7 +54,7 @@ def test_is_available_family_match(monkeypatch):
 
 
 def test_is_available_daemon_unreachable(monkeypatch):
-    from scripts.llm.providers.ollama import OllamaProvider
+    from internal.llm.providers.ollama import OllamaProvider
 
     def fake_urlopen(url, timeout=None):
         raise urllib.error.URLError("connection refused")
@@ -65,7 +65,7 @@ def test_is_available_daemon_unreachable(monkeypatch):
 
 
 def test_is_available_no_models(monkeypatch):
-    from scripts.llm.providers.ollama import OllamaProvider
+    from internal.llm.providers.ollama import OllamaProvider
 
     def fake_urlopen(url, timeout=None):
         return FakeResponse(json.dumps({"models": []}).encode())
@@ -77,7 +77,7 @@ def test_is_available_no_models(monkeypatch):
 
 def test_is_available_different_family(monkeypatch):
     """qwen2.5:7b should NOT match a llama family."""
-    from scripts.llm.providers.ollama import OllamaProvider
+    from internal.llm.providers.ollama import OllamaProvider
 
     def fake_urlopen(url, timeout=None):
         return FakeResponse(json.dumps({"models": [{"name": "llama3.2:3b"}, {"name": "mistral:7b"}]}).encode())
@@ -91,7 +91,7 @@ def test_is_available_different_family(monkeypatch):
 
 
 def test_complete_success(monkeypatch):
-    from scripts.llm.providers import ollama
+    from internal.llm.providers import ollama
 
     def fake_post_json(url, body, *, headers=None, timeout=30):
         assert url.endswith("/api/chat")
@@ -114,7 +114,7 @@ def test_complete_success(monkeypatch):
 def test_complete_valueerror_on_non_json(monkeypatch):
     """A malformed JSON body must not crash the loop — it should return
     a failed Reply. (OPUS-104: previously uncaught.)"""
-    from scripts.llm.providers import _http, ollama
+    from internal.llm.providers import _http, ollama
 
     def fake_post_json(url, body, *, headers=None, timeout=30):
         raise _http.HTTPStatusError(0, "non-JSON response: b'not json'")
@@ -129,7 +129,7 @@ def test_complete_valueerror_on_non_json(monkeypatch):
 def test_complete_timeout(monkeypatch):
     """A timeout must be reported as a failed Reply, not crash the loop.
     (OPUS-102: previously escaped through the catch block.)"""
-    from scripts.llm.providers import _http, ollama
+    from internal.llm.providers import _http, ollama
 
     def fake_post_json(url, body, *, headers=None, timeout=30):
         raise _http.HTTPStatusError(0, f"timeout after {timeout}s")
@@ -142,7 +142,7 @@ def test_complete_timeout(monkeypatch):
 
 
 def test_complete_http_error(monkeypatch):
-    from scripts.llm.providers import _http, ollama
+    from internal.llm.providers import _http, ollama
 
     def fake_post_json(url, body, *, headers=None, timeout=30):
         raise _http.HTTPStatusError(404, "model not found")

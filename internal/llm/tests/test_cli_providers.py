@@ -62,7 +62,7 @@ def test_claude_timeout_killpg(tmp_path):
     orig_path = os.environ.get("PATH", "")
     os.environ["PATH"] = str(tmpdir) + os.pathsep + orig_path
 
-    from scripts.llm.providers import cli
+    from internal.llm.providers import cli
 
     try:
         p = cli.ClaudeCLIProvider()
@@ -82,7 +82,7 @@ def test_claude_timeout_killpg(tmp_path):
 def test_gemini_construction_accepts_model():
     """GeminiCLIProvider had no __init__, so build_provider(spec, args)
     would TypeError when args was non-empty."""
-    from scripts.llm.providers.cli import GeminiCLIProvider
+    from internal.llm.providers.cli import GeminiCLIProvider
 
     g_default = GeminiCLIProvider()
     assert g_default.model == "default"
@@ -105,7 +105,7 @@ def test_gemini_passes_model_flag():
         f'echo "$@" > {argv_file}\necho "fake response"',
     )
 
-    from scripts.llm.providers import cli
+    from internal.llm.providers import cli
 
     try:
         p = cli.GeminiCLIProvider(model="pro")
@@ -130,7 +130,7 @@ def test_gemini_no_model_flag_when_default():
         f'echo "$@" > {argv_file}\necho "fake response"',
     )
 
-    from scripts.llm.providers import cli
+    from internal.llm.providers import cli
 
     try:
         p = cli.GeminiCLIProvider()  # default model
@@ -147,7 +147,7 @@ def test_scrub_before_truncate():
     """OPUS-11 was truncating stderr to 300 chars BEFORE scrubbing, so a
     secret that straddled the cut could leave a partial token in the
     output. Verify the new order: scrub first, then truncate."""
-    from scripts.llm.providers.cli import _scrub
+    from internal.llm.providers.cli import _scrub
 
     # A fake "API key" that would be cut in half by a 300-char truncate
     # BEFORE scrubbing, leaving a 50-char dangling prefix in the output.
@@ -172,7 +172,7 @@ def test_killpg_terminates_grandchildren():
         stderr=subprocess.DEVNULL,
     )
     pid = proc.pid
-    from scripts.llm.providers.cli import _kill_pg
+    from internal.llm.providers.cli import _kill_pg
 
     t0 = time.time()
     _kill_pg(proc)

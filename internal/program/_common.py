@@ -62,26 +62,37 @@ def _put(path, body):
         return e.code, {"error": e.read().decode()[:300]}
 
 
-def list_issues(workspace_id=WORKSPACE_ID, limit=200):
-    """Return all tickets in the workspace."""
-    data = _get(f"/api/issues?workspace_id={workspace_id}&limit={limit}")
-    return data.get("issues", [])
+def list_issues(workspace_id=WORKSPACE_ID, limit=200, max_pages=100):
+    """Return all tickets in the workspace, paginated (RGT-89).
+
+    The API caps each response to `limit` (page_size) and reports `total`.
+    We loop on `offset` until we've fetched `total` issues or hit a short
+    page. `max_pages` is a safety cap so a misbehaving server can't spin
+    this forever.
+    """
+    issues = []
+    offset = 0
+    for _ in range(max_pages):
+        data = _get(f"/api/issues?workspace_id={workspace_id}&limit={limit}&offset={offset}")
+        batch = data.get("issues") or []
+        issues.extend(batch)
+        total = data.get("total")
+        offset += len(batch)
+        if len(batch) < limit or (total is not None and offset >= total):
+            break
+    return issues
 
 
 def get_issue(tid, workspace_id=WORKSPACE_ID):
     """Fetch full ticket detail by identifier (RGT-N) or UUID.
 
-    Resolves identifier -> uuid with a single list call, then hits the
-    direct /api/issues/{uuid} endpoint.
-
-    Note: the *list* call still has a server-side limit, so if you have
-    more than `limit` (default 200) issues in the workspace, an
-    identifier that sorts after the first 200 will return None. This
-    is a server-side pagination concern; pass a higher `limit` if
-    you need to resolve old tickets. Callers like release_gate and
-    dashboard should pass a generous limit.
+    Resolves identifier -> uuid with a single (now-paginated) list call,
+    then hits the direct /api/issues/{uuid} endpoint. list_issues() fetches
+    every ticket in the workspace, so no `limit` kludge is needed here
+    (RGT-89 — previously identifiers sorting past a capped page returned
+    None).
     """
-    issues = list_issues(workspace_id, limit=1000)
+    issues = list_issues(workspace_id)
     for i in issues:
         if i.get("identifier") == tid or i.get("id") == tid:
             tid_uuid = i["id"]
@@ -89,6 +100,20 @@ def get_issue(tid, workspace_id=WORKSPACE_ID):
     else:
         return None
     return _get(f"/api/issues/{tid_uuid}?workspace_id={workspace_id}")
+
+
+def list_members(workspace_id=WORKSPACE_ID):
+    """Return {member_id: display_name} for the workspace.
+
+    Multica exposes this at /api/workspaces/{id}/members (not /api/members —
+    confirmed by probing the live API 2026-07-27; that path 404s). There is
+    no status-transition history endpoint (/history, /activity both 404),
+    which is why wip_audit's staleness checks fall back to updated_at
+    (see RGT-99).
+    """
+    data = _get(f"/api/workspaces/{workspace_id}/members")
+    members = data if isinstance(data, list) else data.get("members", [])
+    return {m["id"]: m.get("name") or m.get("email") or m["id"] for m in members}
 
 
 def list_labels(workspace_id=WORKSPACE_ID):

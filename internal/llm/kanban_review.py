@@ -29,13 +29,13 @@ from pathlib import Path
 # Allow running as a script without install
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.llm.router import (
+from internal.llm.router import (
     TASK_CODE_REVIEW,
     TASK_DESIGN_REVIEW,
     TASK_SECURITY_REVIEW,
     Router,
 )
-from scripts.program._common import WORKSPACE_ID, get_issue, list_issues
+from internal.program._common import WORKSPACE_ID, get_issue, list_issues
 
 
 def label_set(ticket: dict) -> set:

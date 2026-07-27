@@ -24,7 +24,7 @@ from pathlib import Path
 # Allow running as a script without install
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.llm.router import (
+from internal.llm.router import (
     TASK_CODE_REVIEW,
     TASK_DESIGN_REVIEW,
     TASK_FAST_QA,
@@ -309,7 +309,7 @@ DEFAULT_BURN_TOPICS = [
 
 def cmd_burn(args) -> int:
     """Drain a provider's quota by hammering it with prompts."""
-    from scripts.llm.router import build_provider
+    from internal.llm.router import build_provider
 
     try:
         provider = build_provider(args.provider)
@@ -376,7 +376,7 @@ def cmd_burn(args) -> int:
 
 def cmd_usage(_args) -> int:
     """Print usage + cost summary from /tmp/rgt_llm_usage.csv."""
-    from scripts.llm import pricing, usage
+    from internal.llm import pricing, usage
 
     print(usage.summary())
     print()
@@ -386,7 +386,7 @@ def cmd_usage(_args) -> int:
 
 def cmd_stream(args) -> int:
     """Stream a prompt to a provider."""
-    from scripts.llm.stream import stream_ollama, stream_openai_chat
+    from internal.llm.stream import stream_ollama, stream_openai_chat
 
     prompt = read_prompt(args)
     system = args.system or ""

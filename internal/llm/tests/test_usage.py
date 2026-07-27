@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.llm import usage
+from internal.llm import usage
 
 
 class UsageLogTests(unittest.TestCase):
@@ -82,7 +82,7 @@ class UsageLogTests(unittest.TestCase):
             import sys
 
             sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-            from scripts.llm import usage as u
+            from internal.llm import usage as u
 
             for i in range(n):
                 u.log(

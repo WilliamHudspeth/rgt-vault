@@ -6,8 +6,8 @@ minimums are noted in a separate "notes" field but not used in cost
 arithmetic (cost is computed as if everything were paid).
 
 To get a usage cost report:
-    from scripts.llm import pricing
-    from scripts.llm.usage import totals
+    from internal.llm import pricing
+    from internal.llm.usage import totals
     pricing.cost_report(totals())
 """
 

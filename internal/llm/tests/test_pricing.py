@@ -2,7 +2,7 @@
 
 import unittest
 
-from scripts.llm import pricing
+from internal.llm import pricing
 
 
 class PricingTests(unittest.TestCase):

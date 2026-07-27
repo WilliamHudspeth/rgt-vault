@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from scripts.llm.stream import stream_ollama, stream_openai_chat
+from internal.llm.stream import stream_ollama, stream_openai_chat
 
 
 class _FakeResp:
