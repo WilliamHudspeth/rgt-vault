@@ -13,6 +13,7 @@ import (
 
 	"rgt-vault-server/internal/auth"
 	"rgt-vault-server/internal/mcp"
+	"rgt-vault-server/internal/netguard"
 	"rgt-vault-server/internal/server"
 	"rgt-vault-server/internal/server/handlers"
 	"rgt-vault-server/internal/tui"
@@ -77,7 +78,10 @@ func runTUI(host, token, namespace string) error {
 }
 
 func runStatus(host string) error {
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{DialContext: netguard.NewDialer(true).DialContext},
+	}
 	resp, err := client.Get(host + "/healthz")
 	if err != nil {
 		fmt.Printf("Server unreachable: %s\n", host)

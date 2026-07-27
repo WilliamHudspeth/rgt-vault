@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"rgt-vault-server/internal/netguard"
 )
 
 type rpcRequest struct {
@@ -46,9 +48,12 @@ type Server struct {
 // and preset server info metadata.
 func NewServer(backendURL, token string) *Server {
 	return &Server{
-		backendURL:    strings.TrimSuffix(backendURL, "/"),
-		token:         token,
-		httpClient:    &http.Client{Timeout: 10 * time.Second},
+		backendURL: strings.TrimSuffix(backendURL, "/"),
+		token:      token,
+		httpClient: &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: &http.Transport{DialContext: netguard.NewDialer(true).DialContext},
+		},
 		serverName:    "rgt-vault-mcp",
 		serverVersion: "0.3.0",
 	}

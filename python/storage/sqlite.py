@@ -138,6 +138,62 @@ class StorageBackend:
             conn.commit()
         return new_epoch
 
+    def get_dek_usage(self) -> Tuple[int, int]:
+        """Return (encrypt_count, bytes_encrypted) for the active DEK (RGT-219).
+
+        Same metadata table used by get_key_epoch/get_vault_id. Missing rows
+        (fresh vault, or a vault created before this ticket) read as (0, 0).
+        """
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM metadata WHERE key = 'dek_encrypt_count'")
+            row = cursor.fetchone()
+            count = int(row[0]) if row else 0
+            cursor.execute("SELECT value FROM metadata WHERE key = 'dek_encrypt_bytes'")
+            row = cursor.fetchone()
+            nbytes = int(row[0]) if row else 0
+            return count, nbytes
+
+    def increment_dek_usage(self, byte_count: int) -> Tuple[int, int]:
+        """Atomically bump both counters by one encryption / byte_count bytes.
+
+        Increment happens synchronously, in its own transaction, before the
+        caller decides whether a rotation threshold was crossed -- no
+        in-memory batching, so a crash never loses more than the single
+        in-flight increment (never silently undercounts past a threshold).
+        """
+        count, nbytes = self.get_dek_usage()
+        count += 1
+        nbytes += byte_count
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO metadata (key, value) VALUES ('dek_encrypt_count', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (str(count),),
+            )
+            cursor.execute(
+                "INSERT INTO metadata (key, value) VALUES ('dek_encrypt_bytes', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (str(nbytes),),
+            )
+            conn.commit()
+        return count, nbytes
+
+    def reset_dek_usage(self) -> None:
+        """Zero both counters. Call after a successful DEK rotation."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO metadata (key, value) VALUES ('dek_encrypt_count', '0') "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+            )
+            cursor.execute(
+                "INSERT INTO metadata (key, value) VALUES ('dek_encrypt_bytes', '0') "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+            )
+            conn.commit()
+
     def last_audit_hash(self) -> Optional[str]:
         with self._get_conn() as conn:
             cursor = conn.cursor()

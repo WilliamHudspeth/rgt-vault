@@ -59,6 +59,33 @@ class RateLimiter:
             self._windows[agent_id].append(now)
             return True
 
+    def count(self, agent_id: str) -> int:
+        """Peek at the current in-window count without recording anything
+        (RGT-277). Used to check whether an agent is already over a cap
+        before doing expensive/sensitive work (e.g. credential
+        verification), separate from allow()'s check-and-record."""
+        now = time.time()
+        with self._lock:
+            self._windows[agent_id] = [t for t in self._windows[agent_id] if now - t < self.window_seconds]
+            return len(self._windows[agent_id])
+
+    def record(self, agent_id: str) -> None:
+        """Unconditionally record one event, no cap check (RGT-277). Use
+        this to tally a specific outcome (e.g. a failed credential check)
+        that should count against a cap enforced separately via count()."""
+        now = time.time()
+        with self._lock:
+            self._windows[agent_id].append(now)
+
+
+# RGT-219: rotate the DEK well before the AES-GCM safety bounds (NIST
+# SP 800-38D: rekey before 2^32 encryptions with random 96-bit nonces, and
+# before 2^39-256 bytes under one key). These are deliberately far below
+# both hard bounds so rotation is a routine, low-stakes event rather than a
+# last-second scramble.
+DEK_MAX_ENCRYPTIONS = 100_000_000
+DEK_MAX_BYTES = 512 * 1024 ** 3  # 512 GiB
+
 
 class VaultManager:
     def __init__(
@@ -84,6 +111,12 @@ class VaultManager:
         self.auth = ABACPolicyEngine(policy_yaml)
         self.policy_hash = hashlib.sha256(policy_yaml.encode("utf-8")).hexdigest()[:16] if policy_yaml else ""
         self.rate_limiter = RateLimiter(max_requests=rate_limit, window_seconds=rate_window)
+        # RGT-277: separate from the general request-throttling limiter
+        # above -- this one tallies only failed credential (capability
+        # token) verifications per agent, capped at 100/hour by default,
+        # so a brute-force/credential-guessing attempt gets locked out
+        # specifically for repeated *failures*, not just request volume.
+        self.auth_failure_limiter = RateLimiter(max_requests=100, window_seconds=3600)
 
         # Audit hook layer. Default is OffHook -- the vault behaves
         # exactly as it did before this layer existed. Operators
@@ -198,6 +231,14 @@ class VaultManager:
                 return ciphertext, dek_version
             aad = self._get_aad(namespace, name)
             new_ciphertext = encrypt(plaintext, self.dek, aad)
+            # RGT-219: deliberately NOT tallied here. This callback runs
+            # inside bulk_rewrite_legacy_secrets' open BEGIN IMMEDIATE
+            # transaction on its own connection; calling into
+            # increment_dek_usage() (a second connection) from here would
+            # contend for the same write lock, and an auto-rotate on
+            # threshold would open a third. Legacy migration is a rare,
+            # bounded, one-time upgrade path -- not the ongoing-write path
+            # this ticket targets (see set_secret for that).
             return new_ciphertext, 1
 
         self.storage.bulk_rewrite_legacy_secrets(_rewrite)
@@ -487,9 +528,30 @@ class VaultManager:
                 )
             if capability_token is None:
                 raise ValidationError("capability_token is required")
+
+            # RGT-277: brute-force/credential-guessing cap, separate from
+            # the general rate_limiter below. Checked BEFORE attempting
+            # verification -- an agent already at the failed-attempt cap
+            # is refused without spending effort verifying another guess.
+            if self.auth_failure_limiter.count(agent_id) >= self.auth_failure_limiter.max_requests:
+                self._log_audit(
+                    "CAPABILITY_DENIED",
+                    None,
+                    json.dumps(
+                        {
+                            "agent": agent_id,
+                            "capability": capability_name,
+                            "capability_version": capability_version,
+                            "reason": "too many failed credential verifications",
+                        }
+                    ),
+                )
+                raise PolicyDeniedError(f"agent '{agent_id}' locked out: too many failed credential attempts")
+
             try:
                 tok: CapabilityV2Token = self.token_verifier.verify(capability_token)
             except TokenError as e:
+                self.auth_failure_limiter.record(agent_id)
                 self._log_audit(
                     "CAPABILITY_DENIED",
                     None,
@@ -760,6 +822,7 @@ class VaultManager:
 
             aad = self._get_aad(namespace, name)
             ciphertext = encrypt(plaintext, self.dek, aad)
+            pt_len = len(plaintext)
             self.storage.set_secret(
                 namespace,
                 name,
@@ -769,6 +832,13 @@ class VaultManager:
                 note=note,
                 require_2fa=require_2fa,
             )
+            # RGT-219: storage.set_secret's own transaction has already
+            # committed and closed by this point, so this is a fresh,
+            # sequential connection -- no lock contention with the write
+            # above (contrast with the legacy-migration path, which cannot
+            # safely do this from inside its own open bulk-rewrite
+            # transaction; see migrate_legacy_secrets).
+            self._record_dek_usage_and_maybe_rotate(pt_len)
         finally:
             zeroize_bytearray(plaintext)
 
@@ -1029,6 +1099,24 @@ class VaultManager:
         self.dek_manager = HardenedDEKManager(self.dek_manager.keychain_path)
         self.dek = self.dek_manager.load_dek(master_secret, self.vault_id, new_epoch)
         self.key_epoch = new_epoch
+        # RGT-219: the new DEK starts its own encryption/byte budget at zero.
+        # (The bulk rewrite above used new_dek directly, not self.dek, so it
+        # was never tallied against the old counters; it's a one-time batch
+        # bounded by the current secret count, negligible next to the
+        # 100M-encryption threshold for any realistic vault size.)
+        self.storage.reset_dek_usage()
+
+    def _record_dek_usage_and_maybe_rotate(self, byte_count: int) -> None:
+        """RGT-219: tally one encryption under the active DEK; rotate if
+        either safety threshold (DEK_MAX_ENCRYPTIONS / DEK_MAX_BYTES) is
+        crossed. Call this immediately after every encrypt(self.dek, ...)
+        on the live-write path (set_secret, legacy migration) -- NOT inside
+        rotate_dek's own bulk rewrite, which uses new_dek and resets the
+        counters itself once it completes.
+        """
+        count, nbytes = self.storage.increment_dek_usage(byte_count)
+        if count >= DEK_MAX_ENCRYPTIONS or nbytes >= DEK_MAX_BYTES:
+            self.rotate_dek()
 
         self._log_audit("ROTATE", "DEK", "Data Encryption Key rotated successfully")
 

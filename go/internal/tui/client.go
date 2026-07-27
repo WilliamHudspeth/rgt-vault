@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"rgt-vault-server/internal/netguard"
 )
 
 type HTTPClient struct {
@@ -22,7 +24,10 @@ func NewHTTPClient(baseURL, token string) *HTTPClient {
 	return &HTTPClient{
 		baseURL: baseURL,
 		token:   token,
-		hc:      &http.Client{Timeout: 5 * time.Second},
+		hc: &http.Client{
+			Timeout:   5 * time.Second,
+			Transport: &http.Transport{DialContext: netguard.NewDialer(true).DialContext},
+		},
 	}
 }
 
@@ -100,7 +105,6 @@ func (c *HTTPClient) ListSecrets(namespace string) ([]SecretInfo, error) {
 	}
 	return infos, nil
 }
-
 
 type AuditEntry struct {
 	Timestamp string `json:"timestamp"`
