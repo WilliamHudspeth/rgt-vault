@@ -81,4 +81,30 @@ root on the host — everything to the right then becomes readable.
 | Compromised agent mass-reads secrets | Throttled by rate limiter + logged |
 | Attacker edits a ciphertext row | GCM auth fails on read |
 | Attacker tampers with an audit row | `verify_audit_chain()` returns False |
+| Attacker brute-forces capability tokens | Per-agent failed-verification cap (100/hr) locks the agent out; `CAPABILITY_DENIED` audit event (RGT-277) |
+| Attacker points a provider/client at a cloud-metadata URL | SSRF guard rejects link-local/metadata IPs (169.254.0.0/16, fe80::/10); non-loopback needs explicit opt-in (RGT-109 Python, RGT-197 Go) |
 | Attacker with root on the host | Game over (out of scope) |
+
+## Operational cryptographic limits
+
+- **DEK auto-rotation (RGT-219).** The Data Encryption Key rotates
+  automatically once it has performed `DEK_MAX_ENCRYPTIONS` (100M) encryptions
+  or covered `DEK_MAX_BYTES` (512 GiB), both set far below the AES-256-GCM
+  safety bounds in NIST SP 800-38D (2^32 encryptions / 2^39−256 bytes under a
+  random-96-bit-nonce key). Counters are durable (persisted in the `metadata`
+  table) and survive process restarts. They are tallied on the ongoing write
+  path (`set_secret`) only; the one-time legacy-migration bulk rewrite is
+  deliberately **not** tallied, because it runs inside its own open SQLite
+  transaction and calling back into the counter store from there would
+  contend for the write lock. See the comments in `python/vault.py`
+  (`_record_dek_usage_and_maybe_rotate`, `rotate_dek`, `_migrate_legacy_secrets`).
+
+- **SSRF guard (RGT-109 / RGT-197).** Outbound HTTP (Ollama provider in
+  Python, the Go server/MCP/TUI clients) rejects link-local and
+  cloud-metadata addresses unconditionally, and any non-loopback address
+  unless remote access is explicitly opted in (`allow_remote` / `allowRemote`).
+  The Go guard enforces this at the dialer (`net.Dialer.Control`, post-DNS,
+  per-connection) and so also closes the DNS-rebinding window; the Python
+  guard is a resolve-then-connect check with a documented residual TOCTOU gap
+  accepted for its threat model (a locally-configured host, not per-request
+  user URLs).

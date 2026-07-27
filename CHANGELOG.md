@@ -5,8 +5,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- **DEK auto-rotation on usage thresholds (RGT-219)**: The Data Encryption Key now rotates automatically once it crosses `DEK_MAX_ENCRYPTIONS` (100M) or `DEK_MAX_BYTES` (512 GiB) — both far below the AES-256-GCM bounds in NIST SP 800-38D. Counters are durable (persisted in the `metadata` table via `get/increment/reset_dek_usage`) and survive restarts. Tallied on the `set_secret` write path only; the one-time legacy-migration bulk rewrite is deliberately excluded to avoid SQLite write-lock contention (documented in `python/vault.py`).
+- **SSRF guard for outbound HTTP (RGT-109 Python, RGT-197 Go)**: The Ollama provider (`internal/llm/providers/ollama.py`) validates its `base_url`, and a new `go/internal/netguard` package guards the Go server/MCP/TUI HTTP clients. Both reject link-local / cloud-metadata addresses (169.254.0.0/16, fe80::/10) unconditionally, and non-loopback addresses unless remote access is explicitly opted in. The Go guard enforces at `net.Dialer.Control` (post-DNS, closing the DNS-rebinding window); the Python guard is a resolve-then-connect check with a documented residual TOCTOU gap.
+- **Brute-force cap on capability-token verification (RGT-277)**: `execute_capability` now tracks failed credential verifications per agent in a dedicated `auth_failure_limiter` (100/hour). An agent at the cap is refused with `CAPABILITY_DENIED` before any further verification is attempted. Adds `RateLimiter.count()`/`record()` alongside the existing `allow()`.
+
 ### Changed
 - **Storage**: Optimized `VaultManager._migrate_legacy_secrets` to avoid loading all records into memory, significantly improving startup time for vaults with large numbers of secrets.
+- **Kanban tooling (RGT-89)**: `internal/program/_common.list_issues()` now paginates against the live Multica API (`offset`/`total`, bounded by `max_pages`) instead of a single capped fetch, so `get_issue` no longer returns `None` for identifiers sorting past the first page. Added `list_members()`.
+- **WIP audit (RGT-99)**: Ready-staleness now excludes backlog and falls back to `updated_at` (Multica exposes no status-transition history — documented limitation); violation reports resolve real member names via `member_lookup()`.
+
+### Fixed
+- **LLM providers (RGT-107)**: `_http.post_json()` gained retry/backoff — Retry-After-aware on HTTP 429, bounded exponential backoff on 5xx/`URLError`. Groq opts in with `retries=3`.
+- **LLM providers**: Mistral, Cohere, and Groq now guard against JSON-null response content producing a `Reply(text=None)`, returning a failed `Reply` with a logged error instead. Cohere now scans content blocks for the first `type=="text"` block rather than assuming `content[0]`.
+- **Ollama provider**: `is_available()` narrowed its bare `except` to specific network/parse exceptions and now logs probe failures.
+- **Import paths**: Fixed stale `scripts.*` imports (pre-dating the `scripts/`→`internal/` rename) in `internal/llm/{cli,healthcheck,kanban_review,pricing}.py` that had left those modules non-importable.
 
 ### Added
 - **Docs**: Added Postgres storage backend evaluation and design doc (`docs/architecture/postgres_storage.md`) with a read-only PoC in `python/storage/postgres.py`.

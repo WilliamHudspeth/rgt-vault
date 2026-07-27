@@ -157,28 +157,32 @@ class StorageBackend:
     def increment_dek_usage(self, byte_count: int) -> Tuple[int, int]:
         """Atomically bump both counters by one encryption / byte_count bytes.
 
-        Increment happens synchronously, in its own transaction, before the
-        caller decides whether a rotation threshold was crossed -- no
-        in-memory batching, so a crash never loses more than the single
-        in-flight increment (never silently undercounts past a threshold).
+        The increment is computed server-side (SQL arithmetic against the
+        row's current value, inside one transaction) rather than read in
+        Python and written back in a second transaction. An earlier version
+        did read-then-write across two separate connections/transactions --
+        a genuine lost-update race under concurrent set_secret() calls,
+        caught in review (independent audit, not caught by the original
+        author or two prior reviewers) -- fixed here.
         """
-        count, nbytes = self.get_dek_usage()
-        count += 1
-        nbytes += byte_count
         with self._get_conn() as conn:
             cursor = conn.cursor()
+            cursor.execute("BEGIN IMMEDIATE")
             cursor.execute(
-                "INSERT INTO metadata (key, value) VALUES ('dek_encrypt_count', ?) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (str(count),),
+                "INSERT INTO metadata (key, value) VALUES ('dek_encrypt_count', '1') "
+                "ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)"
             )
             cursor.execute(
                 "INSERT INTO metadata (key, value) VALUES ('dek_encrypt_bytes', ?) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (str(nbytes),),
+                "ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + ? AS TEXT)",
+                (str(byte_count), byte_count),
             )
+            cursor.execute("SELECT value FROM metadata WHERE key = 'dek_encrypt_count'")
+            count = int(cursor.fetchone()[0])
+            cursor.execute("SELECT value FROM metadata WHERE key = 'dek_encrypt_bytes'")
+            nbytes = int(cursor.fetchone()[0])
             conn.commit()
-        return count, nbytes
+            return count, nbytes
 
     def reset_dek_usage(self) -> None:
         """Zero both counters. Call after a successful DEK rotation."""

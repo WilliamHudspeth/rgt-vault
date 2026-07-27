@@ -533,6 +533,15 @@ class VaultManager:
             # the general rate_limiter below. Checked BEFORE attempting
             # verification -- an agent already at the failed-attempt cap
             # is refused without spending effort verifying another guess.
+            #
+            # count()-then-record() is intentionally NOT atomic (unlike
+            # allow()'s single check-and-append): the failure to record only
+            # exists *after* the slow token verification, which must run
+            # outside the lock, so the two cannot be fused. The residual
+            # window lets concurrent in-flight guesses overshoot the cap by
+            # at most the concurrency level, then the recorded failures make
+            # the limiter self-correct within the window. Accepted: this is a
+            # coarse brute-force throttle, not a precise counter.
             if self.auth_failure_limiter.count(agent_id) >= self.auth_failure_limiter.max_requests:
                 self._log_audit(
                     "CAPABILITY_DENIED",
@@ -1106,6 +1115,8 @@ class VaultManager:
         # 100M-encryption threshold for any realistic vault size.)
         self.storage.reset_dek_usage()
 
+        self._log_audit("ROTATE", "DEK", "Data Encryption Key rotated successfully")
+
     def _record_dek_usage_and_maybe_rotate(self, byte_count: int) -> None:
         """RGT-219: tally one encryption under the active DEK; rotate if
         either safety threshold (DEK_MAX_ENCRYPTIONS / DEK_MAX_BYTES) is
@@ -1117,8 +1128,6 @@ class VaultManager:
         count, nbytes = self.storage.increment_dek_usage(byte_count)
         if count >= DEK_MAX_ENCRYPTIONS or nbytes >= DEK_MAX_BYTES:
             self.rotate_dek()
-
-        self._log_audit("ROTATE", "DEK", "Data Encryption Key rotated successfully")
 
     def export_vault(self) -> bytes:
         data = self.storage.export_data()

@@ -265,3 +265,46 @@ def test_dek_usage_survives_vault_manager_restart(temp_vault_dir, policy_yaml, m
     # it isn't reset just because the in-process object was recreated.
     v2 = VaultManager(db_path=db_path, policy_yaml=policy_yaml, master_provider=master_provider)
     assert v2.storage.get_dek_usage() == (1, len(b"hello"))
+
+
+def test_dek_usage_increment_has_no_lost_updates_under_concurrency(vault):
+    """Independent-review finding: an earlier version read the counters in
+    one transaction and wrote them back in a second, a classic lost-update
+    race. This confirms the fixed (single-transaction, server-side SQL
+    arithmetic) version doesn't drop increments under concurrent writers."""
+    n = 50
+    threads = [threading.Thread(target=lambda: vault.storage.increment_dek_usage(1)) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    count, nbytes = vault.storage.get_dek_usage()
+    assert count == n
+    assert nbytes == n
+
+
+def test_set_secret_without_rotation_logs_no_rotate_event(vault):
+    """Regression (RGT-219): the DEK-rotation audit line must live inside
+    rotate_dek(), not in _record_dek_usage_and_maybe_rotate(). A misplaced
+    line once caused every set_secret to emit a spurious "DEK rotated
+    successfully" ROTATE entry even when no rotation happened."""
+    vault.set_secret("s1", "hello", namespace="test_ns", agent="test_agent")
+    actions = [row["action"] for row in vault.storage.get_audit_log(limit=100)]
+    assert "ROTATE" not in actions, f"unexpected ROTATE audit entry: {actions}"
+
+
+def test_rotate_dek_logs_exactly_one_rotate_event(vault, monkeypatch):
+    """The ROTATE/DEK audit entry is emitted once, by the rotation itself,
+    when a threshold is crossed -- not on every tallied encryption."""
+    import rgt_vault.vault as vault_module
+
+    monkeypatch.setattr(vault_module, "DEK_MAX_ENCRYPTIONS", 2)
+    vault.set_secret("s1", "a", namespace="test_ns", agent="test_agent")  # under threshold
+    vault.set_secret("s2", "b", namespace="test_ns", agent="test_agent")  # crosses -> rotate
+
+    rotate_entries = [
+        row
+        for row in vault.storage.get_audit_log(limit=100)
+        if row["action"] == "ROTATE" and row["secret_name"] == "DEK"
+    ]
+    assert len(rotate_entries) == 1, f"expected exactly one ROTATE/DEK entry, got {len(rotate_entries)}"
