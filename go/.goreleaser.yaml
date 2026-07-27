@@ -68,14 +68,47 @@ release:
   footer: |
     Note: The Python line (rgt-vault 0.2.x) remains supported for 6 months.
 
-# signs:
-#   # Requires COSIGN signing keys
-#   - artifacts: checksum
-#     args: ["sign-blob", "--key", "cosign.key", "--output-signature", "${signature}", "${artifact}"]
+signs:
+  - cmd: cosign
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
 
-# brews:
-#   # Requires HOMEBREW_TAP_GITHUB_TOKEN
-#   - repository:
-#       owner: WilliamHudspeth
-#       name: homebrew-tap
-#     directory: Formula
+brews:
+  - repository:
+      owner: WilliamHudspeth
+      name: homebrew-tap
+    directory: Formula
+    homepage: "https://github.com/WilliamHudspeth/rgt-vault"
+    description: "Capability-based security boundary for AI agents"
+    license: "Apache-2.0"
+
+nfpms:
+  - id: rgt-vault
+    vendor: "RGT Vault"
+    homepage: "https://github.com/WilliamHudspeth/rgt-vault"
+    maintainer: "WilliamHudspeth"
+    description: "Capability-based security boundary for AI agents"
+    license: "Apache-2.0"
+    formats:
+      - deb
+      - rpm
+
+winget:
+  - name: rgt-vault-go
+    publisher: WilliamHudspeth
+    publisher_url: "https://github.com/WilliamHudspeth"
+    package_identifier: "WilliamHudspeth.rgt-vault-go"
+    license: "Apache-2.0"
+    license_url: "https://github.com/WilliamHudspeth/rgt-vault/blob/main/LICENSE"
+    short_description: "RGT Vault capability-based security boundary"
+    description: "Capability-based security boundary for AI agents"
+    homepage: "https://github.com/WilliamHudspeth/rgt-vault"
+    repository:
+      owner: WilliamHudspeth
+      name: winget-pkgs

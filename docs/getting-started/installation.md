@@ -42,11 +42,32 @@ The checksum file is always named `checksums.txt`.
 
 ## Homebrew (macOS/Linux)
 
-Coming with the signed release you can install via Homebrew (a tap will be announced):
+*(TODO: The Homebrew tap is pending creation. Once available, you will be able to install via:)*
 
 ```bash
+brew tap WilliamHudspeth/homebrew-tap
 brew install rgt-vault
 ```
+
+## APT (Debian/Ubuntu)
+
+*(TODO: The APT repository at deb.rgt-vault.io is pending creation. Once available, you will be able to install via:)*
+
+```bash
+# Add the repository (URL subject to change once live)
+echo "deb [trusted=yes] https://deb.rgt-vault.io/ stable main" | sudo tee /etc/apt/sources.list.d/rgt-vault.list
+sudo apt-get update
+sudo apt-get install rgt-vault
+```
+
+## Winget (Windows)
+
+*(TODO: The Winget package is pending publication. Once available, you will be able to install via:)*
+
+```powershell
+winget install rgt-vault-go
+```
+
 
 ## From source
 
