@@ -1,7 +1,11 @@
 import os
 import json
-import tomllib
 import re
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib
 
 def parse_pyproject():
     with open("pyproject.toml", "rb") as f:
