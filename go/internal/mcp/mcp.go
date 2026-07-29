@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -363,7 +364,11 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 		if resp.StatusCode == 200 {
 			return string(body), false
 		}
-		return "backend error: " + resp.Status + " - " + string(body), true
+		// The backend's error body may contain internal details (paths, stack
+		// context) it was never meant to hand to an arbitrary MCP client;
+		// log it server-side and return only the status to the caller.
+		log.Printf("execute_secret backend error: %s - %s", resp.Status, string(body))
+		return "backend error: " + resp.Status, true
 
 	default:
 		return "unknown tool: " + name, true
