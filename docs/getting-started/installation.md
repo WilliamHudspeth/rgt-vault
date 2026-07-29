@@ -54,8 +54,9 @@ brew install rgt-vault
 *(TODO: The APT repository at deb.rgt-vault.io is pending creation. Once available, you will be able to install via:)*
 
 ```bash
-# Add the repository (URL subject to change once live)
-echo "deb [trusted=yes] https://deb.rgt-vault.io/ stable main" | sudo tee /etc/apt/sources.list.d/rgt-vault.list
+# Add the repository signing key and source (URL subject to change once live)
+curl -fsSL https://deb.rgt-vault.io/gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/rgt-vault.gpg
+echo "deb [signed-by=/usr/share/keyrings/rgt-vault.gpg] https://deb.rgt-vault.io/ stable main" | sudo tee /etc/apt/sources.list.d/rgt-vault.list
 sudo apt-get update
 sudo apt-get install rgt-vault
 ```
@@ -67,7 +68,6 @@ sudo apt-get install rgt-vault
 ```powershell
 winget install rgt-vault-go
 ```
-
 
 ## From source
 
