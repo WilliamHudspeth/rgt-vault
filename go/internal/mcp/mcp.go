@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -191,6 +192,29 @@ func (s *Server) handle(req rpcRequest) *rpcResponse {
 						"required": []any{"namespace", "name"},
 					},
 				},
+				map[string]any{
+					"name":        "execute_secret",
+					"description": "Execute a bounded action using a secret without returning the plaintext.",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"namespace": map[string]any{
+								"type": "string",
+							},
+							"name": map[string]any{
+								"type": "string",
+							},
+							"action": map[string]any{
+								"type": "string",
+							},
+							"params": map[string]any{
+								"type": "object",
+								"additionalProperties": true,
+							},
+						},
+						"required": []any{"namespace", "name", "action"},
+					},
+				},
 			},
 		}
 		return &rpcResponse{
@@ -307,6 +331,43 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 		if resp.StatusCode == 200 || resp.StatusCode == 204 {
 			return "revoked " + ns + "/" + nm, false
 		}
+		return "backend error: " + resp.Status, true
+
+	case "execute_secret":
+		ns := getStr("namespace")
+		nm := getStr("name")
+		act := getStr("action")
+
+		var actionParams map[string]any
+		if p, ok := args["params"]; ok {
+			if pm, ok := p.(map[string]any); ok {
+				actionParams = pm
+			}
+		}
+
+		reqURL := s.backendURL + "/v1/secrets/" + url.PathEscape(ns) + "/" + url.PathEscape(nm) + "/use"
+		reqBody := map[string]any{
+			"action":  act,
+			"agent":   "mcp-client",
+			"purpose": "execute_secret tool call",
+			"params":  actionParams,
+		}
+		bodyBytes, err := json.Marshal(reqBody)
+		if err != nil {
+			return "encode error: " + err.Error(), true
+		}
+
+		resp, body, err := s.do("POST", reqURL, bodyBytes)
+		if err != nil {
+			return "backend unreachable: " + err.Error(), true
+		}
+		if resp.StatusCode == 200 {
+			return string(body), false
+		}
+		// The backend's error body may contain internal details (paths, stack
+		// context) it was never meant to hand to an arbitrary MCP client;
+		// log it server-side and return only the status to the caller.
+		log.Printf("execute_secret backend error: %s - %s", resp.Status, string(body))
 		return "backend error: " + resp.Status, true
 
 	default:

@@ -119,14 +119,15 @@ func TestHandle_ToolsList(t *testing.T) {
 	if !ok {
 		t.Fatalf("tools is not an array: %T", toolsRaw)
 	}
-	if len(tools) != 3 {
-		t.Fatalf("expected 3 tools, got %d", len(tools))
+	if len(tools) != 4 {
+		t.Fatalf("expected 4 tools, got %d", len(tools))
 	}
 
 	wantNames := map[string]bool{
-		"list_secrets":  true,
-		"lease_secret":  true,
-		"revoke_secret": true,
+		"list_secrets":   true,
+		"lease_secret":   true,
+		"revoke_secret":  true,
+		"execute_secret": true,
 	}
 	for _, tv := range tools {
 		tool, ok := tv.(map[string]any)
@@ -237,6 +238,56 @@ func TestCallTool_RevokeSecret_OK(t *testing.T) {
 	}
 	if !strings.Contains(text, "revoked") {
 		t.Errorf("expected 'revoked' in text, got %q", text)
+	}
+}
+
+// ---- tools/call execute_secret ----------------------------------------
+
+func TestCallTool_ExecuteSecret_OK(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected method %s", r.Method)
+		}
+		wantPath := "/v1/secrets/ns1/mykey/use"
+		if r.URL.Path != wantPath {
+			t.Errorf("unexpected path %s, want %s", r.URL.Path, wantPath)
+		}
+		
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode body: %v", err)
+		}
+		
+		if body["action"] != "echo" {
+			t.Errorf("expected action 'echo', got %v", body["action"])
+		}
+		if body["agent"] != "mcp-client" {
+			t.Errorf("expected agent 'mcp-client', got %v", body["agent"])
+		}
+		
+		params, ok := body["params"].(map[string]any)
+		if !ok || params["message"] != "hello" {
+			t.Errorf("expected params.message 'hello', got %v", body["params"])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"ok":true,"result":{"status":"completed"}}`)
+	}))
+	defer ts.Close()
+	s := newTestServer(ts)
+
+	args := map[string]any{
+		"namespace": "ns1",
+		"name":      "mykey",
+		"action":    "echo",
+		"params":    map[string]any{"message": "hello"},
+	}
+	text, isError := s.callTool("execute_secret", args)
+	if isError {
+		t.Fatalf("expected isError=false; text=%s", text)
+	}
+	if !strings.Contains(text, `"status":"completed"`) {
+		t.Errorf("expected 'status: completed' in text, got %q", text)
 	}
 }
 
