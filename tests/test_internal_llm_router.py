@@ -49,7 +49,7 @@ class _Provider:
 
 def _router(providers: dict, chain: list) -> Router:
     r = Router(RouteConfig(chains={"t": chain}))
-    r._get = lambda spec: providers[spec]  # type: ignore[method-assign]
+    setattr(r, "_get", lambda spec: providers[spec])
     return r
 
 
@@ -107,12 +107,12 @@ def test_dispatch_exception_becomes_error_reply():
 
 def test_dry_run_skips_unavailable_and_probe_exceptions():
     down, boom, up = _Provider("down"), _Provider("boom"), _Provider("up")
-    down.is_available = lambda: False  # type: ignore[method-assign]
+    setattr(down, "is_available", lambda: False)
 
     def _raise():
         raise RuntimeError("probe broke")
 
-    boom.is_available = _raise  # type: ignore[method-assign]
+    setattr(boom, "is_available", _raise)
     reply = _router({"down": down, "boom": boom, "up": up}, ["down", "boom", "up"]).call("t", "", dry_run=True)
     assert reply.provider == "up" and reply.error.startswith("dry-run")
     assert up.complete_calls == 0
@@ -254,3 +254,12 @@ def test_default_state_dir_owned_by_someone_else_is_rejected(monkeypatch, tmp_pa
     monkeypatch.setattr(kanban_loop.os, "getuid", lambda: os.stat(tmp_path).st_uid + 1)
     with pytest.raises(PermissionError, match="not owned"):
         kanban_loop.save_state({"processed": {}, "last_run": None}, kanban_loop.default_state_dir() / "s.json")
+
+
+def test_failed_temp_cleanup_does_not_mask_original_error(monkeypatch, tmp_path, caplog):
+    monkeypatch.setattr(kanban_loop.os, "replace", MagicMock(side_effect=OSError("replace failed")))
+    monkeypatch.setattr(kanban_loop.os, "unlink", MagicMock(side_effect=PermissionError("cannot unlink")))
+    with caplog.at_level(logging.DEBUG, logger="internal.llm.kanban_loop"):
+        with pytest.raises(OSError, match="replace failed"):
+            kanban_loop.write_private_text(tmp_path / "s.json", "x")
+    assert any("could not remove temp state file" in r.getMessage() for r in caplog.records)

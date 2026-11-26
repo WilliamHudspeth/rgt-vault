@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import stat
 import sys
@@ -39,6 +40,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from internal.llm.kanban_review import build_prompt, pick_task_type, post_comment
 from internal.llm.router import Router
 from internal.program._common import WORKSPACE_ID, get_issue, label_set, list_issues
+
+log = logging.getLogger(__name__)
 
 
 def default_state_dir() -> Path:
@@ -81,10 +84,15 @@ def write_private_text(path: Path, text: str) -> None:
             os.fsync(f.fileno())
         os.replace(tmp, path)
     except BaseException:
+        # Best-effort cleanup of our temp file. A failure here (other than the
+        # file already being gone) must not mask the original error, so log
+        # it at debug level and re-raise the original.
         try:
             os.unlink(tmp)
-        except OSError:
-            pass
+        except FileNotFoundError:
+            pass  # already renamed or removed: nothing to clean up
+        except OSError as cleanup_err:
+            log.debug("could not remove temp state file %s: %s", tmp, cleanup_err)
         raise
 
 
