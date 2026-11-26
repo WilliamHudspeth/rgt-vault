@@ -1,0 +1,9 @@
+{
+  "master_hex": "6465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f80818283",
+  "vault_id": "rewrap-vault",
+  "epoch": 3,
+  "dek_hex": "7ae86c11055a366c404b06c61bccbeee271056b3c1777f5801d76f3feaa966df",
+  "secret_aad": "rewrap-vault:default:api_key",
+  "secret_ciphertext_hex": "000000000000000000000000a65f719e09003cabdaf07198ed616b0dc92f296c113a4eaeb4711c38d603f24ac5",
+  "secret_plaintext": "sk-test-plaintext"
+}
