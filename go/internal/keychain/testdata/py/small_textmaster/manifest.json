@@ -1,0 +1,9 @@
+{
+  "master_hex": "636f727265637420686f727365206261747465727920737461706c65",
+  "vault_id": "text-master-vault",
+  "epoch": 1,
+  "dek_hex": "da6d5bc11c5541dfb19f4f47454c3df0122df0904ab8fb6153aeced967d07769",
+  "secret_aad": "text-master-vault:default:api_key",
+  "secret_ciphertext_hex": "0000000000000000000000005b206d9a87a2dfa903daaf81806a59c3528a00f0acb11819025aa8af890e342218",
+  "secret_plaintext": "sk-test-plaintext"
+}

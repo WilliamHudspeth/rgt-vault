@@ -1,0 +1,183 @@
+{
+  "fixture": "epoch1",
+  "generated_by": "tests/compat/gen_go_fixtures.py",
+  "python": "3.12.3",
+  "cryptography": "50.0.2",
+  "files": {
+    "db": "vault.db",
+    "keychain": "keychain.json",
+    "master": "master.bin",
+    "policy": "policy.yaml",
+    "export": "export.b64"
+  },
+  "vault_id": "5a11c0de-0000-4000-8000-000000000003",
+  "key_epoch": 1,
+  "keychain": {
+    "version": 1,
+    "kdf": "argon2id",
+    "argon2_salt": "XSU2rdW5KxM4CTim3/3ulIijiMZBlYV+/O0D2KDVdLs=",
+    "argon2_memory_cost": 4096,
+    "argon2_time_cost": 2,
+    "argon2_parallelism": 2,
+    "wrapped_dek": "ynTx8tYQRX53dEtrFCY1iuHgCwD8QFvAD2H3L0TSZY/o2a7d0TpyQP9TwJkvx/SM",
+    "created_at": "2026-11-26T21:57:28.180686+00:00",
+    "key_epoch": 1
+  },
+  "master_hex": "8bf02891af90a7b9fab266d3f91f250ee61f30fe1671a5b9bdd5ad5b0eb8357a",
+  "dek_hex": "30c545a1cbe04c7ea14a85e9b94f8d40130ed8b542f33fd1a7a152818a21257d",
+  "policy_hash": "f6971819a200e2a0",
+  "policy_hashes_in_chain": [
+    "f6971819a200e2a0"
+  ],
+  "metadata": {
+    "vault_id": "5a11c0de-0000-4000-8000-000000000003",
+    "key_epoch": "1",
+    "dek_encrypt_count": "4",
+    "dek_encrypt_bytes": "35"
+  },
+  "migrations_applied": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "row_counts": {
+    "secrets": 4,
+    "secrets_active": 3,
+    "secrets_superseded": 1,
+    "secrets_revoked": 0,
+    "audit_logs": 8,
+    "honeytokens": 0
+  },
+  "honeytokens": [],
+  "secrets": [
+    {
+      "id": 1,
+      "secret_id": "b1abe410-430a-43bb-82a5-da9e8325bda8",
+      "namespace": "default",
+      "name": "alpha",
+      "version": 1,
+      "status": "SUPERSEDED",
+      "dek_version": 1,
+      "note": "",
+      "require_2fa": false,
+      "honeytoken": false,
+      "created_at": "2026-11-26T21:57:28.184558+00:00",
+      "updated_at": "2026-11-26T21:57:28.184558+00:00",
+      "checksum": "97b5384603c7254cae38b02b44717b06afdaeb59dbe20517ce3a0b96b8f6eaa0",
+      "fingerprint": "97b53846",
+      "ciphertext_len": 36,
+      "aad": "5a11c0de-0000-4000-8000-000000000003:default:alpha",
+      "decrypts_with_current_dek": true,
+      "read_latest": null,
+      "read_by_version": "ok",
+      "plaintext_len_bytes": 8,
+      "plaintext_sha256": "1045d9a162b576bcb4a38b125e9b58e110c0445714f1e07d14b8603577e34569",
+      "plaintext": "alpha-v1"
+    },
+    {
+      "id": 2,
+      "secret_id": "b1abe410-430a-43bb-82a5-da9e8325bda8",
+      "namespace": "default",
+      "name": "alpha",
+      "version": 2,
+      "status": "ACTIVE",
+      "dek_version": 1,
+      "note": "",
+      "require_2fa": false,
+      "honeytoken": false,
+      "created_at": "2026-11-26T21:57:28.194173+00:00",
+      "updated_at": "2026-11-26T21:57:28.194173+00:00",
+      "checksum": "62691e006d6edfd6a23cede977c0fded40ee5a390da7ccd221e75324dc56ef70",
+      "fingerprint": "62691e00",
+      "ciphertext_len": 36,
+      "aad": "5a11c0de-0000-4000-8000-000000000003:default:alpha",
+      "decrypts_with_current_dek": true,
+      "read_latest": "ok",
+      "read_by_version": "ok",
+      "plaintext_len_bytes": 8,
+      "plaintext_sha256": "52d7699527d76745b185e927b3fcc86601b9eabdf06bb685c9771974d1cfd767",
+      "plaintext": "alpha-v2"
+    },
+    {
+      "id": 3,
+      "secret_id": "012aa2cb-1907-4481-af4f-16751bdd55b6",
+      "namespace": "default",
+      "name": "beta",
+      "version": 1,
+      "status": "ACTIVE",
+      "dek_version": 1,
+      "note": "plain note",
+      "require_2fa": false,
+      "honeytoken": false,
+      "created_at": "2026-11-26T21:57:28.204337+00:00",
+      "updated_at": "2026-11-26T21:57:28.204337+00:00",
+      "checksum": "73fd934c19ccab31c6d9503d55119d25a19940cb3711b3102e19a090688d0642",
+      "fingerprint": "73fd934c",
+      "ciphertext_len": 38,
+      "aad": "5a11c0de-0000-4000-8000-000000000003:default:beta",
+      "decrypts_with_current_dek": true,
+      "read_latest": "ok",
+      "read_by_version": "ok",
+      "plaintext_len_bytes": 10,
+      "plaintext_sha256": "28333dde39f615995f3f93406802843e7b84ede534f6e3ad3b36c0d71f0c5611",
+      "plaintext": "beta-value"
+    },
+    {
+      "id": 4,
+      "secret_id": "89a340bc-8170-4cb0-8d6f-9574c3cfa83b",
+      "namespace": "default",
+      "name": "gamma",
+      "version": 1,
+      "status": "ACTIVE",
+      "dek_version": 1,
+      "note": "",
+      "require_2fa": true,
+      "honeytoken": false,
+      "created_at": "2026-11-26T21:57:28.214702+00:00",
+      "updated_at": "2026-11-26T21:57:28.214702+00:00",
+      "checksum": "3fd265b6833c6886dc4059a222a2c19893ff5adea9270efa6c7835b1fbd8f8a8",
+      "fingerprint": "3fd265b6",
+      "ciphertext_len": 37,
+      "aad": "5a11c0de-0000-4000-8000-000000000003:default:gamma",
+      "decrypts_with_current_dek": true,
+      "read_latest": "ok",
+      "read_by_version": "ok",
+      "plaintext_len_bytes": 9,
+      "plaintext_sha256": "0299385fc8565f52388b940daeef545ff835a0cb813075589fecbe4ea13ce4ab",
+      "plaintext": "gamma-2fa"
+    }
+  ],
+  "audit": {
+    "verify_audit_chain": true,
+    "first_entry_hash": "211bc414bc4e2eebd67c9b8440af14ae828056a261dafc4582e9e028b2bae1c1",
+    "last_entry_hash": "206606e0038a362ba62e5be7c6cdb56e3253ecdaf7b74b655c30238bcf1c8213",
+    "actions": {
+      "HOOK_WRITE": 4,
+      "SET_SECRET": 4
+    },
+    "rows_with_empty_policy_hash": 0,
+    "rows_with_agent_id": 0
+  },
+  "export": {
+    "file": "export.b64",
+    "sha256": "04a16289ef1ad60d4e2d5ff43cf778b3a3394a362c3624d83c034b47bbff9a50",
+    "vault_id": "5a11c0de-0000-4000-8000-000000000003",
+    "secrets": 4,
+    "audit_logs": 8,
+    "honeytokens": 0
+  },
+  "read_semantics": [
+    "read of the latest version only sees the ACTIVE row (SUPERSEDED/REVOKED-only names -> SecretNotFoundError)",
+    "read by explicit version ignores status; it then needs the CURRENT dek to decrypt",
+    "rotate_dek rewrites only ACTIVE rows, so SUPERSEDED rows written before it do not decrypt afterwards",
+    "a honeytoken name raises PermissionError on lease/fingerprint and writes HONEYTOKEN_TRIGGERED"
+  ],
+  "flow": [
+    "set_secret default/alpha -> version 1",
+    "set_secret default/alpha -> version 2 (previous version SUPERSEDED)",
+    "set_secret default/beta -> version 1",
+    "set_secret default/gamma -> version 1"
+  ]
+}

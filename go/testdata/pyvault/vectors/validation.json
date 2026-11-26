@@ -1,0 +1,3058 @@
+{
+  "description": "rgt_vault.input_validation + VaultManager._validate_string_param/_normalize_value_param. Inputs: plain JSON strings/integers, or typed objects {type: cps|repeat|bytes|null|bool|float|list,...}. 'expect' is the real Python result. Error messages are informational; compare ok/error and the normalised result.",
+  "cases": [
+    {
+      "fn": "validate_name",
+      "args": [
+        "valid"
+      ],
+      "why": "",
+      "expect": {
+        "ok": true,
+        "result": "valid"
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "with.dot-and_underscore9"
+      ],
+      "why": "",
+      "expect": {
+        "ok": true,
+        "result": "with.dot-and_underscore9"
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "UPPER_lower_123"
+      ],
+      "why": "",
+      "expect": {
+        "ok": true,
+        "result": "UPPER_lower_123"
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "a"
+      ],
+      "why": "single char",
+      "expect": {
+        "ok": true,
+        "result": "a"
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        ""
+      ],
+      "why": "empty",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' cannot be empty or whitespace."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "   "
+      ],
+      "why": "whitespace only",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' cannot be empty or whitespace."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "a b"
+      ],
+      "why": "space: allowed in names only",
+      "expect": {
+        "ok": true,
+        "result": "a b"
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        " lead"
+      ],
+      "why": "leading space",
+      "expect": {
+        "ok": true,
+        "result": " lead"
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "trail "
+      ],
+      "why": "trailing space",
+      "expect": {
+        "ok": true,
+        "result": "trail "
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "a/b"
+      ],
+      "why": "slash",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "a\\b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "a:b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "a@b"
+      ],
+      "why": "@ allowed only in agent",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "a$b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "a;b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "a`b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "a*b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "a\u0000b"
+      ],
+      "why": "NUL",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "a\tb"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "a\nb"
+      ],
+      "why": "newline in the middle",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "abc\n"
+      ],
+      "why": "TRAILING NEWLINE: Python's `$` matches before a final \\n, so this is ACCEPTED",
+      "expect": {
+        "ok": true,
+        "result": "abc\n"
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "abc\n\n"
+      ],
+      "why": "two trailing newlines are rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "\nabc"
+      ],
+      "why": "leading newline rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "café"
+      ],
+      "why": "non-ASCII letter",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "café"
+      ],
+      "why": "decomposed",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "ＡＢ"
+      ],
+      "why": "fullwidth letters are not [A-Za-z]",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "١٢"
+      ],
+      "why": "Arabic-Indic digits are not [0-9]",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "日本語"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "🔐"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "a b"
+      ],
+      "why": "NBSP",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        " "
+      ],
+      "why": "NBSP only: strip() removes it -> empty",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' cannot be empty or whitespace."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "​"
+      ],
+      "why": "zero width space",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "a",
+          "count": 128
+        }
+      ],
+      "why": "128 chars",
+      "expect": {
+        "ok": true,
+        "result": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "a",
+          "count": 129
+        }
+      ],
+      "why": "129 chars",
+      "expect": {
+        "ok": true,
+        "result": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "a",
+          "count": 256
+        }
+      ],
+      "why": "256 chars",
+      "expect": {
+        "ok": true,
+        "result": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "a",
+          "count": 257
+        }
+      ],
+      "why": "257 chars",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' exceeds the maximum allowed length of 256 characters."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        {
+          "type": "null"
+        }
+      ],
+      "why": "None",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' must be a string; got NoneType."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        5
+      ],
+      "why": "int",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' must be a string; got int."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        {
+          "type": "bytes",
+          "hex": "616263"
+        }
+      ],
+      "why": "bytes",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' must be a string; got bytes."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        {
+          "type": "list",
+          "value": [
+            "a"
+          ]
+        }
+      ],
+      "why": "list",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' must be a string; got list."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        {
+          "type": "bool",
+          "value": true
+        }
+      ],
+      "why": "bool",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' must be a string; got bool."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "valid"
+      ],
+      "why": "",
+      "expect": {
+        "ok": true,
+        "result": "valid"
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "with.dot-and_underscore9"
+      ],
+      "why": "",
+      "expect": {
+        "ok": true,
+        "result": "with.dot-and_underscore9"
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "UPPER_lower_123"
+      ],
+      "why": "",
+      "expect": {
+        "ok": true,
+        "result": "UPPER_lower_123"
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "a"
+      ],
+      "why": "single char",
+      "expect": {
+        "ok": true,
+        "result": "a"
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        ""
+      ],
+      "why": "empty",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' cannot be empty or whitespace."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "   "
+      ],
+      "why": "whitespace only",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' cannot be empty or whitespace."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "a b"
+      ],
+      "why": "space: allowed in names only",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        " lead"
+      ],
+      "why": "leading space",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "trail "
+      ],
+      "why": "trailing space",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "a/b"
+      ],
+      "why": "slash",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "a\\b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "a:b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "a@b"
+      ],
+      "why": "@ allowed only in agent",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "a$b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "a;b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "a`b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "a*b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "a\u0000b"
+      ],
+      "why": "NUL",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "a\tb"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "a\nb"
+      ],
+      "why": "newline in the middle",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "abc\n"
+      ],
+      "why": "TRAILING NEWLINE: Python's `$` matches before a final \\n, so this is ACCEPTED",
+      "expect": {
+        "ok": true,
+        "result": "abc\n"
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "abc\n\n"
+      ],
+      "why": "two trailing newlines are rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "\nabc"
+      ],
+      "why": "leading newline rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "café"
+      ],
+      "why": "non-ASCII letter",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "café"
+      ],
+      "why": "decomposed",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "ＡＢ"
+      ],
+      "why": "fullwidth letters are not [A-Za-z]",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "١٢"
+      ],
+      "why": "Arabic-Indic digits are not [0-9]",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "日本語"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "🔐"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "a b"
+      ],
+      "why": "NBSP",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        " "
+      ],
+      "why": "NBSP only: strip() removes it -> empty",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' cannot be empty or whitespace."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        "​"
+      ],
+      "why": "zero width space",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "a",
+          "count": 128
+        }
+      ],
+      "why": "128 chars",
+      "expect": {
+        "ok": true,
+        "result": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "a",
+          "count": 129
+        }
+      ],
+      "why": "129 chars",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' exceeds the maximum allowed length of 128 characters."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "a",
+          "count": 256
+        }
+      ],
+      "why": "256 chars",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' exceeds the maximum allowed length of 128 characters."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "a",
+          "count": 257
+        }
+      ],
+      "why": "257 chars",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' exceeds the maximum allowed length of 128 characters."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        {
+          "type": "null"
+        }
+      ],
+      "why": "None",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' must be a string; got NoneType."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        5
+      ],
+      "why": "int",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' must be a string; got int."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        {
+          "type": "bytes",
+          "hex": "616263"
+        }
+      ],
+      "why": "bytes",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' must be a string; got bytes."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        {
+          "type": "list",
+          "value": [
+            "a"
+          ]
+        }
+      ],
+      "why": "list",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' must be a string; got list."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        {
+          "type": "bool",
+          "value": true
+        }
+      ],
+      "why": "bool",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' must be a string; got bool."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "valid"
+      ],
+      "why": "",
+      "expect": {
+        "ok": true,
+        "result": "valid"
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "with.dot-and_underscore9"
+      ],
+      "why": "",
+      "expect": {
+        "ok": true,
+        "result": "with.dot-and_underscore9"
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "UPPER_lower_123"
+      ],
+      "why": "",
+      "expect": {
+        "ok": true,
+        "result": "UPPER_lower_123"
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "a"
+      ],
+      "why": "single char",
+      "expect": {
+        "ok": true,
+        "result": "a"
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        ""
+      ],
+      "why": "empty",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' cannot be empty or whitespace."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "   "
+      ],
+      "why": "whitespace only",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' cannot be empty or whitespace."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "a b"
+      ],
+      "why": "space: allowed in names only",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        " lead"
+      ],
+      "why": "leading space",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "trail "
+      ],
+      "why": "trailing space",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "a/b"
+      ],
+      "why": "slash",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "a\\b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "a:b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "a@b"
+      ],
+      "why": "@ allowed only in agent",
+      "expect": {
+        "ok": true,
+        "result": "a@b"
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "a$b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "a;b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "a`b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "a*b"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "a\u0000b"
+      ],
+      "why": "NUL",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "a\tb"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "a\nb"
+      ],
+      "why": "newline in the middle",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "abc\n"
+      ],
+      "why": "TRAILING NEWLINE: Python's `$` matches before a final \\n, so this is ACCEPTED",
+      "expect": {
+        "ok": true,
+        "result": "abc\n"
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "abc\n\n"
+      ],
+      "why": "two trailing newlines are rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "\nabc"
+      ],
+      "why": "leading newline rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "café"
+      ],
+      "why": "non-ASCII letter",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "café"
+      ],
+      "why": "decomposed",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "ＡＢ"
+      ],
+      "why": "fullwidth letters are not [A-Za-z]",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "١٢"
+      ],
+      "why": "Arabic-Indic digits are not [0-9]",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "日本語"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "🔐"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "a b"
+      ],
+      "why": "NBSP",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        " "
+      ],
+      "why": "NBSP only: strip() removes it -> empty",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' cannot be empty or whitespace."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "​"
+      ],
+      "why": "zero width space",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "a",
+          "count": 128
+        }
+      ],
+      "why": "128 chars",
+      "expect": {
+        "ok": true,
+        "result": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "a",
+          "count": 129
+        }
+      ],
+      "why": "129 chars",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' exceeds the maximum allowed length of 128 characters."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "a",
+          "count": 256
+        }
+      ],
+      "why": "256 chars",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' exceeds the maximum allowed length of 128 characters."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "a",
+          "count": 257
+        }
+      ],
+      "why": "257 chars",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' exceeds the maximum allowed length of 128 characters."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        {
+          "type": "null"
+        }
+      ],
+      "why": "None",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' must be a string; got NoneType."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        5
+      ],
+      "why": "int",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' must be a string; got int."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        {
+          "type": "bytes",
+          "hex": "616263"
+        }
+      ],
+      "why": "bytes",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' must be a string; got bytes."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        {
+          "type": "list",
+          "value": [
+            "a"
+          ]
+        }
+      ],
+      "why": "list",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' must be a string; got list."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        {
+          "type": "bool",
+          "value": true
+        }
+      ],
+      "why": "bool",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' must be a string; got bool."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "a",
+          "count": 256
+        }
+      ],
+      "why": "name max boundary",
+      "expect": {
+        "ok": true,
+        "result": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "a",
+          "count": 257
+        }
+      ],
+      "why": "name over by one",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' exceeds the maximum allowed length of 256 characters."
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "n",
+          "count": 128
+        }
+      ],
+      "why": "namespace max boundary",
+      "expect": {
+        "ok": true,
+        "result": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+      }
+    },
+    {
+      "fn": "validate_namespace",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "n",
+          "count": 129
+        }
+      ],
+      "why": "namespace over by one",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' exceeds the maximum allowed length of 128 characters."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "g",
+          "count": 128
+        }
+      ],
+      "why": "agent max boundary",
+      "expect": {
+        "ok": true,
+        "result": "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        {
+          "type": "repeat",
+          "char": "g",
+          "count": 129
+        }
+      ],
+      "why": "agent over by one",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' exceeds the maximum allowed length of 128 characters."
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "user@host.example"
+      ],
+      "why": "agent with @",
+      "expect": {
+        "ok": true,
+        "result": "user@host.example"
+      }
+    },
+    {
+      "fn": "validate_agent",
+      "args": [
+        "@"
+      ],
+      "why": "only @",
+      "expect": {
+        "ok": true,
+        "result": "@"
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "..."
+      ],
+      "why": "dots only",
+      "expect": {
+        "ok": true,
+        "result": "..."
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "-"
+      ],
+      "why": "dash only",
+      "expect": {
+        "ok": true,
+        "result": "-"
+      }
+    },
+    {
+      "fn": "validate_name",
+      "args": [
+        "_x_"
+      ],
+      "why": "underscores",
+      "expect": {
+        "ok": true,
+        "result": "_x_"
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "plain text"
+      ],
+      "why": "",
+      "expect": {
+        "ok": true,
+        "result": "plain text"
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        ""
+      ],
+      "why": "empty is allowed by validate_free_text itself",
+      "expect": {
+        "ok": true,
+        "result": ""
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "café"
+      ],
+      "why": "already NFC",
+      "expect": {
+        "ok": true,
+        "result": "café"
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "café"
+      ],
+      "why": "NFD is normalised to NFC and returned composed",
+      "expect": {
+        "ok": true,
+        "result": "café"
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "Å"
+      ],
+      "why": "A + combining ring -> U+00C5",
+      "expect": {
+        "ok": true,
+        "result": "Å"
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "ẛ̣"
+      ],
+      "why": "NFC (not NFKC): U+1E9B U+0323 -> U+1E9B U+0323",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 1 (U+0323, category 'Mn') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "ﬁ"
+      ],
+      "why": "ligature stays under NFC",
+      "expect": {
+        "ok": true,
+        "result": "ﬁ"
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "Ａ"
+      ],
+      "why": "fullwidth A stays under NFC",
+      "expect": {
+        "ok": true,
+        "result": "Ａ"
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "Å"
+      ],
+      "why": "ANGSTROM SIGN normalises to U+00C5",
+      "expect": {
+        "ok": true,
+        "result": "Å"
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "Ω"
+      ],
+      "why": "OHM SIGN normalises to U+03A9",
+      "expect": {
+        "ok": true,
+        "result": "Ω"
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "emoji 🔐 ok"
+      ],
+      "why": "So category",
+      "expect": {
+        "ok": true,
+        "result": "emoji 🔐 ok"
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "日本語"
+      ],
+      "why": "",
+      "expect": {
+        "ok": true,
+        "result": "日本語"
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "with\nnewline"
+      ],
+      "why": "Cc rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 4 (U+000A, category 'Cc') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "with\ttab"
+      ],
+      "why": "Cc rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 4 (U+0009, category 'Cc') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "nul\u0000"
+      ],
+      "why": "Cc rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 3 (U+0000, category 'Cc') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        ""
+      ],
+      "why": "DEL is Cc",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 0 (U+007F, category 'Cc') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        ""
+      ],
+      "why": "NEL is Cc",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 0 (U+0085, category 'Cc') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "zero‍width"
+      ],
+      "why": "ZWJ is Cf, rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 4 (U+200D, category 'Cf') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "bom﻿"
+      ],
+      "why": "BOM is Cf, rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 3 (U+FEFF, category 'Cf') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "rtl‮override"
+      ],
+      "why": "bidi override is Cf, rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 3 (U+202E, category 'Cf') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "line sep"
+      ],
+      "why": "LINE SEPARATOR is Zl, rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 4 (U+2028, category 'Zl') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "para sep"
+      ],
+      "why": "PARAGRAPH SEPARATOR is Zp, rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 4 (U+2029, category 'Zp') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "nbsp ok"
+      ],
+      "why": "NBSP is Zs, allowed",
+      "expect": {
+        "ok": true,
+        "result": "nbsp ok"
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "em space"
+      ],
+      "why": "EM SPACE is Zs, allowed",
+      "expect": {
+        "ok": true,
+        "result": "em space"
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "privateuse"
+      ],
+      "why": "Co rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 7 (U+E000, category 'Co') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "unassigned͸"
+      ],
+      "why": "Cn rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 10 (U+0378, category 'Cn') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "why": "max_len default 512",
+      "expect": {
+        "ok": true,
+        "result": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "why": "513 > 512",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Field exceeds maximum length of 512 characters after normalization."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "aaaaaaaaaa"
+      ],
+      "why": "boundary",
+      "kwargs": {
+        "max_len": 10
+      },
+      "expect": {
+        "ok": true,
+        "result": "aaaaaaaaaa"
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "aaaaaaaaaaa"
+      ],
+      "why": "over boundary",
+      "kwargs": {
+        "max_len": 10
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Field exceeds maximum length of 10 characters after normalization."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "ééééé"
+      ],
+      "why": "length is measured AFTER normalisation (5 code points)",
+      "kwargs": {
+        "max_len": 5
+      },
+      "expect": {
+        "ok": true,
+        "result": "ééééé"
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "ÅÅÅÅÅÅ"
+      ],
+      "why": "post-normalisation length still 6",
+      "kwargs": {
+        "max_len": 5
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Field exceeds maximum length of 5 characters after normalization."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "\u0007bell"
+      ],
+      "why": "BEL",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 0 (U+0007, category 'Cc') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        "tab­soft-hyphen"
+      ],
+      "why": "U+00AD is Cf, rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 3 (U+00AD, category 'Cf') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        {
+          "type": "cps",
+          "cps": [
+            55296
+          ]
+        }
+      ],
+      "why": "lone surrogate is Cs, rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 0 (U+D800, category 'Cs') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        {
+          "type": "cps",
+          "cps": [
+            97,
+            56320,
+            98
+          ]
+        }
+      ],
+      "why": "lone low surrogate",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 1 (U+DC00, category 'Cs') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        {
+          "type": "null"
+        }
+      ],
+      "why": "None",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Expected str; got NoneType."
+      }
+    },
+    {
+      "fn": "validate_free_text",
+      "args": [
+        5
+      ],
+      "why": "int",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Expected str; got int."
+      }
+    },
+    {
+      "fn": "normalize_unicode",
+      "args": [
+        "café"
+      ],
+      "why": "",
+      "expect": {
+        "ok": true,
+        "result": "café"
+      }
+    },
+    {
+      "fn": "normalize_unicode",
+      "args": [
+        "a\u0001"
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 1 (U+0001, category 'Cc') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "normalize_unicode",
+      "args": [
+        5
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Expected str for Unicode normalization; got int."
+      }
+    },
+    {
+      "fn": "validate_int_bound",
+      "args": [
+        "limit",
+        10
+      ],
+      "why": "",
+      "kwargs": {
+        "min_val": 1,
+        "max_val": 100
+      },
+      "expect": {
+        "ok": true,
+        "result": 10
+      }
+    },
+    {
+      "fn": "validate_int_bound",
+      "args": [
+        "limit",
+        1
+      ],
+      "why": "min boundary",
+      "kwargs": {
+        "min_val": 1,
+        "max_val": 100
+      },
+      "expect": {
+        "ok": true,
+        "result": 1
+      }
+    },
+    {
+      "fn": "validate_int_bound",
+      "args": [
+        "limit",
+        100
+      ],
+      "why": "max boundary",
+      "kwargs": {
+        "min_val": 1,
+        "max_val": 100
+      },
+      "expect": {
+        "ok": true,
+        "result": 100
+      }
+    },
+    {
+      "fn": "validate_int_bound",
+      "args": [
+        "limit",
+        0
+      ],
+      "why": "below",
+      "kwargs": {
+        "min_val": 1,
+        "max_val": 100
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'limit' must be >= 1; got 0."
+      }
+    },
+    {
+      "fn": "validate_int_bound",
+      "args": [
+        "limit",
+        101
+      ],
+      "why": "above",
+      "kwargs": {
+        "min_val": 1,
+        "max_val": 100
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'limit' must be <= 100; got 101."
+      }
+    },
+    {
+      "fn": "validate_int_bound",
+      "args": [
+        "limit",
+        -5
+      ],
+      "why": "",
+      "kwargs": {
+        "min_val": 0
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'limit' must be >= 0; got -5."
+      }
+    },
+    {
+      "fn": "validate_int_bound",
+      "args": [
+        "limit",
+        5
+      ],
+      "why": "no bounds",
+      "expect": {
+        "ok": true,
+        "result": 5
+      }
+    },
+    {
+      "fn": "validate_int_bound",
+      "args": [
+        "limit",
+        {
+          "type": "bool",
+          "value": true
+        }
+      ],
+      "why": "bool rejected although it subclasses int",
+      "kwargs": {
+        "min_val": 0
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'limit' must be an integer; got bool."
+      }
+    },
+    {
+      "fn": "validate_int_bound",
+      "args": [
+        "limit",
+        {
+          "type": "float",
+          "value": 5.0
+        }
+      ],
+      "why": "float rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'limit' must be an integer; got float."
+      }
+    },
+    {
+      "fn": "validate_int_bound",
+      "args": [
+        "limit",
+        "5"
+      ],
+      "why": "string rejected",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'limit' must be an integer; got str."
+      }
+    },
+    {
+      "fn": "validate_int_bound",
+      "args": [
+        "limit",
+        {
+          "type": "null"
+        }
+      ],
+      "why": "",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'limit' must be an integer; got NoneType."
+      }
+    },
+    {
+      "fn": "validate_int_bound",
+      "args": [
+        "limit",
+        1000000000000000000000000000000
+      ],
+      "why": "huge",
+      "kwargs": {
+        "max_val": 100
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'limit' must be <= 100; got 1000000000000000000000000000000."
+      }
+    },
+    {
+      "fn": "validate_int_bound",
+      "args": [
+        "limit",
+        -1000000000000000000000000000000
+      ],
+      "why": "huge negative",
+      "kwargs": {
+        "min_val": 0
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'limit' must be >= 0; got -1000000000000000000000000000000."
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "name",
+        "ok",
+        256
+      ],
+      "why": "",
+      "kwargs": {
+        "allow_empty": false
+      },
+      "expect": {
+        "ok": true,
+        "result": null
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "name",
+        "",
+        256
+      ],
+      "why": "empty",
+      "kwargs": {
+        "allow_empty": false
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' cannot be empty or just whitespace."
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "name",
+        "   ",
+        256
+      ],
+      "why": "whitespace",
+      "kwargs": {
+        "allow_empty": false
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' cannot be empty or just whitespace."
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "name",
+        " ",
+        256
+      ],
+      "why": "strip() removes NBSP",
+      "kwargs": {
+        "allow_empty": false
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' cannot be empty or just whitespace."
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "name",
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        256
+      ],
+      "why": "length check before regex",
+      "kwargs": {
+        "allow_empty": false
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' exceeds the maximum allowed length of 256 characters."
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "name",
+        "bad/name",
+        256
+      ],
+      "why": "regex",
+      "kwargs": {
+        "allow_empty": false
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "name",
+        "abc\n",
+        256
+      ],
+      "why": "trailing newline accepted",
+      "kwargs": {
+        "allow_empty": false
+      },
+      "expect": {
+        "ok": true,
+        "result": null
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "name",
+        5,
+        256
+      ],
+      "why": "not a string",
+      "kwargs": {
+        "allow_empty": false
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'name' must be a string. Got int."
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "namespace",
+        "ns.ok",
+        128
+      ],
+      "why": "",
+      "kwargs": {
+        "allow_empty": false
+      },
+      "expect": {
+        "ok": true,
+        "result": null
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "namespace",
+        "a b",
+        128
+      ],
+      "why": "space not allowed in namespace",
+      "kwargs": {
+        "allow_empty": false
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "namespace",
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        128
+      ],
+      "why": "",
+      "kwargs": {
+        "allow_empty": false
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'namespace' exceeds the maximum allowed length of 128 characters."
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "agent",
+        "bot@host",
+        128
+      ],
+      "why": "",
+      "kwargs": {
+        "allow_empty": false
+      },
+      "expect": {
+        "ok": true,
+        "result": null
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "agent",
+        "bad agent",
+        128
+      ],
+      "why": "",
+      "kwargs": {
+        "allow_empty": false
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "note",
+        "",
+        512
+      ],
+      "why": "empty note allowed",
+      "kwargs": {
+        "allow_empty": true
+      },
+      "expect": {
+        "ok": true,
+        "result": null
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "note",
+        "a note ✓",
+        512
+      ],
+      "why": "",
+      "kwargs": {
+        "allow_empty": true
+      },
+      "expect": {
+        "ok": true,
+        "result": null
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "note",
+        "bad\nnote",
+        512
+      ],
+      "why": "Cc rejected",
+      "kwargs": {
+        "allow_empty": true
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 3 (U+000A, category 'Cc') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "note",
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        512
+      ],
+      "why": "len check",
+      "kwargs": {
+        "allow_empty": true
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'note' exceeds the maximum allowed length of 512 characters."
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "note",
+        "   ",
+        512
+      ],
+      "why": "whitespace note allowed (allow_empty) then free-text ok",
+      "kwargs": {
+        "allow_empty": true
+      },
+      "expect": {
+        "ok": true,
+        "result": null
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "purpose",
+        "deploy/prod",
+        256
+      ],
+      "why": "purpose is free text: '/' is fine",
+      "kwargs": {
+        "allow_empty": false
+      },
+      "expect": {
+        "ok": true,
+        "result": null
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "purpose",
+        "",
+        256
+      ],
+      "why": "purpose empty rejected when allow_empty is False",
+      "kwargs": {
+        "allow_empty": false
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'purpose' cannot be empty or just whitespace."
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "purpose",
+        "tab\there",
+        256
+      ],
+      "why": "",
+      "kwargs": {
+        "allow_empty": false
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "Character at position 3 (U+0009, category 'Cc') is not permitted in this field."
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "purpose",
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        256
+      ],
+      "why": "",
+      "kwargs": {
+        "allow_empty": false
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'purpose' exceeds the maximum allowed length of 256 characters."
+      }
+    },
+    {
+      "fn": "string_param",
+      "args": [
+        "other",
+        "anything goes \u0000",
+        10
+      ],
+      "why": "unknown param names skip the regex layer (only the length is checked)",
+      "kwargs": {
+        "allow_empty": true
+      },
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'other' exceeds the maximum allowed length of 10 characters."
+      }
+    },
+    {
+      "fn": "value_param",
+      "args": [
+        "value",
+        "secret",
+        1048576
+      ],
+      "why": "str",
+      "expect": {
+        "ok": true,
+        "result_len": 6,
+        "result_sha256": "2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b"
+      }
+    },
+    {
+      "fn": "value_param",
+      "args": [
+        "value",
+        {
+          "type": "bytes",
+          "hex": "736563726574"
+        },
+        1048576
+      ],
+      "why": "bytes",
+      "expect": {
+        "ok": true,
+        "result_len": 6,
+        "result_sha256": "2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b"
+      }
+    },
+    {
+      "fn": "value_param",
+      "args": [
+        "value",
+        "",
+        1048576
+      ],
+      "why": "empty",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'value' cannot be empty or whitespace."
+      }
+    },
+    {
+      "fn": "value_param",
+      "args": [
+        "value",
+        "   ",
+        1048576
+      ],
+      "why": "spaces only",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'value' cannot be empty or whitespace."
+      }
+    },
+    {
+      "fn": "value_param",
+      "args": [
+        "value",
+        " \t\r\n",
+        1048576
+      ],
+      "why": "ascii whitespace only",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'value' cannot be empty or whitespace."
+      }
+    },
+    {
+      "fn": "value_param",
+      "args": [
+        "value",
+        {
+          "type": "bytes",
+          "hex": "0b0c"
+        },
+        1048576
+      ],
+      "why": "VT/FF only: bytes.strip() strips them",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'value' cannot be empty or whitespace."
+      }
+    },
+    {
+      "fn": "value_param",
+      "args": [
+        "value",
+        {
+          "type": "bytes",
+          "hex": "00"
+        },
+        1048576
+      ],
+      "why": "NUL is not whitespace",
+      "expect": {
+        "ok": true,
+        "result_len": 1,
+        "result_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      }
+    },
+    {
+      "fn": "value_param",
+      "args": [
+        "value",
+        {
+          "type": "bytes",
+          "hex": "c2a0"
+        },
+        1048576
+      ],
+      "why": "NBSP (UTF-8) is NOT stripped by bytes.strip(): accepted (Go bytes.TrimSpace WOULD trim it)",
+      "expect": {
+        "ok": true,
+        "result_len": 2,
+        "result_sha256": "abfbd10daf8965c8860b3582af942d7a7cac972b31d1c50f382b67d9b6c07365"
+      }
+    },
+    {
+      "fn": "value_param",
+      "args": [
+        "value",
+        {
+          "type": "bytes",
+          "hex": "e28083"
+        },
+        1048576
+      ],
+      "why": "EM SPACE: accepted",
+      "expect": {
+        "ok": true,
+        "result_len": 3,
+        "result_sha256": "0a846272232b2dd88c85db1952c3eb47b198e7311c81a54a754478d87cedc6f8"
+      }
+    },
+    {
+      "fn": "value_param",
+      "args": [
+        "value",
+        {
+          "type": "bytes",
+          "hex": "c285"
+        },
+        1048576
+      ],
+      "why": "NEL (UTF-8): accepted",
+      "expect": {
+        "ok": true,
+        "result_len": 2,
+        "result_sha256": "f7e0ef1c73a0bb196477a2fa9a5de1d790b0a32c6c8ea20e72e2b7e092bf1985"
+      }
+    },
+    {
+      "fn": "value_param",
+      "args": [
+        "value",
+        {
+          "type": "bytes",
+          "hex": "20612020"
+        },
+        1048576
+      ],
+      "why": "padded value is stored verbatim",
+      "expect": {
+        "ok": true,
+        "result_len": 4,
+        "result_sha256": "ee2d785be7c7aa9742d6783ffe7eae8323f72250d883271d7e76bfe633b1b720"
+      }
+    },
+    {
+      "fn": "value_param",
+      "args": [
+        "value",
+        {
+          "type": "repeat",
+          "char": "a",
+          "count": 1048576
+        },
+        1048576
+      ],
+      "why": "exactly 1 MiB",
+      "expect": {
+        "ok": true,
+        "result_len": 1048576,
+        "result_sha256": "9bc1b2a288b26af7257a36277ae3816a7d4f16e89c1e7e77d0a5c48bad62b360"
+      }
+    },
+    {
+      "fn": "value_param",
+      "args": [
+        "value",
+        {
+          "type": "repeat",
+          "char": "a",
+          "count": 1048577
+        },
+        1048576
+      ],
+      "why": "1 MiB + 1 byte",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'value' exceeds 1048576 bytes."
+      }
+    },
+    {
+      "fn": "value_param",
+      "args": [
+        "value",
+        {
+          "type": "repeat",
+          "char": "é",
+          "count": 524288
+        },
+        1048576
+      ],
+      "why": "1 MiB of 2-byte chars",
+      "expect": {
+        "ok": true,
+        "result_len": 1048576,
+        "result_sha256": "f09174b501fc23341df3455a669e479aad297a973a25e6a38b57364785611ff4"
+      }
+    },
+    {
+      "fn": "value_param",
+      "args": [
+        "value",
+        {
+          "type": "repeat",
+          "char": "é",
+          "count": 524289
+        },
+        1048576
+      ],
+      "why": "over 1 MiB in UTF-8 bytes",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'value' exceeds 1048576 bytes."
+      }
+    },
+    {
+      "fn": "value_param",
+      "args": [
+        "value",
+        5,
+        1048576
+      ],
+      "why": "int",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'value' must be str, bytes, or bytearray."
+      }
+    },
+    {
+      "fn": "value_param",
+      "args": [
+        "value",
+        {
+          "type": "null"
+        },
+        1048576
+      ],
+      "why": "None",
+      "expect": {
+        "ok": false,
+        "error": "ValidationError",
+        "message": "'value' must be str, bytes, or bytearray."
+      }
+    }
+  ]
+}

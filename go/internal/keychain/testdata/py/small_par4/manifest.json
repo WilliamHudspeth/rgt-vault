@@ -1,0 +1,9 @@
+{
+  "master_hex": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+  "vault_id": "vault-par4",
+  "epoch": 2,
+  "dek_hex": "e85633091617e355b5106f395b59d728830030e69e4f965ea3e0e3056a5e92c5",
+  "secret_aad": "vault-par4:default:api_key",
+  "secret_ciphertext_hex": "00000000000000000000000061be240a93877adf221c45229b2dc76feb2420b5f4867a9595208e2b35395b8b12",
+  "secret_plaintext": "sk-test-plaintext"
+}
