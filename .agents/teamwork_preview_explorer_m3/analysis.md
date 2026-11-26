@@ -110,7 +110,7 @@ Implement a custom FastAPI middleware using the **Double-Submit Cookie** pattern
   if accept_header and not any(mime in accept_header for mime in ("application/json", "*/*", "application/*")):
       return JSONResponse(
           status_code=status.HTTP_406_NOT_ACCEPTABLE,
-          content={"error": "NotAcceptable", "detail": "Server only supports application/json responses"},
+          content={"error": "NotAcceptable", "detail": "Server only supports application/json responses"}
       )
   ```
 

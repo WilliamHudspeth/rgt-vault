@@ -86,6 +86,8 @@ rgt_vault = "python"
 "rgt_vault.storage" = ["migrations/*.sql"]
 
 [tool.ruff]
+# Agent scratch notes (markdown with code snippets), not project code.
+extend-exclude = [".agents"]
 line-length = 120
 target-version = "py39"
 
