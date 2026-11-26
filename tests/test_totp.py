@@ -3,6 +3,7 @@
 import time
 
 import pytest
+
 from rgt_vault import totp
 
 
@@ -32,8 +33,7 @@ def test_generate_and_verify_roundtrip():
 def test_verify_rejects_wrong_code():
     secret = totp.generate_secret()
     now = time.time()
-    assert not totp.verify(secret, "000000", timestamp=now) or \
-        totp.generate(secret, timestamp=now) == "000000"
+    assert not totp.verify(secret, "000000", timestamp=now) or totp.generate(secret, timestamp=now) == "000000"
 
 
 def test_verify_allows_one_step_of_skew():

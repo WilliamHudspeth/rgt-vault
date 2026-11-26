@@ -546,11 +546,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # tui (operator console)
     p_tui = subparsers.add_parser("tui", help="Launch the operator TUI (requires [tui] extra)")
-    p_tui.add_argument("--url", default="http://127.0.0.1:8765", help="Daemon base URL (default: http://127.0.0.1:8765)")
-    p_tui.add_argument("--token", default=None, help="Operator bearer token (default: read from --token-file)")
     p_tui.add_argument(
-        "--token-file", default=None, help="Token file path (default: ~/.config/rgt-vault/server.token)"
+        "--url", default="http://127.0.0.1:8765", help="Daemon base URL (default: http://127.0.0.1:8765)"
     )
+    p_tui.add_argument("--token", default=None, help="Operator bearer token (default: read from --token-file)")
+    p_tui.add_argument("--token-file", default=None, help="Token file path (default: ~/.config/rgt-vault/server.token)")
     p_tui.add_argument("--namespace", default="default", help="Namespace to store secrets under (default: default)")
     p_tui.set_defaults(func=cmd_tui)
 

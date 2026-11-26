@@ -71,12 +71,7 @@ github.get_repo(token, "org/repo")
 
 **RGT Vault**
 ```python
-vault.execute_capability(
-    "github.read_repo",
-    {
-        "repo": "org/repo"
-    }
-)
+vault.execute_capability("github.read_repo", {"repo": "org/repo"})
 ```
 *Result: Repository metadata returned. GitHub token never exposed.*
 

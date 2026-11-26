@@ -28,8 +28,7 @@ def main() -> None:
     # 1. Python version gate                                               #
     # ------------------------------------------------------------------ #
     if sys.version_info < MIN_PYTHON:
-        print(f"ERROR: Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ required "
-              f"(you have {sys.version.split()[0]}).")
+        print(f"ERROR: Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ required (you have {sys.version.split()[0]}).")
         sys.exit(1)
 
     print(f"Python {sys.version.split()[0]} OK")
@@ -96,10 +95,10 @@ def main() -> None:
     # ------------------------------------------------------------------ #
     if sys.platform == "win32":
         activate = r".venv\Scripts\activate"
-        python   = r".venv\Scripts\python"
+        python = r".venv\Scripts\python"
     else:
         activate = "source .venv/bin/activate"
-        python   = ".venv/bin/python"
+        python = ".venv/bin/python"
 
     print(f"""
 ================================================

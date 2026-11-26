@@ -192,14 +192,10 @@ class LinuxTPMProvider(MasterSecretProvider):
     def rotate_secret(self) -> bytes:
         import os
         import tempfile
+
         new_secret = os.urandom(32)
         with tempfile.TemporaryDirectory(dir=str(self.private_path.parent)) as tmp_dir:
-            new_priv, new_pub = seal_master_secret(
-                new_secret,
-                tmp_dir,
-                self.pcr_list,
-                self.pcr_bank
-            )
+            new_priv, new_pub = seal_master_secret(new_secret, tmp_dir, self.pcr_list, self.pcr_bank)
             os.replace(new_priv, self.private_path)
             os.replace(new_pub, self.public_path)
             new_pcrs = new_priv.with_suffix(".pcrs")
