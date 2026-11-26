@@ -20,7 +20,7 @@ The forces in play:
 
 - Human operators and service agents have very different ergonomic needs (humans want discoverability; services want predictability).
 - Capability descriptions should be self-describing so the policy can reason about them.
-- The model must work over both the local CLI (`vault execute ...`) and the remote HTTP API (`POST /v1/capabilities/{name}/invoke`).
+- The model must work over both the in-process API (`VaultManager.execute_capability`) and the HTTP API (`POST /v1/capabilities/execute`).
 - Capability tokens should be short-lived and scope-bound.
 
 ## Considered Options
@@ -42,10 +42,10 @@ Rationale:
 
 A capability token is:
 
-- Signed (Ed25519, per ADR-0001 key hierarchy).
-- Scope-bound (the token says "may invoke capability X with subject Y in scope Z").
-- Short-lived (default 5 minutes; max 1 hour).
-- Audience-bound (the token is for vault T, not vault U).
+- Signed. *Intended:* Ed25519 per the ADR-0001 key hierarchy. *As built:* HMAC-SHA256 with a shared key (`HMACTokenVerifier`); `Ed25519TokenVerifier` is a stub that raises `NotImplementedError`.
+- Scope-bound (the token says "may invoke capability X with subject Y in scope Z"). As built: agent id, capability, capability version and context bindings.
+- Short-lived. *Intended:* default 5 minutes, max 1 hour. *As built:* default 60 seconds from `sign(ttl_seconds=60)`; no maximum is enforced.
+- Audience-bound (the token is for vault T, not vault U). **Not implemented**: the payload has no audience claim.
 
 ### Consequences
 
@@ -60,9 +60,17 @@ A capability token is:
 
 This decision is correct if:
 
-- `GET /v1/capabilities` returns the registered set, and unauthenticated callers see only public metadata.
-- A test (`tests/test_capability_registry.py`) demonstrates that an unauthorized capability invocation is denied with audit row.
-- The capability model is documented in `docs/api.md` and the ABAC policy simulator (v0.3.0) reasons about capabilities.
+- `GET /v1/capabilities` returns the registered set. As built it **requires a bearer token** (`tests/test_capability_integration.py::test_http_list_capabilities_requires_bearer`); there is no unauthenticated public view. Agents can ask which capabilities they are authorized for with `GET /v1/capabilities/list?agent=...`.
+- Denial of an unauthorized or mismatched invocation is covered by `tests/test_capability_integration.py::test_http_execute_capability_denied_on_token_mismatch`, `::test_http_execute_capability_404_on_unknown_capability` and `tests/test_capabilities.py::test_execute_capability_denies_unknown_capability`; the code writes a `CAPABILITY_DENIED` row on the freeze, verifier, lockout, token-mismatch, binding, hook and registry failure paths (a missing token is rejected earlier with a plain validation error). Registry behavior is tested in `tests/test_capabilities.py` (`test_registry_*`); an earlier draft of this ADR named a registry test file that was never written.
+- The capability model is documented in [`docs/concepts/capabilities.md`](../concepts/capabilities.md) and the endpoints in [`docs/guides/api.md`](../guides/api.md). The ABAC simulator treats a capability name as the `action` attribute (`GET /v1/capabilities/list`).
+
+### Known gaps on this commit
+
+- **Go (primary line): Gap (Go).** No capability registry, token verifier, `execute` endpoint or discovery endpoint. The Go server's `GET /v1/actions` returns a hard-coded list of four names, and `/use` is a stub. Everything below describes the end-of-life Python code, which is the reference for the port.
+
+- `rgt-vault serve` does not configure a `token_verifier`, so `/v1/capabilities/execute` currently fails closed with a 400 until the server is wired with one (RGT-337).
+- The vault holds the HMAC key, so it could mint tokens as well as verify them; there is no key rotation procedure for it.
+- Replay: a valid token can be reused until it expires unless a `TwoFactorHook` replay cache is installed.
 
 ## Pros and Cons of the Options
 

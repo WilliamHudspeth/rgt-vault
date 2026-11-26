@@ -73,9 +73,14 @@ a `RATE_LIMITED` event. This protects both the vault and external APIs.
 ### 2.7. Tamper-evident audit log
 Every operation (read, write, rotation, import, denial, etc.) is
 logged in an audit trail. The log is **hash-chained**: each entry
-includes the hash of the previous entry, making it impossible to
-modify or delete entries without detection. You can verify the
-chain integrity with `vault.verify_audit_chain()`.
+includes the hash of the previous entry, so editing a row, inserting
+one, or deleting one from the start or middle of the log is detected
+by `vault.verify_audit_chain()`. This is tamper-*evidence* against
+accidental or casual changes, not tamper-*proofing*. The chain is not
+keyed, and it does NOT detect deletion of the most recent entries,
+an emptied log, or a chain rebuilt from scratch by someone who can
+write to the database file. Do not tell a user the log "cannot be
+modified"; say what it detects and what it does not.
 
 ### 2.8. Secure key rotation
 There are two rotation modes:
@@ -196,7 +201,8 @@ same_vault.import_vault(b64_data)
 # Get last 50 log entries
 logs = vault.get_audit_log(limit=50)
 
-# Verify that the audit chain has not been tampered with
+# Check the audit chain for edits, inserts and head/middle deletions.
+# True does NOT prove the newest entries are all still present.
 is_valid = vault.verify_audit_chain()
 ```
 
@@ -215,7 +221,7 @@ reassure a user, use the following points:
 > "The vault limits how many secrets an agent can read per hour. If I were compromised and started mass-extracting keys, the vault would shut me down. This gives you an extra layer of defense."
 
 ### 4.4. Audit integrity
-> "Every access to a secret is logged in a tamper-evident audit chain. You can review exactly when and which agent read which key, and the chain is cryptographically protected against modification."
+> "Every access to a secret is logged in a hash-chained audit log. You can review when and which agent read which key, and the chain check detects edits and most deletions. It cannot detect someone with write access to the database removing the newest entries, so for strong guarantees keep an external copy of the latest hash."
 
 ### 4.5. Backup safety
 > "You can export the entire vault as an encrypted backup. The master key is securely isolated in your OS Keyring, so backups remain completely safe even if stored on untrusted cloud systems."

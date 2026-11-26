@@ -38,8 +38,12 @@ Under the assumptions above:
   authenticated decryption to fail.
 - **Authorization.** A default-deny ABAC engine gates every read/write; an
   explicit `deny` rule always overrides any `allow`.
-- **Tamper-evident audit.** Operations are recorded in a SHA-256 hash-chained
-  audit log; `verify_audit_chain()` detects insertion, deletion, or edits.
+- **Tamper-evident audit (partial).** Operations are recorded in a SHA-256
+  hash-chained audit log; `verify_audit_chain()` detects edits to covered
+  fields, inserted rows, and rows deleted from the head or middle of the log.
+  It does **not** detect deletion of the most recent rows (tail truncation),
+  an emptied table, or a chain rebuilt from scratch; see
+  [Audit Chain Limitations](#audit-chain-limitations).
 - **Forward protection on master-key rotation.** Rotating the master key
   re-wraps the DEK under a new key and increments the key epoch, invalidating
   the previously wrapped key.
@@ -70,7 +74,18 @@ Under the assumptions above:
 - **What the chain verifies.** Every audit record includes a SHA-256 hash that
   incorporates the previous record's hash, timestamp, action, secret name,
   detail payload, and policy hash. This makes it detectable if any row is
-  inserted, deleted from the middle, or modified after the fact.
+  inserted, deleted from the head or middle, or modified after the fact.
+
+- **Tail truncation and an emptied log are not detected.** Deleting the last
+  N rows leaves a shorter chain that is still internally consistent, and an
+  empty `audit_logs` table verifies as OK. Anyone with write access to
+  `vault.db` can therefore remove the most recent history without
+  `verify_audit_chain()` noticing.
+
+- **The chain is unkeyed.** The hash is plain SHA-256, so an attacker with
+  write access can recompute a valid chain after editing rows. The `agent_id`
+  column is not part of the hash input, so it can be changed without breaking
+  verification.
 
 - **Root-level offline replacement is not detected.** A user with root or
   direct filesystem access can copy `vault.db`, truncate `audit_logs`, write
@@ -89,6 +104,9 @@ Under the assumptions above:
   the platform secret-store provider), a TPM NV counter (survives OS
   reinstall), or an append-only remote syslog sink. On verification, the
   stored tail hash must match the external anchor before the chain is trusted.
+
+- **The Go server keeps its audit log in memory only.** The hash chain there
+  has the same properties as above, and the log is empty after every restart.
 
 - **No cryptographic signing.** The chain provides tamper-evidence, not
   non-repudiation. It does not prove who performed an action, only that the

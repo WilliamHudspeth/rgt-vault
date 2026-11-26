@@ -6,7 +6,7 @@ labels: bug
 ---
 
 > ⚠️ **Do not report security vulnerabilities here.** Follow the private
-> disclosure process in [SECURITY.md](../../SECURITY.md).
+> disclosure process in [SECURITY.md](../SECURITY.md).
 
 ## Description
 

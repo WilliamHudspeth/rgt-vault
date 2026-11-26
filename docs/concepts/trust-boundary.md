@@ -1,5 +1,10 @@
 # Trust Boundary
 
+> **Direction (2026-11-26).** Go (`go/`) is the only maintained line; the Python
+> daemon is end-of-life and is described here as the legacy reference for the
+> guarantees the Go line must reach (**Gap (Go)** marks what Go lacks today).
+> The deployment advice (soft vs hard posture) applies to either line.
+
 RGT Vault's value depends entirely on **where the boundary actually is**.
 This page is deliberately blunt about what the project does and does not
 protect against, because an over-stated security claim is worse than an
@@ -14,7 +19,22 @@ evaluates policy, optionally asks a human to approve, leases the secret into
 a server-side buffer, runs the action, and returns only the result. Through
 the API, the secret value never reaches the caller.
 
-That claim is true **by construction**, regardless of deployment.
+That claim is true **by construction** for the legacy Python daemon's `/use` and
+`/v1/capabilities/execute` endpoints, regardless of deployment: the response
+contains the action result, never the secret. It is **not** true for every
+surface in this repository, and the Go line (the target) does not meet it yet:
+
+| Surface | Does the caller receive plaintext? |
+|---|---|
+| Go server `GET /v1/secrets` | **Yes** (**Gap (Go)**): each listed secret includes its `value`; the server is an in-memory plaintext store, not a protected one |
+| Go MCP bridge `lease_secret` tool | **Yes**: it returns the secret value to the MCP client, i.e. to the agent ([MCP guide](../guides/mcp.md)) |
+| Go server `POST /v1/secrets/{ns}/{name}/use` | No, but it is a stub: no action runs |
+| Go CLI `get` | Yes, by design (a human at a terminal) |
+| Legacy Python `/use` and `/v1/capabilities/execute` | No |
+| Legacy Python CLI `get` and in-process `lease_secret` | Yes, by design |
+
+Until the Go server has real capability execution (**Gap (Go)**), the claim
+cannot be made for the Go line.
 
 ## What "the agent can never see it" actually requires
 
@@ -38,7 +58,8 @@ Run the vault as its own locked-down account. Then you can honestly say:
 
 > **The agent cannot directly access secret material.**
 
-The repo ships the pieces to do this on Linux:
+The repo ships the pieces to do this on Linux for the **legacy Python daemon**
+(**Gap (Go)**: no systemd unit for the Go server yet, planned in RGT-232/263):
 
 - `deploy/rgt-vault.service` — a hardened systemd unit that runs the daemon
   as a dedicated `rgtvault` user with `ProtectSystem=strict`,
@@ -50,6 +71,17 @@ The agent's user account has no read access to `/var/lib/rgt-vault`. It holds
 only the **agent token** and talks to `http://127.0.0.1:8765`. The **operator
 token** (a separate credential) is the only thing that can approve or deny a
 request, so an agent cannot self-approve even if it obtains the agent token.
+
+Two limits of this split are worth knowing:
+
+- The separation exists only when the legacy daemon is started with
+  `--operator-token-file` (the shipped `deploy/rgt-vault.service` does this). Without it
+  the approve/deny endpoints accept the agent token and the CLI warns.
+  **Gap (Go)**: the Go server has one token and no approval routes.
+- The agent token is **shared by every agent**, and `/use` trusts the `agent`
+  name in the request body, so two agents using the same daemon can impersonate
+  each other for ABAC purposes. Run one daemon (or one token scope) per trust
+  level until per-agent identity lands (RGT-236 and related).
 
 ```
   ┌────────────┐   loopback HTTP + agent token   ┌──────────────────────┐
@@ -91,6 +123,22 @@ human-in-the-loop step legible in a demo — but the honest framing is "second
 factor against a stolen operator token," not "makes approval unbreakable."
 2FA is therefore opt-in per secret (`require_2fa`), so you can reserve the
 friction for the credentials that actually warrant it.
+
+## Other trust boundaries in the repository
+
+The same-user/separate-account analysis above applies to whichever daemon you
+run. The other components cross boundaries too; the full data-flow diagram and the
+per-boundary authentication table are in the
+[threat model](../security/threat-model.md#data-flow-diagram).
+
+- **Go server and cutover gateway.** Neither enforces the vault guarantees yet.
+  The Go server keeps secrets in plaintext memory and the gateway's `/__cutover`
+  admin paths are unauthenticated; do not put real secrets behind them.
+- **MCP.** An MCP client is an agent. See the table above for what each MCP
+  path returns.
+- **Outbound calls.** When an action uses a leased secret it sends it to a
+  third party by design. The destination checks are described in the threat
+  model; the trust placed in the destination is yours.
 
 ## What is explicitly out of scope
 
