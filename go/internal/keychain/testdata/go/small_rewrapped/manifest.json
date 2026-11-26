@@ -1,0 +1,9 @@
+{
+  "master_hex": "676f206d61737465722c206e6f74203332206279746573",
+  "vault_id": "go-rewrap-vault",
+  "epoch": 5,
+  "dek_hex": "feb7e3f4f49804ae3e78910412145e84adf9783629f6fd474402ab4ee93db9ea",
+  "secret_aad": "go-rewrap-vault:default:api_key",
+  "secret_ciphertext_hex": "5c0277483fab6393f4956a54c968964780a7d3acd0f5416550f2c83d3c884657196a86e3f0c1a2df",
+  "secret_plaintext": "go-plaintext"
+}
