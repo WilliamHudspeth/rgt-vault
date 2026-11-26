@@ -9,18 +9,29 @@
 //   - Rollback is simple: setting go_percent to 0 immediately redirects all traffic to Python.
 //   - Canary safety: Go-backend transport failures transparently fall back to the Python backend.
 //   - No global state or init() side effects.
+//   - The admin API (/__cutover*) requires an operator bearer token
+//     (internal/auth TokenStore, constant-time compare) and fails closed: a
+//     gateway without a configured token store rejects every admin call.
+//     Admin paths are never proxied to a backend.
 package gateway
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"math/rand/v2"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync/atomic"
+
+	"rgt-vault-server/internal/auth"
 )
+
+// adminPrefix is the path prefix reserved for the gateway's admin API.
+const adminPrefix = "/__cutover"
 
 // Gateway manages routing traffic between a legacy Python backend and a new Go backend.
 type Gateway struct {
@@ -30,6 +41,54 @@ type Gateway struct {
 	pythonReqs  atomic.Int64
 	goReqs      atomic.Int64
 	goFails     atomic.Int64
+	operator    atomic.Pointer[auth.TokenStore] // nil => admin API disabled
+}
+
+// SetOperatorTokenStore configures the token store that authenticates the
+// admin API. Passing nil disables the admin API (every call gets 403).
+func (g *Gateway) SetOperatorTokenStore(ts *auth.TokenStore) {
+	g.operator.Store(ts)
+}
+
+// authorizeAdmin reports whether r carries a valid operator token, writing
+// the error response itself when it does not.
+func (g *Gateway) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
+	ts := g.operator.Load()
+	if ts == nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin API disabled: no operator token configured"})
+		return false
+	}
+	id, err := ts.Verify(r.Header.Get("Authorization"))
+	if err != nil {
+		// Never echo the presented token; log only the failure class.
+		log.Printf("gateway: admin auth failed for %s %s from %s: %v", r.Method, r.URL.Path, r.RemoteAddr, authFailure(err))
+		w.Header().Set("WWW-Authenticate", `Bearer realm="rgt-vault-gateway"`)
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "operator token required"})
+		return false
+	}
+	log.Printf("gateway: admin %s %s by token %s", r.Method, r.URL.RequestURI(), id)
+	return true
+}
+
+// authFailure maps auth errors to a fixed vocabulary so file paths from
+// TokenStore.Read never reach logs at a client's prompting.
+func authFailure(err error) string {
+	switch {
+	case errors.Is(err, auth.ErrMissingAuth):
+		return "missing"
+	case errors.Is(err, auth.ErrEmptyToken):
+		return "empty"
+	case errors.Is(err, auth.ErrInvalidToken):
+		return "invalid"
+	default:
+		return "token store unavailable"
+	}
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 // NewGateway creates a new Gateway instance routing traffic to pythonURL and goURL.
@@ -84,52 +143,67 @@ func (g *Gateway) Stats() map[string]int64 {
 	}
 }
 
-// ServeHTTP satisfies http.Handler. Admin paths are handled first:
+// ServeHTTP satisfies http.Handler. Admin paths (operator token required)
+// are handled first and never proxied:
 //
 //	PUT/POST /__cutover?go=N   — set Go percent; 400 on missing/invalid N
 //	GET /__cutover/stats       — JSON snapshot of Stats()
+//	anything else under /__cutover — 404/405
 //
 // All other requests are probabilistically routed: rand.IntN(100) < goPercent
 // sends to the Go proxy; otherwise the Python proxy handles it.
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch {
-	case r.URL.Path == "/__cutover" && (r.Method == http.MethodPut || r.Method == http.MethodPost):
+	if r.URL.Path == adminPrefix || strings.HasPrefix(r.URL.Path, adminPrefix+"/") {
+		g.serveAdmin(w, r)
+		return
+	}
+	// Probabilistic routing: n is uniform in [0, 100).
+	// When goPercent==100 all n < 100 are true (100% Go).
+	// When goPercent==0  no  n < 0   is true (100% Python).
+	n := rand.IntN(100)
+	if int64(n) < g.goPercent.Load() {
+		g.goReqs.Add(1)
+		g.goProxy.ServeHTTP(w, r)
+	} else {
+		g.pythonReqs.Add(1)
+		g.pythonProxy.ServeHTTP(w, r)
+	}
+}
+
+func (g *Gateway) serveAdmin(w http.ResponseWriter, r *http.Request) {
+	if !g.authorizeAdmin(w, r) {
+		return
+	}
+	switch r.URL.Path {
+	case adminPrefix:
+		if r.Method != http.MethodPut && r.Method != http.MethodPost {
+			w.Header().Set("Allow", "PUT, POST")
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
 		goStr := r.URL.Query().Get("go")
 		if goStr == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing query parameter 'go'"})
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing query parameter 'go'"})
 			return
 		}
 		p, err := strconv.Atoi(goStr)
 		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid 'go' value, must be an integer"})
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid 'go' value, must be an integer"})
 			return
 		}
 		g.SetGoPercent(p)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]int{"go_percent": g.GoPercent()})
+		writeJSON(w, http.StatusOK, map[string]int{"go_percent": g.GoPercent()})
 
-	case r.URL.Path == "/__cutover/stats" && r.Method == http.MethodGet:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(g.Stats())
+	case adminPrefix + "/stats":
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		writeJSON(w, http.StatusOK, g.Stats())
 
 	default:
-		// Probabilistic routing: n is uniform in [0, 100).
-		// When goPercent==100 all n < 100 are true (100% Go).
-		// When goPercent==0  no  n < 0   is true (100% Python).
-		n := rand.IntN(100)
-		if int64(n) < g.goPercent.Load() {
-			g.goReqs.Add(1)
-			g.goProxy.ServeHTTP(w, r)
-		} else {
-			g.pythonReqs.Add(1)
-			g.pythonProxy.ServeHTTP(w, r)
-		}
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown admin endpoint"})
 	}
 }
 
