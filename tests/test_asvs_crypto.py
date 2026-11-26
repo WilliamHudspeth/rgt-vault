@@ -77,15 +77,11 @@ class TestEncryptedAtRest:
         vault.set_secret("ssn", pii_value, namespace="pii", agent="test")
 
         db = tmp_path / "vault.db"
-        rows = sqlite3.connect(db).execute(
-            "SELECT ciphertext FROM secrets WHERE name='ssn'"
-        ).fetchall()
+        rows = sqlite3.connect(db).execute("SELECT ciphertext FROM secrets WHERE name='ssn'").fetchall()
         assert rows, "No secret row found in DB"
         for (ct,) in rows:
             raw = ct if isinstance(ct, bytes) else ct.encode()
-            assert pii_value.encode() not in raw, (
-                "PII plaintext found verbatim in ciphertext column"
-            )
+            assert pii_value.encode() not in raw, "PII plaintext found verbatim in ciphertext column"
 
     def test_health_ciphertext_differs_from_plaintext(self, tmp_path, master_provider):
         """RGT-394: A stored health record value must not appear in cleartext."""
@@ -96,9 +92,7 @@ class TestEncryptedAtRest:
         vault.set_secret("health_record", health_value, namespace="health", agent="test")
 
         db = tmp_path / "vault.db"
-        rows = sqlite3.connect(db).execute(
-            "SELECT ciphertext FROM secrets WHERE name='health_record'"
-        ).fetchall()
+        rows = sqlite3.connect(db).execute("SELECT ciphertext FROM secrets WHERE name='health_record'").fetchall()
         for (ct,) in rows:
             raw = ct if isinstance(ct, bytes) else ct.encode()
             assert health_value.encode() not in raw
@@ -112,9 +106,7 @@ class TestEncryptedAtRest:
         vault.set_secret("credit_card", fin_value, namespace="financial", agent="test")
 
         db = tmp_path / "vault.db"
-        rows = sqlite3.connect(db).execute(
-            "SELECT ciphertext FROM secrets WHERE name='credit_card'"
-        ).fetchall()
+        rows = sqlite3.connect(db).execute("SELECT ciphertext FROM secrets WHERE name='credit_card'").fetchall()
         for (ct,) in rows:
             raw = ct if isinstance(ct, bytes) else ct.encode()
             assert fin_value.encode() not in raw
@@ -188,9 +180,7 @@ class TestFailSecurely:
         try:
             decrypt(ct, os.urandom(32), b"aad")
         except DecryptionError as e:
-            assert isinstance(e.__cause__, InvalidTag), (
-                "DecryptionError should chain the InvalidTag cause"
-            )
+            assert isinstance(e.__cause__, InvalidTag), "DecryptionError should chain the InvalidTag cause"
 
     def test_non_bytes_input_raises_decryption_error(self):
         """Passing a str instead of bytes must raise DecryptionError, not TypeError."""
@@ -199,7 +189,7 @@ class TestFailSecurely:
 
         dek = os.urandom(32)
         with pytest.raises(DecryptionError):
-            decrypt("not bytes", dek, b"aad")  # type: ignore[arg-type]
+            decrypt("not bytes", dek, b"aad")
 
 
 # ---------------------------------------------------------------------------
@@ -257,9 +247,7 @@ class TestApprovedAlgorithms:
             for pat in forbidden_patterns:
                 # Allow it if it's in a comment or docstring (rough heuristic)
                 lines = [ln for ln in text.splitlines() if pat in ln and not ln.strip().startswith("#")]
-                assert not lines, (
-                    f"Suspicious custom crypto pattern {pat!r} in {src_file.relative_to(RGTV_ROOT)}"
-                )
+                assert not lines, f"Suspicious custom crypto pattern {pat!r} in {src_file.relative_to(RGTV_ROOT)}"
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +282,8 @@ class TestSecureIVAndCipherMode:
         crypto_src = (RGTV_ROOT / "rgt_vault" / "crypto.py").read_text()
         tree = ast.parse(crypto_src)
         calls = [
-            node for node in ast.walk(tree)
+            node
+            for node in ast.walk(tree)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "urandom"
@@ -303,10 +292,7 @@ class TestSecureIVAndCipherMode:
         ]
         assert calls, "os.urandom() call not found in crypto.py"
         # Verify the argument is the constant 12
-        nonce_calls = [
-            c for c in calls
-            if c.args and isinstance(c.args[0], ast.Constant) and c.args[0].value == 12
-        ]
+        nonce_calls = [c for c in calls if c.args and isinstance(c.args[0], ast.Constant) and c.args[0].value == 12]
         assert nonce_calls, "os.urandom(12) call not found in crypto.py — nonce size may have changed"
 
     def test_aesgcm_is_only_cipher_used(self):
@@ -314,9 +300,7 @@ class TestSecureIVAndCipherMode:
         crypto_src = (RGTV_ROOT / "rgt_vault" / "crypto.py").read_text()
         forbidden = ["ECB", "CBC", "CTR", "CFB", "OFB", "AESCipher", "Cipher("]
         for name in forbidden:
-            assert name not in crypto_src, (
-                f"Forbidden cipher mode/class {name!r} found in crypto.py"
-            )
+            assert name not in crypto_src, f"Forbidden cipher mode/class {name!r} found in crypto.py"
 
 
 # ---------------------------------------------------------------------------
@@ -339,8 +323,9 @@ class TestCryptographicAgility:
 
     def test_dek_key_length_is_32_bytes(self):
         """DEK must be AES-256 (32 bytes); changing this should be a deliberate choice."""
-        from rgt_vault.keychain import HardenedDEKManager, MasterSecret
         import tempfile
+
+        from rgt_vault.keychain import HardenedDEKManager, MasterSecret
 
         with tempfile.TemporaryDirectory() as d:
             mgr = HardenedDEKManager(os.path.join(d, "kc.json"))
@@ -350,6 +335,7 @@ class TestCryptographicAgility:
     def test_keychain_records_kdf_parameters(self, tmp_path):
         """keychain.json must record KDF parameters so they can be changed on rotation."""
         import json
+
         from rgt_vault.keychain import HardenedDEKManager, MasterSecret
 
         path = tmp_path / "kc.json"
@@ -390,9 +376,7 @@ class TestNoObsoleteAlgorithms:
                 if stripped.startswith("#"):
                     continue
                 if "hashlib.md5" in line or "hashlib.new('md5'" in line:
-                    pytest.fail(
-                        f"hashlib.md5 found in {src_file.relative_to(RGTV_ROOT)}:{lineno}"
-                    )
+                    pytest.fail(f"hashlib.md5 found in {src_file.relative_to(RGTV_ROOT)}:{lineno}")
 
     def test_no_des_usage(self):
         for src_file in _collect_python_sources():
@@ -422,10 +406,7 @@ class TestNoObsoleteAlgorithms:
                 if stripped.startswith("#"):
                     continue
                 if "hashlib.sha1" in line or "hashes.SHA1" in line:
-                    pytest.fail(
-                        f"SHA-1 used outside TOTP in "
-                        f"{src_file.relative_to(RGTV_ROOT)}:{lineno}: {stripped}"
-                    )
+                    pytest.fail(f"SHA-1 used outside TOTP in {src_file.relative_to(RGTV_ROOT)}:{lineno}: {stripped}")
 
 
 # ---------------------------------------------------------------------------
@@ -473,9 +454,7 @@ class TestNonceUniqueness:
         # A monotonically increasing counter would be caught here
         diffs = [nonces_as_ints[i + 1] - nonces_as_ints[i] for i in range(len(nonces_as_ints) - 1)]
         # If all diffs are exactly 1, it's a counter — fail
-        assert not all(d == 1 for d in diffs), (
-            "Nonces appear to be a sequential counter — os.urandom not being used"
-        )
+        assert not all(d == 1 for d in diffs), "Nonces appear to be a sequential counter — os.urandom not being used"
 
 
 # ---------------------------------------------------------------------------
@@ -564,9 +543,7 @@ class TestConstantTimeComparisons:
         """Token verifier (HMAC) must not use == for signature comparison."""
         token_src = (RGTV_ROOT / "rgt_vault" / "token.py").read_text()
         # The token module should use hmac.compare_digest, not bare ==
-        assert "compare_digest" in token_src, (
-            "Token verification must use hmac.compare_digest"
-        )
+        assert "compare_digest" in token_src, "Token verification must use hmac.compare_digest"
 
     def test_hmac_compare_digest_available(self):
         """hmac.compare_digest is a stdlib constant-time comparison function."""
@@ -614,9 +591,7 @@ class TestCSPRNG:
                             f"'import random' found in {src_file.name} — use secrets or os.urandom"
                         )
                 if isinstance(node, ast.ImportFrom):
-                    assert node.module != "random", (
-                        f"'from random import ...' found in {src_file.name}"
-                    )
+                    assert node.module != "random", f"'from random import ...' found in {src_file.name}"
 
     def test_secrets_module_entropy_is_csprng(self):
         """secrets.token_bytes() must produce distinct values (integration check)."""
@@ -743,6 +718,7 @@ class TestKeyVaultAndSecretsManager:
     def test_dek_wrapped_in_keychain_file(self, tmp_path, master_provider):
         """keychain.json must exist and contain a wrapped DEK after vault init."""
         import json
+
         from rgt_vault.vault import VaultManager
 
         VaultManager(
@@ -775,6 +751,7 @@ class TestKeyVaultAndSecretsManager:
     def test_master_key_rotation_rewraps_dek(self, tmp_path, master_provider):
         """rotate_master_key must produce a new wrapped DEK without re-encrypting data."""
         import json
+
         from rgt_vault.vault import VaultManager
 
         vault = VaultManager(
@@ -854,9 +831,7 @@ class TestKeyMaterialIsolation:
         for entry in vault.get_audit_log(limit=50):
             for field in ("action", "details", "secret_name"):
                 val = str(entry.get(field) or "")
-                assert dek_hex not in val, (
-                    f"DEK hex found in audit log field {field!r}"
-                )
+                assert dek_hex not in val, f"DEK hex found in audit log field {field!r}"
 
     def test_zeroize_bytearray_clears_content(self):
         """zeroize_bytearray must overwrite every byte with 0x00."""
@@ -871,4 +846,4 @@ class TestKeyMaterialIsolation:
         from rgt_vault.crypto import zeroize_bytearray
 
         with pytest.raises(TypeError):
-            zeroize_bytearray(b"immutable")  # type: ignore[arg-type]
+            zeroize_bytearray(b"immutable")

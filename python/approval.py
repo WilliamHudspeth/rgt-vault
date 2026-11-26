@@ -52,8 +52,7 @@ class ApprovalDecision:
 class ApprovalGate(Protocol):
     """The interface ``VaultManager`` consults before unsealing a secret."""
 
-    def consult(self, request: ApprovalRequest) -> ApprovalDecision:
-        ...
+    def consult(self, request: ApprovalRequest) -> ApprovalDecision: ...
 
 
 class AutoAllowGate:
