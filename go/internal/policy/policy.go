@@ -20,8 +20,11 @@
 //     purpose/action that is not a string, or a pattern fnmatch cannot
 //     translate;
 //   - YAML is parsed with yaml.v3 (YAML 1.2 core schema) where PyYAML uses
-//     YAML 1.1, so 1.1-only spellings (yes/no/on/off booleans, sexagesimal
-//     ints) are not interpreted as such;
+//     YAML 1.1. The differences that could change a decision are closed (an
+//     unquoted yes/no/on/off in agent/namespace/purpose/action is rejected,
+//     as Python's evaluation would fail; a ttl like 1e3 or 0o10 is a string
+//     as in PyYAML, giving the default TTL); sexagesimal ints (1:30) and
+//     duplicate keys inside nested mappings (yaml.v3 rejects them) differ;
 //   - int(ttl) of a non-ASCII-digit string falls back to the default TTL.
 package policy
 
@@ -32,8 +35,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
+	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
@@ -100,7 +104,7 @@ func Parse(policyYAML string) (*Engine, error) {
 		return nil, ErrTooLarge
 	}
 	e := &Engine{hash: HashPolicy(policyYAML)}
-	if strings.TrimSpace(policyYAML) == "" {
+	if isBlank(policyYAML) {
 		return e, nil
 	}
 	rules, err := parseRules(policyYAML)
@@ -144,7 +148,12 @@ func Load(path string) (*Engine, error) {
 	if len(data) > 4*MaxPolicyChars {
 		return nil, ErrTooLarge
 	}
-	return Parse(string(data))
+	// Python's Path.read_text() translates "\r\n" and "\r" to "\n" (universal
+	// newlines) before the size check and the hash; do the same so the
+	// audit policy_hash and the size cap agree with Python.
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return Parse(text)
 }
 
 // HashPolicy is the vault's policy_hash: sha256 of the UTF-8 policy text,
@@ -167,7 +176,7 @@ func (e *Engine) RuleCount() int { return len(e.rules) }
 func (e *Engine) Rules() []Rule {
 	out := make([]Rule, len(e.rules))
 	for i, r := range e.rules {
-		out[i] = *r.rule
+		out[i] = r.rule.clone()
 	}
 	return out
 }
@@ -194,15 +203,22 @@ func (e *Engine) Evaluate(agent, namespace, purpose, action string) Decision {
 		}
 		switch effectOf(er.rule) {
 		case "deny":
-			return Decision{Allowed: false, Reason: "Explicit deny rule matched", MatchedRule: er.rule}
+			return Decision{Allowed: false, Reason: "Explicit deny rule matched", MatchedRule: copyRule(er.rule)}
 		case "allow":
 			allowRule = er.rule
 		}
 	}
 	if allowRule != nil {
-		return Decision{Allowed: true, Reason: "Allow rule matched", MatchedRule: allowRule}
+		return Decision{Allowed: true, Reason: "Allow rule matched", MatchedRule: copyRule(allowRule)}
 	}
 	return Decision{Allowed: false, Reason: "No matching allow rule (default deny)"}
+}
+
+// copyRule hands callers their own copy, so a Decision can never alter the
+// engine's rules.
+func copyRule(r *Rule) *Rule {
+	c := r.clone()
+	return &c
 }
 
 // Simulate is Evaluate; the validation, hook consultation and audit row that
@@ -304,16 +320,22 @@ func parseRules(src string) ([]*Rule, error) {
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
 		return nil, nil
 	}
+	if err := checkDocument(doc.Content[0]); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
 	root := deref(doc.Content[0])
 	var rulesNode *yaml.Node
 	switch root.Kind {
 	case yaml.SequenceNode:
 		rulesNode = root
 	case yaml.MappingNode:
-		for i := 0; i+1 < len(root.Content); i += 2 {
-			k := deref(root.Content[i])
-			if k.Kind == yaml.ScalarNode && k.Tag == "!!str" && k.Value == "rules" {
-				rulesNode = deref(root.Content[i+1]) // last duplicate wins, as in PyYAML
+		pairs, err := flatten(root, 0)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+		}
+		for _, p := range pairs { // last duplicate wins, as in PyYAML
+			if p.key.Tag == "!!str" && p.key.Value == "rules" {
+				rulesNode = deref(p.val)
 			}
 		}
 	}
@@ -338,6 +360,110 @@ func parseRules(src string) ([]*Rule, error) {
 	return out, nil
 }
 
+// Limits for checkDocument. PyYAML shares aliased subtrees, while yaml.v3
+// decoding copies them, so an alias "bomb" is cheap in Python but explodes
+// here; the expanded node count is therefore bounded.
+const maxExpandedNodes = 100_000
+
+// safeTags are the tags yaml.safe_load can construct; anything else makes
+// PyYAML raise ConstructorError, so it is rejected here too.
+var safeTags = map[string]bool{
+	"!!str": true, "!!int": true, "!!float": true, "!!bool": true, "!!null": true,
+	"!!seq": true, "!!map": true, "!!merge": true, "!!binary": true, "!!timestamp": true,
+	"!!set": true, "!!omap": true, "!!pairs": true, "!!value": true,
+}
+
+// checkDocument rejects unknown tags anywhere in the document and bounds the
+// alias-expanded size.
+func checkDocument(root *yaml.Node) error {
+	sizes := map[*yaml.Node]int{}
+	var walk func(n *yaml.Node, depth int) (int, error)
+	walk = func(n *yaml.Node, depth int) (int, error) {
+		if n.Kind == yaml.AliasNode {
+			if n.Alias == nil {
+				return 0, errors.New("dangling alias")
+			}
+			sz, ok := sizes[n.Alias]
+			if !ok {
+				return 0, errors.New("alias used before its anchor")
+			}
+			return sz, nil
+		}
+		if sz, ok := sizes[n]; ok {
+			return sz, nil
+		}
+		if n.Tag != "" && !safeTags[n.Tag] {
+			return 0, fmt.Errorf("could not determine a constructor for the tag %q", n.Tag)
+		}
+		total := 1
+		for _, c := range n.Content {
+			cs, err := walk(c, depth+1)
+			if err != nil {
+				return 0, err
+			}
+			total += cs
+			if total > maxExpandedNodes {
+				return 0, errors.New("policy expands to too many YAML nodes (alias bomb?)")
+			}
+		}
+		sizes[n] = total
+		return total, nil
+	}
+	_, err := walk(root, 0)
+	return err
+}
+
+type pair struct{ key, val *yaml.Node }
+
+// flatten returns a mapping's effective key/value pairs in PyYAML order:
+// merged (<<) entries first, later merges overriding earlier ones, then the
+// mapping's own keys. Duplicate keys are left for the caller (last wins).
+func flatten(m *yaml.Node, depth int) ([]pair, error) {
+	if depth > 16 {
+		return nil, errors.New("merge keys nested too deeply")
+	}
+	var merged, own []pair
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		k, v := deref(m.Content[i]), m.Content[i+1]
+		if k.Kind != yaml.ScalarNode {
+			return nil, errors.New("complex mapping keys are not supported")
+		}
+		if k.Tag != "!!merge" {
+			own = append(own, pair{k, v})
+			continue
+		}
+		v = deref(v)
+		targets := []*yaml.Node{v}
+		if v.Kind == yaml.SequenceNode {
+			targets = nil
+			for _, c := range v.Content {
+				targets = append(targets, deref(c))
+			}
+		}
+		for _, t := range targets {
+			if t.Kind != yaml.MappingNode {
+				return nil, errors.New("expected a mapping or list of mappings for merging")
+			}
+			sub, err := flatten(t, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			merged = append(merged, sub...)
+		}
+	}
+	return append(merged, own...), nil
+}
+
+// isBlank is Python's str.strip() == "": Unicode white space plus U+001C..U+001F.
+func isBlank(s string) bool {
+	for _, r := range s {
+		if !unicode.IsSpace(r) && !(r >= 0x1c && r <= 0x1f) {
+			return false
+		}
+	}
+	return true
+}
+
 func deref(n *yaml.Node) *yaml.Node {
 	for n != nil && n.Kind == yaml.AliasNode {
 		n = n.Alias
@@ -346,55 +472,54 @@ func deref(n *yaml.Node) *yaml.Node {
 }
 
 func ruleFromNode(m *yaml.Node) (*Rule, error) {
-	r := &Rule{vals: map[string]any{}}
-	set := func(k string, v any) {
-		if _, dup := r.vals[k]; !dup {
-			r.keys = append(r.keys, k)
-		}
-		r.vals[k] = v
+	pairs, err := flatten(m, 0)
+	if err != nil {
+		return nil, err
 	}
-	var merged []*yaml.Node
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		k, v := deref(m.Content[i]), m.Content[i+1]
-		if k.Kind != yaml.ScalarNode {
-			return nil, errors.New("complex mapping keys are not supported")
-		}
-		if k.Tag == "!!merge" {
-			merged = append(merged, deref(v))
-			continue
-		}
+	r := &Rule{vals: map[string]any{}}
+	for _, p := range pairs {
 		var val any
-		if err := v.Decode(&val); err != nil {
+		if err := p.val.Decode(&val); err != nil {
 			return nil, err
 		}
-		set(k.Value, val)
-	}
-	// Merge keys: explicit keys win over merged ones.
-	var extra []map[string]any
-	for _, mn := range merged {
-		nodes := []*yaml.Node{mn}
-		if mn.Kind == yaml.SequenceNode {
-			nodes = mn.Content
+		val, err := yaml11Compat(p.key.Value, deref(p.val), val)
+		if err != nil {
+			return nil, err
 		}
-		for _, n := range nodes {
-			var mv map[string]any
-			if err := deref(n).Decode(&mv); err != nil {
-				return nil, err
-			}
-			extra = append(extra, mv)
+		if _, dup := r.vals[p.key.Value]; !dup {
+			r.keys = append(r.keys, p.key.Value)
 		}
-	}
-	for _, mv := range extra {
-		keys := make([]string, 0, len(mv))
-		for k := range mv {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			if _, ok := r.vals[k]; !ok {
-				set(k, mv[k])
-			}
-		}
+		r.vals[p.key.Value] = val
 	}
 	return r, nil
 }
+
+// yaml11Compat closes the two YAML 1.1 (PyYAML) vs 1.2 (yaml.v3) differences
+// that could change a policy decision:
+//   - an unquoted yes/no/on/off in agent/namespace/purpose/action is a
+//     boolean in PyYAML (so Python rejects the rule when it is evaluated);
+//     yaml.v3 would read it as the literal string. It is rejected here;
+//   - a ttl such as 1e3 or 0o10 is a string in PyYAML (so int() fails and the
+//     default TTL applies) but a number in yaml.v3; it is kept as a string.
+func yaml11Compat(key string, n *yaml.Node, val any) (any, error) {
+	if n == nil || n.Kind != yaml.ScalarNode || n.Style != 0 { // quoted/block scalars are always strings
+		return val, nil
+	}
+	switch key {
+	case "agent", "namespace", "purpose", "action":
+		switch strings.ToLower(n.Value) {
+		case "yes", "no", "on", "off":
+			return nil, fmt.Errorf("%q must be a string; quote the unquoted boolean %q", key, n.Value)
+		}
+	case "ttl":
+		if (n.Tag == "!!int" && !yaml11Int.MatchString(n.Value)) || (n.Tag == "!!float" && !yaml11Float.MatchString(n.Value)) {
+			return n.Value, nil
+		}
+	}
+	return val, nil
+}
+
+var (
+	yaml11Int   = regexp.MustCompile(`^(?:[-+]?0b[01_]+|[-+]?0[0-7_]+|[-+]?(?:0|[1-9][0-9_]*)|[-+]?0x[0-9a-fA-F_]+)$`)
+	yaml11Float = regexp.MustCompile(`^(?:[-+]?[0-9][0-9_]*\.[0-9_]*(?:[eE][-+][0-9]+)?|\.[0-9][0-9_]*(?:[eE][-+][0-9]+)?|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))$`)
+)

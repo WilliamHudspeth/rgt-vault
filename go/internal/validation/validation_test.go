@@ -408,3 +408,80 @@ func TestSafeRegexMatchBasics(t *testing.T) {
 		t.Fatalf("%v %v", m, err)
 	}
 }
+
+func TestHugeInputsAreRejectedCheaply(t *testing.T) {
+	huge := "a" + strings.Repeat(" ", 4*MaxNamespaceLen)
+	_, err := ValidateNamespace(huge)
+	if err == nil || !strings.Contains(err.Error(), "maximum allowed length of 128") {
+		t.Fatalf("got %v", err)
+	}
+	// Exactly 128 two-byte runes is within the rune limit (then fails the allowlist, not length).
+	_, err = ValidateNamespace(strings.Repeat("é", 128))
+	if err == nil || !strings.Contains(err.Error(), "not permitted by the allowlist") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSafeRegexMatchAnchoringAndNil(t *testing.T) {
+	if _, err := SafeRegexMatch(nil, "a", time.Second); err == nil || !errors.Is(err, ErrValidation) {
+		t.Fatalf("nil regexp: %v", err)
+	}
+	re := regexp.MustCompile("abc")
+	// A non-matching prefix fails at offset 0 without scanning the rest.
+	start := time.Now()
+	m, err := SafeRegexMatch(re, "x"+strings.Repeat("y", 20_000_000), time.Second)
+	if err != nil || m != nil {
+		t.Fatalf("%v %v", m, err)
+	}
+	if time.Since(start) > 500*time.Millisecond {
+		t.Errorf("anchored search scanned the whole text (%v)", time.Since(start))
+	}
+	// Inline flags survive anchoring; alternation is grouped correctly.
+	if m, _ := SafeRegexMatch(regexp.MustCompile(`(?i)a|b`), "Bx", time.Second); len(m) != 1 || m[0] != "B" {
+		t.Errorf("flags/alternation: %v", m)
+	}
+	if m, _ := SafeRegexMatch(regexp.MustCompile(`a|b`), "xb", time.Second); m != nil {
+		t.Errorf("alternation must not match past offset 0: %v", m)
+	}
+	// Cache bound: many distinct patterns do not grow it past the limit.
+	for i := 0; i < anchoredCacheMax+10; i++ {
+		_, _ = SafeRegexMatch(regexp.MustCompile("a"+strings.Repeat("b", i%7)), "a", time.Second)
+	}
+	anchoredMu.Lock()
+	n := len(anchoredCache)
+	anchoredMu.Unlock()
+	if n > anchoredCacheMax {
+		t.Errorf("cache size %d", n)
+	}
+}
+
+func TestIntBoundJSONNumber(t *testing.T) {
+	for _, in := range []string{"+5", "007", "5.0", "1e3", "bad", ""} {
+		_, err := ValidateIntBound("limit", json.Number(in), Limit(1), Limit(10))
+		if err == nil || !strings.HasPrefix(err.Error(), "'limit' must be an integer; got ") {
+			t.Errorf("%q: %v", in, err)
+		}
+	}
+	if _, err := ValidateIntBound("limit", json.Number("bad"), NoLimit, NoLimit); err == nil || !strings.HasSuffix(err.Error(), "got str.") {
+		t.Errorf("bad: %v", err)
+	}
+	if n, err := ValidateIntBound("limit", json.Number("-7"), NoLimit, NoLimit); err != nil || n != -7 {
+		t.Errorf("-7: %d %v", n, err)
+	}
+	// Huge integers are rejected without quadratic work or message amplification.
+	big500 := json.Number(strings.Repeat("9", 500_000))
+	start := time.Now()
+	_, err := ValidateIntBound("limit", big500, Limit(1), Limit(100))
+	if err == nil || len(err.Error()) > 200 || time.Since(start) > time.Second {
+		t.Fatalf("huge json.Number: len=%d err=%v took %v", len(err.Error()), err, time.Since(start))
+	}
+	// A big.Int above the bound reports without printing every digit.
+	huge := new(big.Int).Lsh(big.NewInt(1), 4000)
+	_, err = ValidateIntBound("limit", huge, NoLimit, Limit(100))
+	if err == nil || !strings.Contains(err.Error(), "a very large integer") {
+		t.Fatalf("%v", err)
+	}
+	if _, err := ValidateIntBound("limit", huge, NoLimit, NoLimit); err == nil || !strings.Contains(err.Error(), "outside the supported") {
+		t.Fatalf("%v", err)
+	}
+}

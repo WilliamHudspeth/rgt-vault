@@ -2,6 +2,7 @@ package validation
 
 import (
 	"regexp"
+	"sync"
 	"time"
 )
 
@@ -18,7 +19,38 @@ const DefaultRegexTimeout = time.Second
 // behavioural parity: when it expires a ValidationError with Python's
 // message is returned. A non-positive timeout means DefaultRegexTimeout.
 func SafeRegexMatch(re *regexp.Regexp, text string, timeout time.Duration) ([]string, error) {
-	return safeRegexMatch(func() []int { return re.FindStringSubmatchIndex(text) }, text, timeout)
+	if re == nil {
+		return nil, fail("Regex pattern is required.")
+	}
+	anchored := anchoredFor(re)
+	return safeRegexMatch(func() []int { return anchored.FindStringSubmatchIndex(text) }, text, timeout)
+}
+
+// anchoredCache maps a pattern to its start-anchored twin, so a search that
+// cannot match at offset 0 fails immediately instead of scanning the text.
+// It is bounded: patterns are operator-controlled and few, but a caller that
+// compiles per request must not grow it without limit.
+var (
+	anchoredMu    sync.Mutex
+	anchoredCache = map[*regexp.Regexp]*regexp.Regexp{}
+)
+
+const anchoredCacheMax = 256
+
+func anchoredFor(re *regexp.Regexp) *regexp.Regexp {
+	anchoredMu.Lock()
+	defer anchoredMu.Unlock()
+	if a, ok := anchoredCache[re]; ok {
+		return a
+	}
+	// re.String() carries any inline flags; the group is non-capturing, so
+	// submatch numbering is unchanged. It cannot fail to compile when re did.
+	a := regexp.MustCompile(`\A(?:` + re.String() + `)`)
+	if len(anchoredCache) >= anchoredCacheMax {
+		anchoredCache = map[*regexp.Regexp]*regexp.Regexp{}
+	}
+	anchoredCache[re] = a
+	return a
 }
 
 // safeRegexMatch runs find (a submatch-index search over text) under the

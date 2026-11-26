@@ -14,6 +14,11 @@
 //   - Python checks length with len() (code points); so does Go. Invalid
 //     UTF-8 cannot occur in a Python str; Go rejects it.
 //
+// Resource use: validation is linear in the input length (identifiers reject
+// anything over 4*max bytes without scanning it). Free text must be
+// normalized before its length can be judged, so callers should bound the
+// request body size before calling ValidateFreeText.
+//
 // Unicode data: category checks use Go's unicode tables and normalization
 // uses golang.org/x/text; Python uses unicodedata. Code points assigned in
 // one Unicode version but not the other can therefore be classified
@@ -92,7 +97,9 @@ func validateIdent(field, value string, maxLen int, ok func(byte) bool, allowed 
 	if isBlank(value) {
 		return "", fail("'%s' cannot be empty or whitespace.", field)
 	}
-	if utf8.RuneCountInString(value) > maxLen {
+	// A rune is at most 4 bytes, so more than 4*maxLen bytes is certainly too
+	// long; this avoids scanning a huge untrusted string.
+	if len(value) > 4*maxLen || utf8.RuneCountInString(value) > maxLen {
 		return "", fail("'%s' exceeds the maximum allowed length of %d characters.", field, maxLen)
 	}
 	if !allASCIIIn(value, ok) {

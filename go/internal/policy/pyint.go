@@ -29,7 +29,7 @@ func pyIntOf(v any) (n int64, ok bool) {
 		return int64(x), true
 	case float64:
 		if math.IsNaN(x) || math.IsInf(x, 0) {
-			return 0, false // Python: ValueError / OverflowError
+			return 0, false // NaN: Python ValueError (caught). inf: OverflowError, which Python does NOT catch; Go uses the default TTL instead
 		}
 		t := math.Trunc(x)
 		if t >= math.MaxInt64 {
@@ -44,6 +44,8 @@ func pyIntOf(v any) (n int64, ok bool) {
 	}
 	return 0, false
 }
+
+const maxIntDigits = 4300
 
 // pyIntFromString mirrors int(str) in base 10 for ASCII digits: surrounding
 // whitespace is stripped, an optional sign is allowed, single underscores are
@@ -74,6 +76,11 @@ func pyIntFromString(s string) (int64, bool) {
 		}
 	}
 	if prevUnderscore { // trailing underscore
+		return 0, false
+	}
+	// Python 3.11+ refuses to convert more than 4300 digits (ValueError),
+	// which get_lease_ttl turns into the default TTL. It also bounds the cost.
+	if digits.Len() > maxIntDigits {
 		return 0, false
 	}
 	b, ok := new(big.Int).SetString(digits.String(), 10)

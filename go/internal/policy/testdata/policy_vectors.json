@@ -21,6 +21,10 @@
   "duplicate_keys": "- effect: allow\n  agent: a\n  agent: b\n",
   "anchors": "base: &base\n  effect: allow\n  namespace: shared\nrules:\n  - <<: *base\n    agent: svc\n  - *base\n",
   "json_dump": "- effect: allow\n  agent: \"\u00fcn\u00ef/*\"\n  namespace: \"a\\\"b\"\n  note: [1, 2.5, 1.0e-7, 1.0e+22, true, null, \"x\"]\n  ttl: 10\n",
+  "merge_multi_keys": "a: &a {effect: allow}\nb: &b {effect: deny}\nrules:\n  - <<: *a\n    <<: *b\n",
+  "merge_list": "a: &a {effect: allow, agent: first}\nb: &b {effect: allow, agent: second}\nrules:\n  - <<: [*a, *b]\n",
+  "merge_explicit_wins": "base: &base {effect: allow, agent: \"*\", namespace: shared}\nrules:\n  - <<: *base\n    effect: deny\n    namespace: locked\n",
+  "merge_top_level": "base: &base\n  rules:\n    - {effect: allow, agent: alice}\n<<: *base\n",
   "json_floats": "- effect: allow\n  agent: \"*\"\n  floats: [0.0, -0.0, 100.0, 1.5, 0.0001, 1.0e-5, 1.0e+16, 1.0e+15, 9999999999999998.0, 123456789012345678.0,\n           1.5e+300, 5.0e-324, 0.1, 2.5e-10, 3.14159, -42.125, .inf, -.inf, .nan, 1234567.0]\n  ints: [0, -1, 9223372036854775807, 18446744073709551615]\n  strings: [\"tab\\there\", \"nl\\nx\", \"cr\\ry\", \"bs\\\\x\", \"q\\\"x\", \"\\x01\\x1f\", \"del\\x7f\", \"\\U0001F600\", \"\u00e9\u65e5\", \"\\b\\f\"]\n  nested: {a: [1, {b: null}], c: false}\n  empty_list: []\n  empty_map: {}\n"
  },
  "cases": [
@@ -784,6 +788,94 @@
    "explain": "Access: ALLOWED\nReason: Allow rule matched\nMatched Rule: {\"effect\": \"allow\", \"agent\": \"b\"}"
   },
   {
+   "policy": "merge_multi_keys",
+   "agent": "alice",
+   "namespace": "ns",
+   "purpose": "p",
+   "action": "read",
+   "allowed": false,
+   "reason": "Explicit deny rule matched",
+   "matched_rule_json": "{\"effect\": \"deny\"}",
+   "explain": "Access: DENIED\nReason: Explicit deny rule matched\nMatched Rule: {\"effect\": \"deny\"}"
+  },
+  {
+   "policy": "merge_list",
+   "agent": "first",
+   "namespace": "ns",
+   "purpose": "p",
+   "action": "read",
+   "allowed": false,
+   "reason": "No matching allow rule (default deny)",
+   "matched_rule_json": null,
+   "explain": "Access: DENIED\nReason: No matching allow rule (default deny)\nMatched Rule: None"
+  },
+  {
+   "policy": "merge_list",
+   "agent": "second",
+   "namespace": "ns",
+   "purpose": "p",
+   "action": "read",
+   "allowed": true,
+   "reason": "Allow rule matched",
+   "matched_rule_json": "{\"effect\": \"allow\", \"agent\": \"second\"}",
+   "explain": "Access: ALLOWED\nReason: Allow rule matched\nMatched Rule: {\"effect\": \"allow\", \"agent\": \"second\"}"
+  },
+  {
+   "policy": "merge_list",
+   "agent": "x",
+   "namespace": "ns",
+   "purpose": "p",
+   "action": "read",
+   "allowed": false,
+   "reason": "No matching allow rule (default deny)",
+   "matched_rule_json": null,
+   "explain": "Access: DENIED\nReason: No matching allow rule (default deny)\nMatched Rule: None"
+  },
+  {
+   "policy": "merge_explicit_wins",
+   "agent": "anyone",
+   "namespace": "shared",
+   "purpose": "p",
+   "action": "read",
+   "allowed": false,
+   "reason": "No matching allow rule (default deny)",
+   "matched_rule_json": null,
+   "explain": "Access: DENIED\nReason: No matching allow rule (default deny)\nMatched Rule: None"
+  },
+  {
+   "policy": "merge_explicit_wins",
+   "agent": "anyone",
+   "namespace": "locked",
+   "purpose": "p",
+   "action": "read",
+   "allowed": false,
+   "reason": "Explicit deny rule matched",
+   "matched_rule_json": "{\"effect\": \"deny\", \"agent\": \"*\", \"namespace\": \"locked\"}",
+   "explain": "Access: DENIED\nReason: Explicit deny rule matched\nMatched Rule: {\"effect\": \"deny\", \"agent\": \"*\", \"namespace\": \"locked\"}"
+  },
+  {
+   "policy": "merge_top_level",
+   "agent": "alice",
+   "namespace": "ns",
+   "purpose": "p",
+   "action": "read",
+   "allowed": true,
+   "reason": "Allow rule matched",
+   "matched_rule_json": "{\"effect\": \"allow\", \"agent\": \"alice\"}",
+   "explain": "Access: ALLOWED\nReason: Allow rule matched\nMatched Rule: {\"effect\": \"allow\", \"agent\": \"alice\"}"
+  },
+  {
+   "policy": "merge_top_level",
+   "agent": "bob",
+   "namespace": "ns",
+   "purpose": "p",
+   "action": "read",
+   "allowed": false,
+   "reason": "No matching allow rule (default deny)",
+   "matched_rule_json": null,
+   "explain": "Access: DENIED\nReason: No matching allow rule (default deny)\nMatched Rule: None"
+  },
+  {
    "policy": "anchors",
    "agent": "svc",
    "namespace": "shared",
@@ -1126,6 +1218,22 @@
    "hash": "5b7e888a634b8e1b"
   },
   {
+   "policy": "merge_multi_keys",
+   "hash": "4eb14b70f411ed52"
+  },
+  {
+   "policy": "merge_list",
+   "hash": "4685d7412746c091"
+  },
+  {
+   "policy": "merge_explicit_wins",
+   "hash": "cfb485f1a48d0677"
+  },
+  {
+   "policy": "merge_top_level",
+   "hash": "d98665f51234a1e9"
+  },
+  {
    "policy": "json_floats",
    "hash": "a5c489466ff8c218"
   }
@@ -1144,6 +1252,36 @@
   {
    "policy": "two_documents",
    "yaml": "- effect: allow\n---\n- effect: deny\n",
+   "python_error": "ValueError"
+  },
+  {
+   "policy": "custom_tag_rule",
+   "yaml": "- !custom {effect: allow}\n",
+   "python_error": "ValueError"
+  },
+  {
+   "policy": "custom_tag_value",
+   "yaml": "- {effect: allow, agent: !custom '*'}\n",
+   "python_error": "ValueError"
+  },
+  {
+   "policy": "python_tag",
+   "yaml": "x: !!python/object:os.system {}\nrules: []\n",
+   "python_error": "ValueError"
+  },
+  {
+   "policy": "merge_scalar_top",
+   "yaml": "<<: 5\nrules: []\n",
+   "python_error": "ValueError"
+  },
+  {
+   "policy": "merge_null_rule",
+   "yaml": "- {effect: allow, <<: ~}\n",
+   "python_error": "ValueError"
+  },
+  {
+   "policy": "merge_list_of_scalars",
+   "yaml": "- {effect: allow, <<: [1]}\n",
    "python_error": "ValueError"
   }
  ],

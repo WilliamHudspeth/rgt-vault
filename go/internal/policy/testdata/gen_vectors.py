@@ -253,6 +253,32 @@ rules:
   note: [1, 2.5, 1.0e-7, 1.0e+22, true, null, "x"]
   ttl: 10
 """,
+    "merge_multi_keys": """\
+a: &a {effect: allow}
+b: &b {effect: deny}
+rules:
+  - <<: *a
+    <<: *b
+""",
+    "merge_list": """\
+a: &a {effect: allow, agent: first}
+b: &b {effect: allow, agent: second}
+rules:
+  - <<: [*a, *b]
+""",
+    "merge_explicit_wins": """\
+base: &base {effect: allow, agent: "*", namespace: shared}
+rules:
+  - <<: *base
+    effect: deny
+    namespace: locked
+""",
+    "merge_top_level": """\
+base: &base
+  rules:
+    - {effect: allow, agent: alice}
+<<: *base
+""",
     "json_floats": """\
 - effect: allow
   agent: "*"
@@ -280,6 +306,12 @@ LOAD_ERRORS = {
     "bad_yaml": "- effect: allow\n  agent: [unclosed\n",
     "tab_indent": "rules:\n\t- effect: allow\n",
     "two_documents": "- effect: allow\n---\n- effect: deny\n",
+    "custom_tag_rule": "- !custom {effect: allow}\n",
+    "custom_tag_value": "- {effect: allow, agent: !custom '*'}\n",
+    "python_tag": "x: !!python/object:os.system {}\nrules: []\n",
+    "merge_scalar_top": "<<: 5\nrules: []\n",
+    "merge_null_rule": "- {effect: allow, <<: ~}\n",
+    "merge_list_of_scalars": "- {effect: allow, <<: [1]}\n",
 }
 
 # (agent, namespace, purpose, action)
@@ -368,6 +400,10 @@ CASES = {
         ("ok", "ns", "p", "read"),
     ],
     "duplicate_keys": [("a", "n", "p", "read"), ("b", "n", "p", "read")],
+    "merge_multi_keys": [("alice", "ns", "p", "read")],
+    "merge_list": [("first", "ns", "p", "read"), ("second", "ns", "p", "read"), ("x", "ns", "p", "read")],
+    "merge_explicit_wins": [("anyone", "shared", "p", "read"), ("anyone", "locked", "p", "read")],
+    "merge_top_level": [("alice", "ns", "p", "read"), ("bob", "ns", "p", "read")],
     "anchors": [("svc", "shared", "p", "read"), ("svc", "other", "p", "read"), ("x", "shared", "p", "read")],
     "json_dump": [("ünï/a", 'a"b', "p", "read"), ("ünï/a", 'a"b', "p", "read")],
     "json_floats": [("anyone", "ns", "p", "read")],

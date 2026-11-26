@@ -13,10 +13,45 @@ type Rule struct {
 	vals map[string]any
 }
 
-// Get returns the value of a field and whether it is present.
+// Get returns the value of a field and whether it is present. Composite
+// values (lists, mappings) are copies: a Rule cannot be changed through
+// what Get returns.
 func (r Rule) Get(key string) (any, bool) {
 	v, ok := r.vals[key]
-	return v, ok
+	return deepCopy(v), ok
+}
+
+// clone returns an independent deep copy of the rule.
+func (r Rule) clone() Rule {
+	c := Rule{keys: append([]string(nil), r.keys...), vals: make(map[string]any, len(r.vals))}
+	for k, v := range r.vals {
+		c.vals[k] = deepCopy(v)
+	}
+	return c
+}
+
+func deepCopy(v any) any {
+	switch x := v.(type) {
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = deepCopy(e)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, e := range x {
+			out[k] = deepCopy(e)
+		}
+		return out
+	case map[any]any:
+		out := make(map[any]any, len(x))
+		for k, e := range x {
+			out[k] = deepCopy(e)
+		}
+		return out
+	}
+	return v
 }
 
 // Keys returns the field names in document order.

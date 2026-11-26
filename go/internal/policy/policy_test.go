@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -145,7 +146,7 @@ rules:
 	if a, _ := rules[1].Get("action"); a != "read" {
 		t.Errorf("merged key missing: %v", a)
 	}
-	if got := rules[0].Keys(); len(got) != 3 || got[0] != "purpose" {
+	if got := rules[0].Keys(); len(got) != 3 || got[0] != "effect" {
 		t.Errorf("keys = %v", got)
 	}
 	if rules[0].Len() != 3 {
@@ -330,5 +331,174 @@ func TestPyJSONHelpers(t *testing.T) {
 	type odd struct{ A int }
 	if got := pyJSON(odd{1}); got != `"{1}"` {
 		t.Errorf("fallback: %s", got)
+	}
+}
+
+func TestTopLevelMergeKey(t *testing.T) {
+	y := "base: &base\n  rules:\n    - {effect: allow, agent: alice}\n<<: *base\n"
+	e := mustParse(t, y)
+	if !e.Evaluate("alice", "ns", "p", "read").Allowed {
+		t.Fatal("rules supplied through a top-level merge key must load (PyYAML does)")
+	}
+	// An explicit rules key wins over a merged one.
+	e = mustParse(t, "base: &base\n  rules: [{effect: allow, agent: alice}]\n<<: *base\nrules: [{effect: allow, agent: bob}]\n")
+	if e.Evaluate("alice", "ns", "p", "read").Allowed || !e.Evaluate("bob", "ns", "p", "read").Allowed {
+		t.Fatal("explicit rules key must win over merged")
+	}
+	// Merge from a list of mappings, and non-mapping merge entries are ignored.
+	e = mustParse(t, "a: &a {x: 1}\nb: &b\n  rules: [{effect: allow, agent: c}]\n<<: [*a, *b]\n")
+	if !e.Evaluate("c", "ns", "p", "read").Allowed {
+		t.Fatal("merge list")
+	}
+}
+
+func TestLoadTranslatesNewlines(t *testing.T) {
+	dir := t.TempDir()
+	crlf := filepath.Join(dir, "crlf.yaml")
+	if err := os.WriteFile(crlf, []byte("- effect: allow\r\n  agent: alice\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e, err := Load(crlf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Python: Path.read_text() -> "\n", so the hash is over the LF text.
+	if want := HashPolicy("- effect: allow\n  agent: alice\n"); e.Hash() != want {
+		t.Fatalf("hash %s want %s", e.Hash(), want)
+	}
+	cr := filepath.Join(dir, "cr.yaml")
+	_ = os.WriteFile(cr, []byte("- effect: allow\r  agent: alice\r"), 0o600)
+	if e2, err := Load(cr); err != nil || e2.Hash() != e.Hash() {
+		t.Fatalf("lone CR: %v", err)
+	}
+}
+
+func TestBlankPolicyIncludesASCIISeparators(t *testing.T) {
+	for _, y := range []string{"\x1c", "\x1f \n", " ", "　"} {
+		e, err := Parse(y)
+		if err != nil || e.RuleCount() != 0 {
+			t.Errorf("%q: %v", y, err)
+		}
+	}
+}
+
+func TestYAML11Compat(t *testing.T) {
+	for _, y := range []string{
+		"- {effect: allow, agent: no}", "- {effect: allow, agent: Yes}", "- {effect: allow, namespace: on}",
+		"- {effect: allow, purpose: OFF}", "- {effect: allow, action: yes}",
+	} {
+		if _, err := Parse(y); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: want ErrInvalid, got %v", y, err)
+		}
+	}
+	// Quoted booleans are plain strings in both parsers.
+	e := mustParse(t, "- {effect: allow, agent: 'no'}\n- {effect: allow, agent: y}\n- {effect: allow, agent: n}\n")
+	for _, a := range []string{"no", "y", "n"} {
+		if !e.Evaluate(a, "ns", "p", "x").Allowed {
+			t.Errorf("agent %q", a)
+		}
+	}
+	ttl := func(v string) int {
+		return mustParse(t, "- {effect: allow, agent: a, action: r, ttl: "+v+"}").LeaseTTL("a", "r")
+	}
+	for v, want := range map[string]int{
+		"1e3": DefaultLeaseTTL, "0o10": DefaultLeaseTTL, "1.0e+3": 1000, "010": 8, "0x10": 16, "0b11": 3,
+		"1_000": 1000, "12": 12, "2.5": 2, ".5": 1, "'1e3'": DefaultLeaseTTL, "+7": 7,
+	} {
+		if got := ttl(v); got != want {
+			t.Errorf("ttl %s = %d want %d", v, got, want)
+		}
+	}
+}
+
+func TestRejectsUnsafeTagsAndAliasBombs(t *testing.T) {
+	for _, y := range []string{
+		"- !custom {effect: allow}\n",
+		"- {effect: allow, agent: !custom '*'}\n",
+		"x: !!python/object:os.system {}\nrules: []\n",
+		"<<: 5\nrules: []\n",
+		"- {effect: allow, <<: ~}\n",
+		"- {effect: allow, <<: [1]}\n",
+		"a: &a [*a]\nrules: []\n",
+	} {
+		if _, err := Parse(y); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%q: want ErrInvalid, got %v", y, err)
+		}
+	}
+	// Billion-laughs style fan-out: tiny text, huge expansion.
+	var sb strings.Builder
+	sb.WriteString("l0: &l0 [x, x, x, x, x, x, x, x, x, x]\n")
+	for i := 1; i < 8; i++ {
+		sb.WriteString("l" + string(rune('0'+i)) + ": &l" + string(rune('0'+i)) + " [")
+		for j := 0; j < 10; j++ {
+			if j > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString("*l" + string(rune('0'+i-1)))
+		}
+		sb.WriteString("]\n")
+	}
+	sb.WriteString("rules:\n  - {effect: allow, meta: *l7}\n")
+	if _, err := Parse(sb.String()); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "too many YAML nodes") {
+		t.Fatalf("alias bomb accepted or wrong error: %v", err)
+	}
+	// Ordinary alias use is fine.
+	if _, err := Parse("m: &m {effect: allow}\nrules: [*m, *m, *m]\n"); err != nil {
+		t.Fatalf("ordinary aliases rejected: %v", err)
+	}
+	// Deeply chained merges are bounded.
+	deep := "m0: &m0 {effect: allow}\n"
+	for i := 1; i <= 20; i++ {
+		deep += "m" + strconv.Itoa(i) + ": &m" + strconv.Itoa(i) + " {<<: *m" + strconv.Itoa(i-1) + "}\n"
+	}
+	deep += "rules: [{<<: *m20}]\n"
+	if _, err := Parse(deep); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("deep merge chain: %v", err)
+	}
+}
+
+func TestDecisionIsACopy(t *testing.T) {
+	e := mustParse(t, "- {effect: allow}\n- {effect: deny, agent: bob, tags: [a, b], meta: {k: v}}\n")
+	d := e.Evaluate("bob", "ns", "p", "read")
+	if d.Allowed {
+		t.Fatal("bob should be denied")
+	}
+	*d.MatchedRule = Rule{} // must not touch the engine
+	d2 := e.Evaluate("bob", "ns", "p", "read")
+	if d2.Allowed {
+		t.Fatal("mutating a returned decision changed the engine (fail-open)")
+	}
+	tags, _ := d2.MatchedRule.Get("tags")
+	tags.([]any)[0] = "changed"
+	meta, _ := d2.MatchedRule.Get("meta")
+	meta.(map[string]any)["k"] = "changed"
+	again, _ := e.Rules()[1].Get("tags")
+	if again.([]any)[0] != "a" {
+		t.Fatal("Get exposed internal slice")
+	}
+	rs := e.Rules()
+	rs[1].vals["effect"] = "allow"
+	if e.Evaluate("bob", "ns", "p", "read").Allowed {
+		t.Fatal("Rules() exposed internal state")
+	}
+	if got, ok := (Rule{}).Get("x"); got != nil || ok {
+		t.Fatal("zero rule")
+	}
+	m := deepCopy(map[any]any{1: []any{"x"}}).(map[any]any)
+	if len(m) != 1 {
+		t.Fatal("deepCopy map[any]any")
+	}
+}
+
+func TestHugeTTLDigitsFallBack(t *testing.T) {
+	huge := strings.Repeat("9", maxIntDigits+1)
+	e := mustParse(t, "- {effect: allow, agent: a, action: r, ttl: \""+huge+"\"}\n")
+	if got := e.LeaseTTL("a", "r"); got != DefaultLeaseTTL {
+		t.Fatalf("python 3.11+ int() refuses >4300 digits -> default; got %d", got)
+	}
+	ok := strings.Repeat("9", maxIntDigits)
+	e = mustParse(t, "- {effect: allow, agent: a, action: r, ttl: \""+ok+"\"}\n")
+	if got := e.LeaseTTL("a", "r"); got != math.MaxInt {
+		t.Fatalf("4300 digits is accepted (clamped), got %d", got)
 	}
 }
