@@ -59,14 +59,15 @@ class WindowsDPAPIProvider(MasterSecretProvider):
     def rotate_secret(self) -> bytes:
         import os
         import tempfile
+
         new_secret = os.urandom(32)
-        
+
         # Use a temporary file in the same directory to ensure os.replace is atomic
         with tempfile.TemporaryDirectory(dir=str(self.blob_path.parent)) as tmp_dir:
             tmp_blob = os.path.join(tmp_dir, "master.blob")
             seal_master_secret(new_secret, tmp_blob, self.entropy)
             os.replace(tmp_blob, self.blob_path)
-            
+
         return new_secret
 
 

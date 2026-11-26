@@ -362,7 +362,8 @@ with tempfile.NamedTemporaryFile(delete=False) as tmp_out:
 # default umask doesn't accidentally create a world-readable window between
 # tpm2_unseal writing it and Python reading it.
 tmp_fd, out_path = tempfile.mkstemp(
-    prefix=".rgt-unseal-", dir=str(self.private_path.parent),
+    prefix=".rgt-unseal-",
+    dir=str(self.private_path.parent),
 )
 os.close(tmp_fd)
 os.chmod(out_path, 0o600)
@@ -374,7 +375,7 @@ os.chmod(out_path, 0o600)
 ```python
 if not encoded:
     raw = os.urandom(32)
-    encoded = base64.urlsafe_b64encode(raw).decode('utf-8')
+    encoded = base64.urlsafe_b64encode(raw).decode("utf-8")
     keyring.set_password(self.service_name, self.username, encoded)
     return MasterSecret(raw)
 ```
