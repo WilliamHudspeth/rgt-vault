@@ -1,0 +1,9 @@
+{
+  "master_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+  "vault_id": "go-written-vault",
+  "epoch": 1,
+  "dek_hex": "243a513681bd22072ece68e13d9111fe7d7001564b9321f7c2802ff93e7b56d0",
+  "secret_aad": "go-written-vault:default:api_key",
+  "secret_ciphertext_hex": "fc1f879559ef98f56b7893b5314eb1f582c9076de5013532c01d0b0bac4be5e361c276124442bcf2",
+  "secret_plaintext": "go-plaintext"
+}
