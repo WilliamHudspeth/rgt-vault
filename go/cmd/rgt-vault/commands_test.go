@@ -154,7 +154,7 @@ func TestSubcommands(t *testing.T) {
 			if code != tc.wantCode {
 				t.Fatalf("exit code = %d, want %d (stderr=%q)", code, tc.wantCode, stderr)
 			}
-			if want := strings.ReplaceAll(tc.wantStdout, "{URL}", srv.URL); tc.wantStdout != "" && stdout != want {
+			if want := strings.ReplaceAll(tc.wantStdout, "{URL}", srv.URL); stdout != want {
 				t.Errorf("stdout = %q, want %q", stdout, want)
 			}
 			if tc.wantCode == 0 && stderr != "" {
@@ -419,6 +419,48 @@ func TestServeCommandErrors(t *testing.T) {
 	_ = os.WriteFile(blocker, nil, 0o600)
 	if code, _, _ := runCLI(t, "", "serve", "--token-file", filepath.Join(blocker, "t")); code != 1 {
 		t.Errorf("serve bad token path: exit %d", code)
+	}
+}
+
+func TestServeRefusesNonLoopback(t *testing.T) {
+	isolateEnv(t)
+	tok := filepath.Join(t.TempDir(), "t")
+	code, _, stderr := runCLI(t, "", "serve", "--addr", ":0", "--token-file", tok)
+	if code != 1 || !strings.Contains(stderr, "not a loopback address") {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	if _, err := os.Stat(tok); err == nil {
+		t.Error("token file created before the bind check")
+	}
+	for addr, want := range map[string]bool{"127.0.0.1:1": true, "localhost:1": true, "[::1%lo]:1": true, ":1": false, "0.0.0.0:1": false, "bad": false} {
+		if isLoopbackAddr(addr) != want {
+			t.Errorf("isLoopbackAddr(%q) != %v", addr, want)
+		}
+	}
+}
+
+func TestServeTightensExistingTokenFile(t *testing.T) {
+	isolateEnv(t)
+	p := filepath.Join(t.TempDir(), "server.token")
+	if err := os.WriteFile(p, []byte("existing-token\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := newServeHandler(p); err != nil {
+		t.Fatal(err)
+	}
+	assertMode0600(t, p)
+}
+
+func TestMCPSubcommandUsesInjectedStreams(t *testing.T) {
+	isolateEnv(t)
+	var out bytes.Buffer
+	code := run([]string{"--host", "http://127.0.0.1:1/", "mcp"},
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`+"\n"), &out, io.Discard)
+	if code != 0 || !strings.Contains(out.String(), `"id":1`) {
+		t.Fatalf("exit %d out %q", code, out.String())
 	}
 }
 

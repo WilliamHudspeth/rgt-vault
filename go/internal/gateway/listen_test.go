@@ -7,6 +7,7 @@ func TestIsLoopbackAddr(t *testing.T) {
 		DefaultListenAddr: true,
 		"localhost:8088":  true,
 		"[::1]:8088":      true,
+		"[::1%lo]:8088":   true,
 		"127.1.2.3:1":     true,
 		":8088":           false,
 		"0.0.0.0:8088":    false,

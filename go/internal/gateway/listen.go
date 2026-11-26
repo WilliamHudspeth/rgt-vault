@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"net"
+	"net/netip"
 	"strings"
 )
 
@@ -19,6 +20,6 @@ func IsLoopbackAddr(addr string) bool {
 	if strings.EqualFold(host, "localhost") {
 		return true
 	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	ip, err := netip.ParseAddr(host) // accepts zones, e.g. ::1%lo
+	return err == nil && ip.IsLoopback()
 }

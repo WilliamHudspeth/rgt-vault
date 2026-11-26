@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -66,7 +67,7 @@ func (g *Gateway) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "operator token required"})
 		return false
 	}
-	log.Printf("gateway: admin %s %s by token %s", r.Method, r.URL.RequestURI(), id)
+	log.Printf("gateway: admin %s %s go=%q by token %s", r.Method, path.Clean(r.URL.Path), r.URL.Query().Get("go"), id)
 	return true
 }
 
@@ -153,8 +154,10 @@ func (g *Gateway) Stats() map[string]int64 {
 // All other requests are probabilistically routed: rand.IntN(100) < goPercent
 // sends to the Go proxy; otherwise the Python proxy handles it.
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == adminPrefix || strings.HasPrefix(r.URL.Path, adminPrefix+"/") {
-		g.serveAdmin(w, r)
+	// Match on the cleaned path so //__cutover, /x/../__cutover etc. are
+	// treated as admin requests (authenticated, never proxied).
+	if p := path.Clean("/" + r.URL.Path); p == adminPrefix || strings.HasPrefix(p, adminPrefix+"/") {
+		g.serveAdmin(w, r, p)
 		return
 	}
 	// Probabilistic routing: n is uniform in [0, 100).
@@ -170,11 +173,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (g *Gateway) serveAdmin(w http.ResponseWriter, r *http.Request) {
+func (g *Gateway) serveAdmin(w http.ResponseWriter, r *http.Request, cleanPath string) {
 	if !g.authorizeAdmin(w, r) {
 		return
 	}
-	switch r.URL.Path {
+	switch cleanPath {
 	case adminPrefix:
 		if r.Method != http.MethodPut && r.Method != http.MethodPost {
 			w.Header().Set("Allow", "PUT, POST")

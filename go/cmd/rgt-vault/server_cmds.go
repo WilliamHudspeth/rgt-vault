@@ -5,9 +5,12 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -39,15 +42,31 @@ func runInit(tokenPath string, out io.Writer) error {
 	}
 	token := base64.RawURLEncoding.EncodeToString(b)
 
-	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o700); err != nil {
+	dir := filepath.Dir(tokenPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
-	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+	// Write a fresh 0600 temp file and rename it over the target, so the new
+	// token is never readable through a pre-existing file's looser mode.
+	tmp, err := os.CreateTemp(dir, ".server.token-*")
+	if err != nil {
 		return fmt.Errorf("writing token file: %w", err)
 	}
-	// WriteFile keeps the mode of an existing file; force 0600 regardless.
-	if err := os.Chmod(tokenPath, 0o600); err != nil {
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op after a successful rename
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
 		return fmt.Errorf("restricting token file: %w", err)
+	}
+	if _, err := tmp.WriteString(token); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing token file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("writing token file: %w", err)
+	}
+	if err := os.Rename(tmpName, tokenPath); err != nil {
+		return fmt.Errorf("writing token file: %w", err)
 	}
 	fmt.Fprintf(out, "Vault initialised. Token written to: %s\n", tokenPath)
 	return nil
@@ -63,12 +82,32 @@ func newServeHandler(tokenPath string) (http.Handler, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("loading token: %w", err)
 	}
+	// LoadOrCreateToken reuses an existing file as-is; tighten it.
+	if err := os.Chmod(path, 0o600); err != nil {
+		return nil, "", fmt.Errorf("restricting token file: %w", err)
+	}
 	tokenStore := auth.NewTokenStore(path)
 	h := handlers.NewHandlers(handlers.NewStore(), tokenStore)
 	return server.NewRouter(h, server.NewMiddleware(tokenStore)), path, nil
 }
 
-func runServe(addr, tokenPath string, out io.Writer) error {
+// isLoopbackAddr reports whether host:port binds only to loopback.
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.IsLoopback()
+}
+
+func runServe(addr, tokenPath string, allowNonLoopback bool, out io.Writer) error {
+	if !isLoopbackAddr(addr) && !allowNonLoopback {
+		return fmt.Errorf("refusing to bind %s: not a loopback address (pass --allow-non-loopback to override)", addr)
+	}
 	handler, path, err := newServeHandler(tokenPath)
 	if err != nil {
 		return err
@@ -78,8 +117,8 @@ func runServe(addr, tokenPath string, out io.Writer) error {
 	return srv.ListenAndServe()
 }
 
-func runMCP(host, token string) error {
-	return mcp.NewServer(host, token).Serve(os.Stdin, os.Stdout)
+func runMCP(host, token string, in io.Reader, out io.Writer) error {
+	return mcp.NewServer(host, token).Serve(in, out)
 }
 
 func runTUI(host, token, namespace string) error {

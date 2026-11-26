@@ -219,12 +219,16 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 	// serve  — start the HTTP server
 	// -----------------------------------------------------------------------
 	var serveAddr, serveTokenFile string
+	var serveAllowNonLoopback bool
 	serveCmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start the rgt-vault HTTP server",
-		RunE:  func(cmd *cobra.Command, args []string) error { return runServe(serveAddr, serveTokenFile, stdout) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runServe(serveAddr, serveTokenFile, serveAllowNonLoopback, stdout)
+		},
 	}
 	serveCmd.Flags().StringVar(&serveAddr, "addr", "127.0.0.1:8080", "listen address (loopback by default)")
+	serveCmd.Flags().BoolVar(&serveAllowNonLoopback, "allow-non-loopback", false, "permit a non-loopback --addr")
 	serveCmd.Flags().StringVar(&serveTokenFile, "token-file", defaultTokenPath(), "bearer token file (created 0600 if missing)")
 
 	// -----------------------------------------------------------------------
@@ -242,7 +246,9 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 	mcpCmd := &cobra.Command{
 		Use:   "mcp",
 		Short: "Run a stdio MCP server bridging to the vault backend",
-		RunE:  func(cmd *cobra.Command, args []string) error { return runMCP(host, getToken()) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runMCP(strings.TrimSuffix(host, "/"), getToken(), stdin, stdout)
+		},
 	}
 
 	// -----------------------------------------------------------------------
@@ -252,7 +258,9 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 	tuiCmd := &cobra.Command{
 		Use:   "tui",
 		Short: "Launch the interactive dashboard (read-only by default)",
-		RunE:  func(cmd *cobra.Command, args []string) error { return runTUI(host, getToken(), tuiNamespace) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTUI(strings.TrimSuffix(host, "/"), getToken(), tuiNamespace)
+		},
 	}
 	tuiCmd.Flags().StringVar(&tuiNamespace, "namespace", "default", "namespace to display")
 

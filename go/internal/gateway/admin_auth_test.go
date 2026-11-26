@@ -53,6 +53,10 @@ func TestAdmin_RequiresOperatorToken(t *testing.T) {
 		{"token in query is not auth", http.MethodPut, "/__cutover?go=100&token=" + testOperatorToken, ""},
 		{"unknown admin subpath", http.MethodGet, "/__cutover/anything", ""},
 		{"GET on setter", http.MethodGet, "/__cutover?go=100", ""},
+		{"double slash", http.MethodPut, "//__cutover?go=100", ""},
+		{"dot segments", http.MethodPut, "/x/../__cutover?go=100", ""},
+		{"trailing slash", http.MethodPut, "/__cutover/?go=100", ""},
+		{"stats via dot segment", http.MethodGet, "/__cutover/./stats", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -87,8 +91,11 @@ func TestAdmin_FailsClosedWithoutTokenStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, target := range []string{"/__cutover?go=100", "/__cutover/stats"} {
-		req := httptest.NewRequest(http.MethodPut, target, nil)
+	for _, tc := range []struct{ method, target string }{
+		{http.MethodPut, "/__cutover?go=100"}, {http.MethodGet, "/__cutover/stats"},
+	} {
+		target := tc.target
+		req := httptest.NewRequest(tc.method, target, nil)
 		req.Header.Set("Authorization", "Bearer "+testOperatorToken)
 		rr := httptest.NewRecorder()
 		gw.ServeHTTP(rr, req)

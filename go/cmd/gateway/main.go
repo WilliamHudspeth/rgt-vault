@@ -55,6 +55,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("operator token: %v", err)
 	}
+	// LoadOrCreateToken reuses an existing file as-is; never serve with a
+	// token file others can read.
+	if err := os.Chmod(path, 0o600); err != nil {
+		log.Fatalf("operator token: restricting %s: %v", path, err)
+	}
 
 	gw, err := gateway.NewGateway(*pythonURL, *goURL, *goPercent)
 	if err != nil {
