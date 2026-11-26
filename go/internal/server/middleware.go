@@ -1,70 +1,215 @@
 // Package server provides HTTP middleware for the rgt-vault server.
 //
-// Middleware stack:
-//  1. CORS headers (permissive for local development)
-//  2. Request logging (method, path, status, duration)
-//  3. Bearer token authentication (skipped for /healthz)
+// Middleware stack (outermost first):
+//  1. Security headers
+//  2. Request logging (method, path, status, duration; never the query or any header)
+//  3. Recover - a panic becomes a generic 500 with an incident id (inside the
+//     logger so the 500 is logged)
+//  4. CORS - deny by default, exact-match allow-list, preflight answered only
+//     for allowed origins
+//  5. Method allow-list - unknown verbs and TRACE get 405 before authentication
+//  6. Bearer token authentication (skipped for /healthz and the XML policy stubs)
+//  7. Request body size limit (413)
 package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
-	"os"
+	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
 	"rgt-vault-server/internal/auth"
 )
 
+// DefaultMaxBodyBytes is the default request-body limit (1 MiB).
+const DefaultMaxBodyBytes int64 = 1 << 20
+
+// allowedMethods is the complete verb allow-list. OPTIONS is only ever served
+// as a CORS preflight to an allowed origin; elsewhere it falls through to
+// authentication and the router. TRACE, CONNECT, PUT, PATCH, HEAD and unknown
+// verbs are refused with 405.
+//
+// TODO(D5/G9): DELETE is a Go-only route kept for the CLI; it goes away or
+// becomes a revoke alias when the server moves onto the real vault.
+var allowedMethods = map[string]bool{
+	http.MethodGet:     true,
+	http.MethodPost:    true,
+	http.MethodDelete:  true,
+	http.MethodOptions: true,
+}
+
+const allowHeaderValue = "GET, POST, DELETE, OPTIONS"
+
 // Middleware holds the server middleware components.
 type Middleware struct {
 	TokenStore *auth.TokenStore
+
+	// AllowedOrigins is the exact-match CORS allow-list. Empty means CORS is
+	// denied for every origin (the default). "*" is never honoured.
+	AllowedOrigins []string
+
+	// MaxBodyBytes caps request bodies; <= 0 selects DefaultMaxBodyBytes.
+	MaxBodyBytes int64
 }
 
-// NewMiddleware creates a new Middleware instance.
+// NewMiddleware creates a Middleware with CORS denied and the default body limit.
 func NewMiddleware(tokenStore *auth.TokenStore) *Middleware {
-	return &Middleware{TokenStore: tokenStore}
+	return &Middleware{TokenStore: tokenStore, MaxBodyBytes: DefaultMaxBodyBytes}
 }
 
-// CORSMiddleware adds permissive CORS headers for local development or restricted origins in production.
+// ParseAllowedOrigins turns a comma-separated list into an allow-list. Blank
+// entries and "*" are dropped (a wildcard is not accepted; list origins
+// explicitly). The second return value lists the rejected entries so callers
+// can warn about them.
+func ParseAllowedOrigins(csv string) (origins, rejected []string) {
+	for _, part := range strings.Split(csv, ",") {
+		p := strings.TrimSpace(part)
+		switch {
+		case p == "":
+		case p == "*" || strings.EqualFold(p, "null") || strings.Contains(p, "*"):
+			rejected = append(rejected, p)
+		default:
+			origins = append(origins, p)
+		}
+	}
+	return origins, rejected
+}
+
+func (mw *Middleware) maxBody() int64 {
+	if mw.MaxBodyBytes > 0 {
+		return mw.MaxBodyBytes
+	}
+	return DefaultMaxBodyBytes
+}
+
+// matchOrigin returns the allow-list entry equal to origin, or "". The value
+// returned is the configured entry, never the request header itself.
+func (mw *Middleware) matchOrigin(origin string) string {
+	if origin == "" {
+		return ""
+	}
+	for _, allowed := range mw.AllowedOrigins {
+		if allowed == origin {
+			return allowed
+		}
+	}
+	return ""
+}
+
+// WriteJSONError writes {"error": errType, "detail": detail} using encoding/json.
+func WriteJSONError(w http.ResponseWriter, status int, errType, detail string) {
+	writeJSONErrorBody(w, status, map[string]string{"error": errType, "detail": detail})
+}
+
+func writeJSONErrorBody(w http.ResponseWriter, status int, body map[string]string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		log.Printf("ERROR: failed to write JSON error response: %v", err)
+	}
+}
+
+// RecoverMiddleware converts a handler panic into a generic 500 carrying an
+// incident id. The panic value and stack go to the server log only; the
+// client never sees them.
+func (mw *Middleware) RecoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			rec := recover()
+			if rec == nil {
+				return
+			}
+			if rec == http.ErrAbortHandler {
+				panic(rec)
+			}
+			id := newIncidentID()
+			committed := false
+			if rw, ok := w.(*responseWriter); ok {
+				committed = rw.wrote
+			}
+			// Log the panic's type, not its value: the value may embed request
+			// data. The stack is enough to locate the fault.
+			log.Printf("PANIC incident=%s method=%s path=%s panic_type=%T\n%s",
+				id, r.Method, r.URL.Path, rec, debug.Stack())
+			if committed {
+				// Headers already sent: appending a JSON body would corrupt
+				// the response. Abort the connection instead.
+				panic(http.ErrAbortHandler)
+			}
+			writeJSONErrorBody(w, http.StatusInternalServerError, map[string]string{
+				"error":       "InternalError",
+				"detail":      "internal server error",
+				"incident_id": id,
+			})
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+func newIncidentID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 16)
+	}
+	return hex.EncodeToString(b)
+}
+
+// MethodMiddleware returns 405 for every verb outside the allow-list, before
+// authentication, so TRACE and friends are never reachable.
+func (mw *Middleware) MethodMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !allowedMethods[r.Method] {
+			w.Header().Set("Allow", allowHeaderValue)
+			WriteJSONError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// CORSMiddleware implements deny-by-default CORS.
+//
+//   - No allow-list configured: no CORS header is ever emitted.
+//   - An origin is accepted only on an exact match with a configured entry;
+//     the configured entry (not the request header) is what is echoed back.
+//   - A preflight (OPTIONS + Origin + Access-Control-Request-Method) from an
+//     allowed origin is answered here with 204, before authentication
+//     because browsers cannot attach credentials to preflights. Every other
+//     OPTIONS request falls through to authentication and the router.
 func (mw *Middleware) CORSMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if origin != "" {
-			allowedOriginsStr := os.Getenv("CORS_ALLOWED_ORIGINS")
-			isAllowed := false
-
-			if allowedOriginsStr == "*" {
-				isAllowed = true
-			} else if allowedOriginsStr != "" {
-				allowedOrigins := strings.Split(allowedOriginsStr, ",")
-				for _, allowed := range allowedOrigins {
-					if strings.TrimSpace(allowed) == origin {
-						isAllowed = true
-						break
-					}
-				}
-			} else {
-				// If not configured, default to allowing all in non-production, and reject in production.
-				if os.Getenv("APP_ENV") != "production" {
-					isAllowed = true
-				}
-			}
-
-			if isAllowed {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Vary", "Origin")
-			}
+		if len(mw.AllowedOrigins) > 0 {
+			w.Header().Add("Vary", "Origin")
 		}
+		origin := mw.matchOrigin(r.Header.Get("Origin"))
 
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
-		w.Header().Set("Access-Control-Max-Age", "86400")
-
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
+		if origin != "" {
+			if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
+				reqMethod := r.Header.Get("Access-Control-Request-Method")
+				if !allowedMethods[reqMethod] || reqMethod == http.MethodOptions {
+					// Allowed origin, but asking for a verb we do not serve.
+					w.Header().Set("Allow", allowHeaderValue)
+					WriteJSONError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+					return
+				}
+				h := w.Header()
+				h.Add("Vary", "Access-Control-Request-Method")
+				h.Add("Vary", "Access-Control-Request-Headers")
+				h.Set("Access-Control-Allow-Origin", origin)
+				h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE")
+				h.Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+				h.Set("Access-Control-Max-Age", "600")
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
 		}
 
 		next.ServeHTTP(w, r)
@@ -86,8 +231,8 @@ func (mw *Middleware) SecurityHeadersMiddleware(next http.Handler) http.Handler 
 	})
 }
 
-
 // LoggingMiddleware logs each request with method, path, status, and duration.
+// Query strings and headers are deliberately not logged.
 func (mw *Middleware) LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -103,36 +248,61 @@ func (mw *Middleware) LoggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// AuthMiddleware verifies the bearer token for all routes except /healthz.
+// BodyLimitMiddleware caps request bodies with http.MaxBytesReader. A declared
+// Content-Length over the limit is refused with 413 immediately; undeclared or
+// understated bodies are cut off while being read (handlers map the resulting
+// *http.MaxBytesError to 413).
+func (mw *Middleware) BodyLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limit := mw.maxBody()
+		if r.ContentLength > limit {
+			w.Header().Set("Connection", "close")
+			WriteJSONError(w, http.StatusRequestEntityTooLarge, "RequestTooLarge", "request body too large")
+			return
+		}
+		if r.Body != nil && r.Body != http.NoBody {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// authFailure maps an auth error to a status and a fixed, non-echoing message.
+// Error text from the token store can contain the token file path, so it is
+// never copied into the response.
+func authFailure(err error) (int, string) {
+	switch {
+	case errors.Is(err, auth.ErrMissingAuth):
+		return http.StatusUnauthorized, "missing credentials"
+	case errors.Is(err, auth.ErrEmptyToken), errors.Is(err, auth.ErrInvalidToken):
+		return http.StatusUnauthorized, "invalid credentials"
+	default:
+		// Token file unreadable: a server-side fault, not a client one.
+		log.Printf("ERROR: token verification unavailable: %v", err)
+		return http.StatusInternalServerError, "authentication unavailable"
+	}
+}
+
+// AuthMiddleware verifies the bearer token for all routes except the public
+// ones. Unlike earlier versions it does NOT exempt OPTIONS: a legitimate
+// preflight is answered earlier by CORSMiddleware, and any other OPTIONS
+// request must authenticate like everything else.
 // On success, it sets the token ID in the request context.
 func (mw *Middleware) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip auth for health check and XML policy endpoints
-		if r.URL.Path == "/healthz" || r.URL.Path == "/crossdomain.xml" || r.URL.Path == "/clientaccesspolicy.xml" || r.Method == http.MethodOptions {
+		if r.Method == http.MethodGet &&
+			(r.URL.Path == "/healthz" || r.URL.Path == "/crossdomain.xml" || r.URL.Path == "/clientaccesspolicy.xml") {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		authHeader := r.Header.Get("Authorization")
-		tokenID, err := mw.TokenStore.Verify(authHeader)
+		tokenID, err := mw.TokenStore.Verify(r.Header.Get("Authorization"))
 		if err != nil {
-			// Map auth errors to HTTP status codes
-			status := http.StatusUnauthorized
-			msg := err.Error()
-			switch {
-			case strings.Contains(msg, "missing"):
-				status = http.StatusUnauthorized
-			case strings.Contains(msg, "Empty") || strings.Contains(msg, "empty"):
-				status = http.StatusUnauthorized
-			case strings.Contains(msg, "Invalid") || strings.Contains(msg, "invalid"):
-				status = http.StatusUnauthorized
-			case strings.Contains(msg, "not found"):
-				status = http.StatusInternalServerError
+			status, msg := authFailure(err)
+			if status == http.StatusUnauthorized {
+				w.Header().Set("WWW-Authenticate", `Bearer realm="rgt-vault"`)
 			}
-
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(status)
-			w.Write([]byte(`{"error":"ServerAuthError","detail":"` + msg + `"}`))
+			WriteJSONError(w, status, "ServerAuthError", msg)
 			return
 		}
 
@@ -159,11 +329,20 @@ func TokenIDFromContext(ctx context.Context) string {
 type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
+	wrote      bool
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
-	rw.statusCode = code
+	if !rw.wrote {
+		rw.statusCode = code
+		rw.wrote = true
+	}
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	rw.wrote = true
+	return rw.ResponseWriter.Write(b)
 }
 
 // Unwrap returns the underlying ResponseWriter for middleware that needs it.

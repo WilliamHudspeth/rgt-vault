@@ -1,0 +1,208 @@
+{
+ "sanitize": [
+  {
+   "in": "",
+   "out": ""
+  },
+  {
+   "in": "plain",
+   "out": "plain"
+  },
+  {
+   "in": "a\rb",
+   "out": "a\\rb"
+  },
+  {
+   "in": "a\nb",
+   "out": "a\\nb"
+  },
+  {
+   "in": "a\tb",
+   "out": "a\\tb"
+  },
+  {
+   "in": "a\r\nb",
+   "out": "a\\r\\nb"
+  },
+  {
+   "in": "\r\n\t",
+   "out": "\\r\\n\\t"
+  },
+  {
+   "in": "\n\n\n",
+   "out": "\\n\\n\\n"
+  },
+  {
+   "in": "back\\slash",
+   "out": "back\\slash"
+  },
+  {
+   "in": "already\\nescaped",
+   "out": "already\\nescaped"
+  },
+  {
+   "in": "\\r\\n\\t literal backslash-letters",
+   "out": "\\r\\n\\t literal backslash-letters"
+  },
+  {
+   "in": "nul\u0000byte",
+   "out": "nul\u0000byte"
+  },
+  {
+   "in": "bell\u0007 esc\u001b[31m vt\u000b ff\f",
+   "out": "bell\u0007 esc\u001b[31m vt\u000b ff\f"
+  },
+  {
+   "in": "unicode \u00e9\u4e2d\ud83d\ude00 \u2028 line-sep \u0085",
+   "out": "unicode \u00e9\u4e2d\ud83d\ude00 \u2028 line-sep \u0085"
+  },
+  {
+   "in": "cr only\rcr",
+   "out": "cr only\\rcr"
+  },
+  {
+   "in": "mixed \tA\nB\rC\r\nD\t",
+   "out": "mixed \\tA\\nB\\rC\\r\\nD\\t"
+  },
+  {
+   "in": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  }
+ ],
+ "entry_hash": [
+  {
+   "prev": "",
+   "timestamp": "2026-01-01T00:00:00+00:00",
+   "action": "SET",
+   "secret_name": "name",
+   "details": "details",
+   "policy_hash": "ph",
+   "expected": "1e89641aaedf86bcfccfc3428eeac26880d539ec32c2aca2af4ae30e56b2ee4e",
+   "stored_action": "SET",
+   "stored_details": "details"
+  },
+  {
+   "prev": "",
+   "timestamp": "2026-01-01T00:00:00.123456+00:00",
+   "action": "SET",
+   "secret_name": null,
+   "details": "",
+   "policy_hash": "",
+   "expected": "2af19dd416dbd7bfd3f02c70343fa2fa9e37c4b19f58855b899e6dd7311bd150",
+   "stored_action": "SET",
+   "stored_details": ""
+  },
+  {
+   "prev": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "timestamp": "2026-11-26T12:34:56.000001+00:00",
+   "action": "CUSTOM\nEVENT",
+   "secret_name": "n",
+   "details": "x\r\ny\tz",
+   "policy_hash": "0123456789abcdef",
+   "expected": "793f845c131efc4608ffd3028df947f8e4c69b207a008b4c7dc22fb95d59f028",
+   "stored_action": "CUSTOM\\nEVENT",
+   "stored_details": "x\\r\\ny\\tz"
+  },
+  {
+   "prev": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "timestamp": "2026-11-26T12:34:56+00:00",
+   "action": "A|B",
+   "secret_name": "n|m",
+   "details": "d|e|f",
+   "policy_hash": "p|q",
+   "expected": "545221a6e164a27356a09ba258645b08e9b3a61464a89b61cd569021137566a9",
+   "stored_action": "A|B",
+   "stored_details": "d|e|f"
+  },
+  {
+   "prev": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+   "timestamp": "2026-11-26T12:34:56+00:00",
+   "action": "unicode",
+   "secret_name": "n\u00e9",
+   "details": "\u4e2d\u6587\ud83d\ude00",
+   "policy_hash": "ph",
+   "expected": "fd487b3970a4f62fbd108c9b3108b88f076fe2683a757819ec2791462465b9b3",
+   "stored_action": "unicode",
+   "stored_details": "\u4e2d\u6587\ud83d\ude00"
+  },
+  {
+   "prev": "",
+   "timestamp": "",
+   "action": "",
+   "secret_name": null,
+   "details": "",
+   "policy_hash": "",
+   "expected": "1867f76f89b18a0f04c72020a91ed03b5557354322022ed5b08d045d20b8689c",
+   "stored_action": "",
+   "stored_details": ""
+  },
+  {
+   "prev": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+   "timestamp": "ts",
+   "action": "SECRETSET",
+   "secret_name": "",
+   "details": "empty-name-equals-none",
+   "policy_hash": "",
+   "expected": "8c40e01145a1973d0632ed26c658176730871ea61bc78131dbebe59a92f6e4ef",
+   "stored_action": "SECRETSET",
+   "stored_details": "empty-name-equals-none"
+  }
+ ],
+ "iso_time": [
+  {
+   "unix_sec": 0,
+   "microsecond": 0,
+   "expected": "1970-01-01T00:00:00+00:00"
+  },
+  {
+   "unix_sec": 0,
+   "microsecond": 1,
+   "expected": "1970-01-01T00:00:00.000001+00:00"
+  },
+  {
+   "unix_sec": 1,
+   "microsecond": 999999,
+   "expected": "1970-01-01T00:00:01.999999+00:00"
+  },
+  {
+   "unix_sec": 1700000000,
+   "microsecond": 0,
+   "expected": "2023-11-14T22:13:20+00:00"
+  },
+  {
+   "unix_sec": 1700000000,
+   "microsecond": 123456,
+   "expected": "2023-11-14T22:13:20.123456+00:00"
+  },
+  {
+   "unix_sec": 1700000000,
+   "microsecond": 100000,
+   "expected": "2023-11-14T22:13:20.100000+00:00"
+  },
+  {
+   "unix_sec": 1700000000,
+   "microsecond": 10,
+   "expected": "2023-11-14T22:13:20.000010+00:00"
+  },
+  {
+   "unix_sec": 1764160496,
+   "microsecond": 0,
+   "expected": "2025-11-26T12:34:56+00:00"
+  },
+  {
+   "unix_sec": 1764160496,
+   "microsecond": 500000,
+   "expected": "2025-11-26T12:34:56.500000+00:00"
+  },
+  {
+   "unix_sec": 253402300799,
+   "microsecond": 999999,
+   "expected": "9999-12-31T23:59:59.999999+00:00"
+  },
+  {
+   "unix_sec": -62103974400,
+   "microsecond": 0,
+   "expected": "0002-01-02T00:00:00+00:00"
+  }
+ ]
+}

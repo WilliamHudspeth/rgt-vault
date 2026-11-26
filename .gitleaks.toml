@@ -1,0 +1,18 @@
+# gitleaks configuration (RGT-496 follow-up).
+# Extends the default ruleset; only allowlists the committed TEST FIXTURES that
+# contain fixed, throw-away master secrets, token keys and TOTP seeds used for
+# Python<->Go byte-compatibility tests. These are not real secrets.
+title = "rgt-vault gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "fixed test fixtures, not real secrets"
+paths = [
+  '''go/testdata/pyvault/.*''',
+  '''go/internal/[a-z0-9_/]*/testdata/.*''',
+  '''tests/compat/.*''',
+  # Go unit tests use literal throw-away secrets as inputs (e.g. provider tests).
+  '''go/.*_test\.go''',
+]
