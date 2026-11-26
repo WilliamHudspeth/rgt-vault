@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "kdf": "argon2id",
+  "argon2_salt": "xsEZjB6Q5ClNF5UfmX5yK9T9vIBayMXD4zz044X+NBQ=",
+  "argon2_memory_cost": 262144,
+  "argon2_time_cost": 4,
+  "argon2_parallelism": 4,
+  "wrapped_dek": "ojchwFGNPAuvUxghJsnDrX+EuulaO1veq+XJg21eIUInM2lfRIflR0HNGgSkzGuI",
+  "created_at": "2026-11-26T21:25:54.382130+00:00",
+  "key_epoch": 1
+}
