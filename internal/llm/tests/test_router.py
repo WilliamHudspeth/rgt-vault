@@ -154,7 +154,11 @@ class RouterFallbackTests(unittest.TestCase):
 
     def test_unavailable_providers_skipped(self):
         good = _FakeProvider(name="good", reply=Reply(text="ok", provider="good", model="g"))
-        unavailable = _FakeProvider(name="u", available=False)
+        # RGT-86: no is_available() pre-probe; an unavailable provider reports
+        # it by failing complete(), which is attempted exactly once.
+        unavailable = _FakeProvider(
+            name="u", reply=Reply(text="", provider="u", model="u", error="unavailable"), available=False
+        )
         cfg = RouteConfig(
             chains={TASK_CODE_REVIEW: ["u", "good"]},
         )
@@ -162,7 +166,7 @@ class RouterFallbackTests(unittest.TestCase):
         with patch.object(router, "_get", side_effect=lambda s: {"u": unavailable, "good": good}[s]):
             reply = router.call(TASK_CODE_REVIEW, "hi")
         self.assertEqual(reply.provider, "good")
-        self.assertEqual(unavailable.calls, [])
+        self.assertEqual(len(unavailable.calls), 1)
 
     def test_chain_exhaustion_returns_error(self):
         bad1 = _FakeProvider(name="b1", reply=Reply(text="", provider="b1", model="b1", error="e1"))
