@@ -24,32 +24,51 @@ failures=0
 
 fail() { echo "FAIL $1: $2" >&2; failures=$((failures + 1)); }
 
-# Print the unit with backslash continuations joined, comments and blank lines removed.
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# Print the unit normalized: CR removed, whitespace trimmed (also around the
+# first "="), comment and blank lines dropped (comments inside a backslash
+# continuation are ignored, as in systemd.syntax(7)), continuations joined.
 normalize() {
     awk '
-        { sub(/\r$/, "") }
-        !cont && /^[[:space:]]*([#;]|$)/ { next }
+        { sub(/\r$/, ""); sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "") }
+        /^[#;]/ { next }
+        !cont && $0 == "" { next }
         { line = cont ? line " " $0 : $0 }
-        line ~ /\\$/ { sub(/\\$/, "", line); cont = 1; next }
-        { cont = 0; print line; line = "" }
+        line ~ /\\$/ { sub(/[[:space:]]*\\$/, "", line); cont = 1; next }
+        { cont = 0
+          if (line !~ /^\[/) { i = index(line, "="); if (i) { k = substr(line, 1, i - 1); v = substr(line, i + 1); sub(/[[:space:]]+$/, "", k); sub(/^[[:space:]]+/, "", v); line = k "=" v } }
+          print line; line = "" }
+        END { if (cont) print line }
     ' "$1"
 }
 
-# Last value assigned to KEY in SECTION ("" when absent). Later assignments win
-# in systemd for single-valued directives, and an empty assignment resets.
-value() {
+# All assignments of KEY in SECTION, one per line, honouring an empty
+# assignment as a reset (systemd drops everything assigned before it).
+values() {
     local section="$1" key="$2" file="$3"
     normalize "$file" | awk -v sec="[$section]" -v key="$key" '
         /^\[/ { cur = $0; next }
         cur == sec {
             i = index($0, "=")
-            if (i && substr($0, 1, i - 1) == key) { v = substr($0, i + 1); sub(/^[[:space:]]+/, "", v); sub(/[[:space:]]+$/, "", v); val = v }
+            if (i && substr($0, 1, i - 1) == key) {
+                v = substr($0, i + 1)
+                if (v == "") { n = 0 } else { vals[++n] = v }
+            }
         }
-        END { print val }
+        END { for (j = 1; j <= n; j++) print vals[j] }
     '
 }
 
-has_section() { normalize "$2" | grep -qx "\[$1\]"; }
+# Effective value of a single-valued directive: the last assignment ("" when absent).
+value() { values "$@" | tail -n 1; }
+
+has_section() {
+    local sections
+    sections="$(normalize "$2")"
+    [[ $'\n'"$sections"$'\n' == *$'\n'"[$1]"$'\n'* ]]
+}
 
 # require FILE SECTION KEY ACCEPTED_REGEX
 require_value() {
@@ -72,8 +91,8 @@ static_check() {
                 RestrictRealtime LockPersonality MemoryDenyWriteExecute; do
         require_value "$f" Service "$flag" 'true|yes|1|on'
     done
-    require_value "$f" Service ProtectSystem 'strict|full|true|yes'
-    require_value "$f" Service ProtectHome 'true|yes|read-only|tmpfs'
+    require_value "$f" Service ProtectSystem 'strict|full|true|yes|1|on'
+    require_value "$f" Service ProtectHome 'true|yes|1|on|read-only|tmpfs'
 
     for s in User Group; do
         v="$(value Service "$s" "$f")"
@@ -85,62 +104,76 @@ static_check() {
     [ -n "$(value Service ReadWritePaths "$f")" ] ||
         fail "$f" "[Service] ReadWritePaths must list the vault state dir (ProtectSystem is read-only otherwise)"
 
-    v="$(value Service ExecStart "$f")"
-    if [ -z "$v" ]; then
+    local execs
+    execs="$(values Service ExecStart "$f")"
+    if [ -z "$execs" ]; then
         fail "$f" "[Service] ExecStart is missing"
     else
-        if [[ "$v" == *0.0.0.0* || "$v" == *"::"* ]]; then
-            fail "$f" "[Service] ExecStart must not bind a wildcard address"
-        fi
-        if ! [[ "$v" =~ --host(=|[[:space:]]+)127\.0\.0\.1([[:space:]]|$) ]]; then
-            fail "$f" "[Service] ExecStart must bind --host 127.0.0.1 (loopback only)"
-        fi
+        while IFS= read -r v; do
+            if [[ "$v" == [+!]* ]]; then
+                fail "$f" "[Service] ExecStart must not use a privilege prefix (+ or !): $v"
+            fi
+            if [[ "$v" =~ --host(=|[[:space:]]+)(0\.0\.0\.0|\[?::\]?)([[:space:]]|$) ]]; then
+                fail "$f" "[Service] ExecStart must not bind a wildcard address"
+            fi
+            if ! [[ "$v" =~ (^|[[:space:]])--host(=|[[:space:]]+)127\.0\.0\.1([[:space:]]|$) ]]; then
+                fail "$f" "[Service] ExecStart must bind --host 127.0.0.1 (loopback only)"
+            fi
+            if [ "$(grep -o -- '--host' <<<"$v" | wc -l)" -ne 1 ]; then
+                fail "$f" "[Service] ExecStart must pass --host exactly once"
+            fi
+        done <<<"$execs"
     fi
 
     [ -n "$(value Install WantedBy "$f")" ] || fail "$f" "[Install] WantedBy is missing"
 
-    # AF_PACKET/AF_NETLINK would widen the attack surface of a loopback API.
-    v="$(value Service RestrictAddressFamilies "$f")"
-    if [ -z "$v" ]; then
+    # RestrictAddressFamilies is cumulative: check every assignment. Require an
+    # allow-list (no leading "~") that excludes raw packet / netlink sockets.
+    v="$(values Service RestrictAddressFamilies "$f" | tr '\n' ' ')"
+    if [ -z "${v// /}" ]; then
         fail "$f" "[Service] RestrictAddressFamilies must be set"
+    elif [[ "$v" == *"~"* ]]; then
+        fail "$f" "[Service] RestrictAddressFamilies must be an allow-list, not a '~' deny-list"
     elif [[ "$v" == *AF_PACKET* || "$v" == *AF_NETLINK* ]]; then
         fail "$f" "[Service] RestrictAddressFamilies must not allow AF_PACKET or AF_NETLINK"
     fi
 }
 
 analyze_check() {
-    local f="$1" tmp copy
+    local f="$1" copy out relevant last
     if [ "${SKIP_SYSTEMD_ANALYZE:-0}" = 1 ] || ! command -v systemd-analyze >/dev/null 2>&1; then
         echo "NOTE $f: systemd-analyze unavailable or disabled; static checks only"
         return 0
     fi
-    tmp="$(mktemp -d)"
     copy="$tmp/$(basename "$f")"
-    # Replace the (possibly multi-line) ExecStart with /bin/true so verify does
-    # not depend on /opt/rgt-vault being installed.
-    awk '
-        cont { cont = ($0 ~ /\\$/); next }
-        /^ExecStart=/ { print "ExecStart=/bin/true"; cont = ($0 ~ /\\$/); next }
+    # The real binaries are not installed on a CI runner: keep one ExecStart=
+    # (/bin/true) and drop the other Exec* commands before verifying.
+    normalize "$f" | awk '
+        /^Exec(Start|StartPre|StartPost|Stop|StopPost|Reload|Condition)=/ { next }
         { print }
-    ' "$f" > "$copy"
+        $0 == "[Service]" { print "ExecStart=/bin/true" }
+    ' > "$copy"
 
-    local out
     if ! out="$(systemd-analyze verify "$copy" 2>&1)"; then
         fail "$f" "systemd-analyze verify failed:
 $out"
-    elif printf '%s\n' "$out" | grep -Eiq 'unknown (key|section)|unknown lvalue|invalid|bad '; then
+        return 0
+    fi
+    # verify also loads unrelated units of the runner image; only messages
+    # about this unit count (they are prefixed with its path).
+    relevant="$(grep -F -- "$copy" <<<"$out" || true)"
+    if [ -n "$relevant" ]; then
         fail "$f" "systemd-analyze verify reported problems:
-$out"
+$relevant"
     else
         echo "OK   $f: systemd-analyze verify"
     fi
 
     # Informational only: never gates (scoring differs between systemd releases).
-    if systemd-analyze security --help 2>&1 | grep -q -- '--offline'; then
-        systemd-analyze security --offline=true --no-pager "$copy" 2>&1 | tail -n 1 |
-            sed "s|^|INFO $f: |" || true
+    if out="$(systemd-analyze security --offline=true --no-pager "$copy" 2>&1)"; then
+        last="$(tail -n 1 <<<"$out")"
+        printf 'INFO %s: %s\n' "$f" "$last"
     fi
-    rm -rf "$tmp"
 }
 
 if [ "$#" -gt 0 ]; then
@@ -158,6 +191,10 @@ if [ "${#units[@]}" -eq 0 ]; then
 fi
 
 for f in "${units[@]}"; do
+    if [ ! -r "$f" ]; then
+        fail "$f" "cannot read unit file"
+        continue
+    fi
     before=$failures
     static_check "$f"
     [ "$failures" -eq "$before" ] && echo "OK   $f: sandbox directives present, loopback bind"
