@@ -1,310 +1,99 @@
 # Security Advisories
 
-Published security advisories for RGT Vault vulnerabilities. This document maintains a historical record of all published advisories, including CVE mappings, severity assessments, and mitigation guidance.
-
----
-
-## Advisory Publication Process
-
-Each advisory follows this structure:
-1. **Identifier**: CVE number (if applicable) or RGT-SECURITY-NNN
-2. **Title**: Clear, concise vulnerability description
-3. **Severity**: CVSS v3.1 score and rating
-4. **Affected Versions**: List of all impacted versions
-5. **Impact Assessment**: Confidentiality, Integrity, Availability impact
-6. **Technical Description**: How the vulnerability works
-7. **Proof of Concept**: Example demonstrating the issue (if appropriate)
-8. **Immediate Mitigations**: Steps to reduce risk before patch
-9. **Remediation**: How to update/patch to fixed version
-10. **Timeline**: When patch available, when workaround expires
-11. **References**: Links to CVE databases and security bulletins
-12. **Publication Date**: When advisory was released
-13. **Coordinated Disclosure**: 30+ day embargo respected
-
----
-
-## Published Advisories
-
-### [TEMPLATE] Advisory Structure
-
-Below is the template used for all security advisories:
-
-```
-## Advisory: [CVE-XXXX-XXXXX or RGT-SECURITY-NNN] - [Vulnerability Title]
-
-**Publication Date**: [Date]
-**CVSS Score**: [X.X] - [Severity: Critical/High/Medium/Low]
-**Affected Versions**: [List of affected versions]
-
-### Summary
-[Brief description of vulnerability and impact]
-
-### Affected Component(s)
-- [Component 1]: Description of affected functionality
-- [Component 2]: Description of affected functionality
-
-### Technical Description
-[Detailed technical explanation of how the vulnerability exists, including:]
-- Root cause
-- Attack prerequisites
-- Attack flow/steps
-
-### Impact
-**Confidentiality**: [None/Partial/Complete] - [Description]
-**Integrity**: [None/Partial/Complete] - [Description]
-**Availability**: [None/Partial/Complete] - [Description]
-
-### Proof of Concept
-[Simplified example or code demonstrating exploitation - omit if disclosure risk too high]
-
-### Immediate Mitigation Steps
-[What users can do RIGHT NOW to reduce risk, before patch available]
-
-1. Step 1: [Specific action]
-2. Step 2: [Specific action]
-3. Step 3: [Specific action]
-
-**Mitigation Effectiveness**: [How much risk this reduces, timeline for when patch required]
-
-### Remediation / Patch
-[How to update to fixed version]
-
-**Fixed Version**: [Version number and release date]
-
-**Update Procedure**:
-```
-[Specific update commands for each supported platform]
-```
-
-**Post-Update Verification**:
-- Step 1: [Verification step]
-- Step 2: [Verification step]
-
-### Timeline
-- **Vulnerability Discovered**: [Date]
-- **Vendor Notified**: [Date]
-- **Initial Assessment**: [Date]
-- **Patch Released**: [Date]
-- **Advisory Published**: [Date]
-- **Mitigation Expires**: [Date - when users MUST upgrade]
-
-### References
-- [CVE Database Entry](https://nvd.nist.gov/vuln/detail/CVE-XXXX-XXXXX)
-- [GitHub Advisory](https://github.com/yourorg/rgt-vault/security/advisories/GHSA-xxxx-xxxx-xxxx)
-- [Related Issue](https://github.com/yourorg/rgt-vault/issues/NNN)
-
-### FAQ
-
-**Q: Am I affected?**
-A: You are affected if you are using [affected versions]. Check your version with `rgt-vault --version`.
-
-**Q: What should I do?**
-A: [Quick guidance on priority]
-
-**Q: Will this be backported to older versions?**
-A: [Yes/No and details on support policy]
-
-**Q: How can I report other vulnerabilities?**
-A: See [Security Policy](../SECURITY.md)
-
-### Credits
-[If applicable, credit the security researcher who reported the vulnerability]
-```
-
----
-
-## Active Advisories
-
-### No Active Advisories
-
-As of the publication date of this governance framework, there are no open security advisories for currently supported versions of RGT Vault.
-
-If a vulnerability is discovered, an advisory will be published here immediately upon patch release.
-
----
-
-## Historical Advisories (Archive)
-
-### None Yet
-
-As this is the initial publication of the governance framework, there are no historical advisories to archive.
-
-Future advisories will be archived here once superseded by newer versions or once affected versions reach end-of-life.
-
----
-
-## Advisory Statistics
-
-### Summary Metrics
-- **Total Advisories Published**: 0 (as of 2026-06-26)
-- **Critical Severity**: 0
-- **High Severity**: 0
-- **Medium Severity**: 0
-- **Low Severity**: 0
-- **Average Time to Patch**: TBD (no historical data)
-- **Fully Patched Versions**: All
-
-### Vulnerability Discovery Rate
-| Period | Vulnerabilities | Status |
-|--------|-----------------|--------|
-| 2026 (to date) | 0 | N/A |
-
----
-
-## Vulnerability Reporting
-
-### Security Vulnerability Report Process
-
-If you discover a security vulnerability in RGT Vault:
-
-1. **Do NOT** open a public GitHub issue
-2. **DO** use responsible disclosure:
-   - Email: [security@rgtcorp.example.com](mailto:security@rgtcorp.example.com)
-   - GitHub Security Advisory: Use "Report a vulnerability" button
-   - Include: Description, proof of concept, steps to reproduce
-
-3. **Expect** acknowledgment within 24 hours
-4. **Expect** status updates every 3-5 business days
-5. **Coordinated Disclosure** will be respected (30+ day embargo minimum)
-
-### Response Commitments
-
-| Metric | Target |
-|--------|--------|
-| Acknowledgment of report | 24 hours |
-| Severity assessment | 48 hours |
-| Initial triage | 3-5 business days |
-| Patch availability | 30 days (for critical vulnerabilities) |
-| Public disclosure | 30+ days after patch release |
-
----
-
-## Security Communications
-
-### Mailing List for Security Notifications
-
-Subscribe to receive notifications of security updates:
-- Security mailing list: [Link to subscription]
-
-### Communication Channels
-
-- **Security Reports**: [security@rgtcorp.example.com](mailto:security@rgtcorp.example.com)
-- **Public Advisories**: GitHub Security Advisories, Release Notes
-- **Status Updates**: Security mailing list
-
----
-
-## Supported Versions
-
-### Version Support Policy
-
-| Version | Release Date | End of Support | Security Support |
-|---------|-------------|-----------------|-----------------|
-| Latest Major | [Date] | [Date + 18 months] | Yes |
-| Previous Major | [Date] | [Date + 12 months] | Yes |
-| Earlier Versions | [Date] | End-of-Life | No |
-
-**Critical Security Fixes**: May be released for versions beyond standard support period
-
----
-
-## References and Standards
-
-**Vulnerability Standards**:
-- [CVE - Common Vulnerabilities and Exposures](https://cve.mitre.org/)
-- [CVSS v3.1 - Common Vulnerability Scoring System](https://www.first.org/cvss/v3.1/)
-- [NVD - National Vulnerability Database](https://nvd.nist.gov/)
-
-**Responsible Disclosure**:
-- [OWASP Vulnerability Disclosure Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Vulnerability_Disclosure_Cheat_Sheet.html)
-- [ISO/IEC 30111:2019 - Vulnerability Disclosure](https://www.iso.org/standard/53686.html)
-
-**Security Best Practices**:
-- [OWASP Top 10](https://owasp.org/Top10/)
-- [CWE - Common Weakness Enumeration](https://cwe.mitre.org/)
-
----
-
-## Advisory Announcement Templates
-
-### Email Template for Security Updates
-
-Subject: [SECURITY] RGT Vault [VERSION] Released - Security Update
-
-```
-Dear RGT Vault Users,
-
-A security update has been released for RGT Vault addressing [X] vulnerability:
-
-Vulnerability: [Title]
-Severity: [CVSS Score] - [Severity Level]
-Affected Versions: [List]
-Fixed Version: [Version Number]
-CVE: [CVE-XXXX-XXXXX if applicable]
-
-RECOMMENDATION: Upgrade immediately if you are using affected versions.
-
-For details and update instructions, see:
-- [GitHub Release Link]
-- [Advisory Link]
-
-If you have questions or need assistance, reply to this email.
-
-Security Team
-```
-
-### GitHub Release Note Template
-
-```markdown
-## [Version] - Security Release
-
-### Security
-
-- **CRITICAL**: [Vulnerability Title] (CVE-XXXX-XXXXX) 
-  - Affects: Versions [X] through [Y]
-  - **Upgrade immediately**
-  - See [Advisory Link] for details
-
-- **HIGH**: [Vulnerability Title]
-  - Affects: Versions [X] through [Y]
-  - See [Advisory Link] for details
-
-### Compatibility
-
-[Backward compatibility information]
-
-### How to Upgrade
-
-[Upgrade instructions]
-
-### References
-
-- [Advisory]
-- [CVE Link]
-```
-
----
-
-## Lessons Learned
-
-### Post-Incident Review Process
-
-When a significant vulnerability is discovered and patched:
-
-1. **Incident Postmortem Meeting**: 1-2 weeks after patch release
-2. **Root Cause Analysis**: Why did this vulnerability exist?
-3. **Impact Assessment**: How many users/systems affected?
-4. **Prevention Plan**: How to prevent similar issues in the future?
-5. **Documentation**: Lessons learned captured and shared
-6. **Process Improvements**: Update development practices based on findings
-
-### Historical Lessons (to be updated as incidents occur)
-
-None yet - this is the initial framework.
-
----
-
-**Document Version**: 1.0  
-**Last Updated**: June 26, 2026  
-**Next Review**: September 26, 2026  
-**Maintained By**: Security Maintainer
+The register of published security advisories for `rgt-vault`, and an honest
+description of how advisories and mitigation guidance are (and are not)
+handled. It supports objectives 9.2 and 9.3 of [GOVERNANCE.md](GOVERNANCE.md).
+
+- **Verified against:** commit `c3b090b` on `master`, checked 2026-11-26.
+- **Authoritative policy:** [`.github/SECURITY.md`](../../.github/SECURITY.md).
+  If this file disagrees with it, `SECURITY.md` governs.
+- **Earlier draft:** the previous version of this file described a security
+  mailing list, a notification email template, advisory statistics, opt-in and
+  opt-out notification management, a 30-day embargo and placeholder
+  `github.com/yourorg/...` links. None of those exist, and they have been
+  removed.
+
+## Register
+
+**No security advisory has been published for `rgt-vault`.**
+
+| Advisory | Date | Affected versions | Fixed in | Severity | Link |
+|---|---|---|---|---|---|
+| none | n/a | n/a | n/a | n/a | n/a |
+
+Check for newer entries on the repository's GitHub "Security" tab. GitHub
+security advisories (and a CVE, if one is requested through GitHub) would be the
+authoritative record; this register is only a convenience copy and may lag.
+
+## How vulnerabilities reach the maintainer
+
+- **Private email** to the address in `.github/SECURITY.md`.
+- **GitHub private vulnerability reporting**, which is enabled on the
+  repository.
+- Reporters should not file public issues for undisclosed vulnerabilities.
+
+**Response targets** (from `.github/SECURITY.md` and nothing else):
+
+| Step | Target |
+|---|---|
+| Acknowledge the report | Within 5 business days |
+| Remediation plan or assessment | Within 30 days |
+| Disclosure | Coordinated; reporters are asked to allow a fix to ship before public discussion |
+
+There is one maintainer, no on-call rota and no bug-bounty programme, so these
+are targets for a single person, not service-level agreements. No time-bound
+embargo beyond the 30-day assessment target is promised.
+
+## Supported versions
+
+From `.github/SECURITY.md`: `rgt-vault` is pre-1.0 (`0.x`) and only the latest
+released version receives security fixes. The future of the Python line (it is
+described as maintenance-mode, with Go as the primary line) is an open
+decision tracked in RGT-165.
+
+## What is done today when a fix ships
+
+- The fix lands in the repository with a regression test, as required by
+  `.github/CONTRIBUTING.md` for crypto, authorization, audit and storage
+  changes.
+- `CHANGELOG.md` records it under a `### Security` heading.
+- Releases are tagged (`vX.Y.Z`); the Go release workflow creates a **draft**
+  GitHub release with checksums and SBOMs that the maintainer then edits and
+  publishes.
+- Nothing proactively notifies users beyond GitHub's own notifications for
+  people watching the repository or the releases. No mailing list, chat channel
+  or social-media announcement exists (Gap, RGT-485).
+
+## Mitigation guidance when no patch exists
+
+There is no standing process or history of issuing workarounds ahead of a fix
+(Gap, RGT-486). The guidance that exists is static and already public, and
+applies to weaknesses the project knows about:
+
+| Known weakness | Guidance | Source |
+|---|---|---|
+| Daemon has no TLS | Keep the default loopback bind (`--host 127.0.0.1`); if remote access is unavoidable, terminate TLS in a reverse proxy you configure yourself (no example config ships) | `deploy/rgt-vault.service`, `rgt_vault/cli.py` |
+| All agents share one bearer token; agent name is self-declared | Run agents as a different OS user from the daemon, give agents only the agent token, and keep the operator token separate and out of agent reach | `deploy/rgt-vault.service`, `deploy/setup-daemon.sh`, RGT-236 |
+| Go server is a skeleton (in-memory plaintext, allow-all policy, prints its token, binds all interfaces) | Do not use it with real secrets | `go/README.md`, `go/cmd/server/main.go` |
+| Audit chain is unkeyed; root-level replacement undetected | Persist the tail hash to an independent store after each write | `.github/SECURITY.md` "Audit Chain Limitations" |
+| Backup rollback with a matched old pair is undetected | Anchor the key epoch in an append-only or monotonic store | `.github/SECURITY.md`, `docs/ROADMAP.md` |
+| Zeroization is best effort | Follow the secure-buffer patterns | `docs/guides/secure-buffer-patterns.md` |
+| Revoked secrets are kept as ciphertext | Treat revocation as access removal, not erasure; no erase command exists | `rgt_vault/storage/sqlite.py`, `rgt_vault/vault.py` |
+
+## Fields an advisory should carry
+
+This is a checklist for when the first advisory is written, using GitHub's
+advisory form. It is not evidence that a process has run.
+
+- Identifier (GHSA, plus a CVE if requested), title, severity (CVSS or a
+  plain-language rating) and affected and fixed versions.
+- Which line is affected (Python, Go or both) and which component.
+- Impact on confidentiality, integrity and availability.
+- Workaround or mitigation if no fixed version exists, and how to confirm it.
+- Credit to the reporter if they agree.
+- Dates: reported, fixed, disclosed.
+
+## Maintenance
+
+Update this file whenever a GitHub advisory is published or the response
+targets in `.github/SECURITY.md` change. There is no recurring review.
