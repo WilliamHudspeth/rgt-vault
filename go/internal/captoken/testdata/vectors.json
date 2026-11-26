@@ -1,0 +1,1150 @@
+{
+ "context": [
+  {
+   "bindings": {
+    "repo": "org/r"
+   },
+   "python_ok": true,
+   "request": {
+    "repo": "org/r"
+   }
+  },
+  {
+   "bindings": {
+    "repo": "org/r"
+   },
+   "python_ok": true,
+   "request": {
+    "extra": 1,
+    "repo": "org/r"
+   }
+  },
+  {
+   "bindings": {
+    "repo": "org/r"
+   },
+   "python_ok": false,
+   "request": {
+    "repo": "other"
+   }
+  },
+  {
+   "bindings": {
+    "repo": "org/r"
+   },
+   "python_ok": false,
+   "request": {}
+  },
+  {
+   "bindings": {},
+   "python_ok": true,
+   "request": {
+    "anything": 1
+   }
+  },
+  {
+   "bindings": {
+    "n": 1
+   },
+   "python_ok": true,
+   "request": {
+    "n": 1.0
+   }
+  },
+  {
+   "bindings": {
+    "n": 1.0
+   },
+   "python_ok": true,
+   "request": {
+    "n": 1
+   }
+  },
+  {
+   "bindings": {
+    "n": 1
+   },
+   "python_ok": false,
+   "request": {
+    "n": 2
+   }
+  },
+  {
+   "bindings": {
+    "l": [
+     1,
+     2
+    ]
+   },
+   "python_ok": true,
+   "request": {
+    "l": [
+     1,
+     2
+    ]
+   }
+  },
+  {
+   "bindings": {
+    "l": [
+     1,
+     2
+    ]
+   },
+   "python_ok": false,
+   "request": {
+    "l": [
+     2,
+     1
+    ]
+   }
+  },
+  {
+   "bindings": {
+    "o": {
+     "a": 1
+    }
+   },
+   "python_ok": true,
+   "request": {
+    "o": {
+     "a": 1
+    }
+   }
+  },
+  {
+   "bindings": {
+    "o": {
+     "a": 1
+    }
+   },
+   "python_ok": false,
+   "request": {
+    "o": {
+     "a": 1,
+     "b": 2
+    }
+   }
+  },
+  {
+   "bindings": {
+    "s": "x"
+   },
+   "python_ok": false,
+   "request": {
+    "s": 1
+   }
+  },
+  {
+   "bindings": {
+    "z": null
+   },
+   "python_ok": true,
+   "request": {
+    "z": null
+   }
+  },
+  {
+   "bindings": {
+    "z": null
+   },
+   "python_ok": false,
+   "request": {}
+  },
+  {
+   "bindings": {
+    "b": true
+   },
+   "python_ok": true,
+   "request": {
+    "b": true
+   }
+  },
+  {
+   "bindings": {
+    "b": true
+   },
+   "python_ok": false,
+   "request": {
+    "b": false
+   }
+  }
+ ],
+ "context_bool_equals_number_python_ok": true,
+ "edge": [
+  {
+   "go_strict_reject": false,
+   "name": "expired",
+   "python": {
+    "error": "TokenExpiredError"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6MSwidiI6Mn0.xdeCIWutnM9OTH72db88wJ4DtwkIE7KnI1f-2mhiQ28"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "exp-zero-never-expires",
+   "python": {
+    "agent_id": "a",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": 0,
+    "ok": true,
+    "token_id": "61e2cd80f57748d1"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6MCwidiI6Mn0.k4ZvmcpsFrYKZ5VE93zFDixzzK27N6eeynHlxwlvjE4"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "exp-negative-never-expires",
+   "python": {
+    "agent_id": "a",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": -5,
+    "ok": true,
+    "token_id": "89503e7440221877"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6LTUsInYiOjJ9.QLB8gtmwUPGQ7cFbfyPUYa2qWLo8AQtlQ87y219Tsvc"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "exp-float-integral",
+   "python": {
+    "agent_id": "a",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": 4102444800,
+    "ok": true,
+    "token_id": "a3a6e1254285747b"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMC4wLCJ2IjoyfQ.f0313ADpjMyFizIRhFUdnERwKKAIuCvrToJYgbZPd-0"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "version-3",
+   "python": {
+    "error": "TokenVersionError"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6M30.OkyV0P5K0Y0Xb-5_kNv2a6i96T_CDzwuUAHMYAWYJV4"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "version-missing",
+   "python": {
+    "error": "TokenVersionError"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMH0.czJfmFHrGbPuLeVBpBfa4gFBnALD-D_k3hUC17ClA0U"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "missing-agent",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": "eyJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.A1CNHeqzb6RvBBJ3s-rDoxOZeMBXhRlxIYPN9N1O1EY"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "missing-capability",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnt9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.ZSqZmzmZAdGGiJhjR0SRimmUmJ2ErfzOLvvJ2YQnHj0"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "missing-capability-version",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNvbnRleHRfYmluZGluZ3MiOnt9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.neAD0YKV-_nIwUzQH2RXXbks5yVzWnOATyfHBBxyrBs"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "missing-exp",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sInYiOjJ9.uUCVL73cHFF-GpHkNFYu4vGGd8lXbkd-BWxvXo3-fR4"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "bindings-missing-key-ok",
+   "python": {
+    "agent_id": "a",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": 4102444800,
+    "ok": true,
+    "token_id": "ff36187a361a1251"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.YV086YdmsDaTgQfoqTrlv0N5hcRgomv9BSUGD5J6y2Q"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "bindings-null",
+   "python": {
+    "agent_id": "a",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": 4102444800,
+    "ok": true,
+    "token_id": "30535b8c85d2994f"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6bnVsbCwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.pmerfSIjYcRfksTbaeu8SFiV1nrV-CAGX0_PhQvR_LQ"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "bindings-false",
+   "python": {
+    "agent_id": "a",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": 4102444800,
+    "ok": true,
+    "token_id": "660993350f2c1986"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6ZmFsc2UsImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.g1U78nHHMF2C3lxqNo6XbigcsTUpaAg83jIVOBrrQws"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "bindings-zero",
+   "python": {
+    "agent_id": "a",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": 4102444800,
+    "ok": true,
+    "token_id": "bd6fb9112c133958"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6MCwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.T3rMiehRV-hQVuG6mWQwgD9W-JG1z3NkEuUdsAtzXrA"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "bindings-empty-string",
+   "python": {
+    "agent_id": "a",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": 4102444800,
+    "ok": true,
+    "token_id": "b840d9dad9d513d3"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6IiIsImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.GJVWGY3ZRpBaJh7lRIKeU075D9EBrK3mJw-l5rDDI4k"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "bindings-empty-list",
+   "python": {
+    "agent_id": "a",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": 4102444800,
+    "ok": true,
+    "token_id": "0f94fb4e525ce362"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6W10sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.4Jjc0HPAKnfQH4A4hnzb0hQP0J0gvAlufiC8tBM51j8"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "bindings-nonempty-list",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6WzFdLCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.hHgEpF3dpXY9bqfKF-wHYep-qQqfnkXjeYFc8nT4de4"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "bindings-true",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6dHJ1ZSwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.qNPUQzU-wh3FSXbXhSaN-xnI1akNyJLM2iTQd3M7sZ0"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "bindings-string",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6IngiLCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.YkskJX4lp5VeafU232iFRjJV0yBOmeuUqhVQXyZTseo"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "payload-array",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": "WzEsMl0.hlq9t-qhc0Yqbny5pUcYhVI-YZkL_OL87AP3hkuMk84"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "payload-not-json",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": "bm90IGpzb24.VVzMZaq4HdgImOj4y7vB7Wo_NEbSo0a0oT2t-wgwx8k"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "payload-trailing-data",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0ge30.da_m-6YGDLg9A8MYaJZSm_UG_x1r7dYuEsT-Bw7A9pY"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "payload-invalid-utf8",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": "eyJ2IjoyLCJhZ2VudF9pZCI6Iv8ifQ.5gldFJVvQx0uIC1-Ptg1Zj4_N_fl095r9HkmRpt85Go"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "payload-leading-whitespace",
+   "python": {
+    "agent_id": "a",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": 4102444800,
+    "ok": true,
+    "token_id": "0c42aeda20d2fada"
+   },
+   "token": "ICB7ImFnZW50X2lkIjoiYSIsImNhcGFiaWxpdHkiOiJjIiwiY2FwYWJpbGl0eV92ZXJzaW9uIjoxLCJjb250ZXh0X2JpbmRpbmdzIjp7fSwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.pEQ3QxUnB9PyXY5Vf1dXbhiH0WOLSA1GpcgZAv3Fhb4"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "payload-non-canonical-key-order",
+   "python": {
+    "agent_id": "a",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": 4102444800,
+    "ok": true,
+    "token_id": "64ad043df322ffd8"
+   },
+   "token": "eyJ2IjogMiwgImFnZW50X2lkIjogImEiLCAiY2FwYWJpbGl0eSI6ICJjIiwgImNhcGFiaWxpdHlfdmVyc2lvbiI6IDEsICJjb250ZXh0X2JpbmRpbmdzIjoge30sICJleHAiOiA0MTAyNDQ0ODAwfQ.Gl8ym5QSZZMFNwiXjWhJGklkzZhLtj1sVeokktLzR1U"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "payload-duplicate-key-last-wins",
+   "python": {
+    "agent_id": "a",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": 4102444800,
+    "ok": true,
+    "token_id": "b2ff77603f34219f"
+   },
+   "token": "eyJ2IjoyLCJhZ2VudF9pZCI6IngiLCJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiZXhwIjo0MTAyNDQ0ODAwfQ.oIU65XHUjDI6UnTUG-BdJ6-VNAxXkgmCWuUps8tV1zo"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "bad-signature",
+   "python": {
+    "error": "TokenSignatureError"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.y1jYaYKODlVjfYrfNOkcpdHvEwB0vfTgQPgSu5bwXV4"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "wrong-key",
+   "python": {
+    "error": "TokenSignatureError"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.iZ8Dor3g2fYLvqbYpAut6ABSRRs2BHT0FZBWl1bKmdw"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "tampered-payload",
+   "python": {
+    "error": "TokenSignatureError"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImV2aWwiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.M_XZBpBWiFKhqhKB1jge4_TO_svF1XT7LMPTc50d6fU"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "no-dot",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "three-parts",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.M_XZBpBWiFKhqhKB1jge4_TO_svF1XT7LMPTc50d6fU.x"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "empty-token",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": ""
+  },
+  {
+   "go_strict_reject": false,
+   "name": "empty-sig",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0."
+  },
+  {
+   "go_strict_reject": false,
+   "name": "empty-payload",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": ".M_XZBpBWiFKhqhKB1jge4_TO_svF1XT7LMPTc50d6fU"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "only-dot",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": "."
+  },
+  {
+   "go_strict_reject": false,
+   "name": "bad-base64",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": "!!!!.M_XZBpBWiFKhqhKB1jge4_TO_svF1XT7LMPTc50d6fU"
+  },
+  {
+   "go_strict_reject": true,
+   "name": "padded-base64",
+   "python": {
+    "agent_id": "a",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": 4102444800,
+    "ok": true,
+    "token_id": "4e9e023ef6d0101f"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0=.M_XZBpBWiFKhqhKB1jge4_TO_svF1XT7LMPTc50d6fU"
+  },
+  {
+   "go_strict_reject": false,
+   "name": "newline-in-base64",
+   "python": {
+    "error": "TokenMalformedError"
+   },
+   "token": "eyJhZ\n2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.M_XZBpBWiFKhqhKB1jge4_TO_svF1XT7LMPTc50d6fU"
+  },
+  {
+   "go_strict_reject": true,
+   "name": "v-as-string",
+   "python": {
+    "agent_id": "a",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": 4102444800,
+    "ok": true,
+    "token_id": "13e24cea19389d64"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6IjIifQ.biC0jKRaGWtKJOwjepj6e-PpJmUXLz5ftafxu0jPiCg"
+  },
+  {
+   "go_strict_reject": true,
+   "name": "capability-version-as-string",
+   "python": {
+    "agent_id": "a",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": 4102444800,
+    "ok": true,
+    "token_id": "454934ef75f020bd"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6IjEiLCJjb250ZXh0X2JpbmRpbmdzIjp7fSwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.WmUd7rOw50ET52jOayddFDM3z0g6UhU1y8IlIpNxzrg"
+  },
+  {
+   "go_strict_reject": true,
+   "name": "agent-id-as-number",
+   "python": {
+    "agent_id": "5",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": 4102444800,
+    "ok": true,
+    "token_id": "be09eafea5773ba3"
+   },
+   "token": "eyJhZ2VudF9pZCI6NSwiY2FwYWJpbGl0eSI6ImMiLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnt9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.k-OJ3P7_9AJsIREHwTBqNzMGKz9zFmgUPMvcsdfj3RM"
+  },
+  {
+   "go_strict_reject": true,
+   "name": "exp-as-string",
+   "python": {
+    "agent_id": "a",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": 4102444800,
+    "ok": true,
+    "token_id": "837899c2ef45200f"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6IjQxMDI0NDQ4MDAiLCJ2IjoyfQ.YgqUl6bI2-mE-mW09-PNw6aFtTqRlG43NyZwmXTE7Bs"
+  },
+  {
+   "go_strict_reject": true,
+   "name": "exp-float-fraction",
+   "python": {
+    "agent_id": "a",
+    "capability": "c",
+    "capability_version": 1,
+    "context_bindings": {},
+    "expires_at": 4102444800,
+    "ok": true,
+    "token_id": "348ffd5263f3a1c3"
+   },
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMC41LCJ2IjoyfQ.bl8B4XrdDQ-QDrQ-TIF-zH8cn16rBWHLc_Hz8JeIzHc"
+  }
+ ],
+ "far_future": 4102444800,
+ "format_peek": [
+  {
+   "format": 2,
+   "name": "v2",
+   "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.pRd_oHyikKyenmmiCxpg6gsHcLQF13ojI6sjldmYuh0"
+  },
+  {
+   "format": 1,
+   "name": "v1",
+   "token": "eyJhIjoiYWdlbnQtMSIsImMiOlsicmVhZCIsIndyaXRlIl0sImkiOjE3MDAwMDAwMDAsIm4iOiJucyIsInQiOiIwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZiIsIngiOjQxMDI0NDQ4MDB9.M8_4GHu96v6jSEYNKiG78KSWACAomKaG3es1JJEhFk4"
+  },
+  {
+   "format": 1,
+   "name": "garbage-payload",
+   "token": "e30.x"
+  },
+  {
+   "format": 1,
+   "name": "not-base64",
+   "token": "***.x"
+  },
+  {
+   "format": 2,
+   "name": "v-as-2-float",
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mi4wfQ.KJffy3TguKakS1SGSpfb-hT6k1UDVoq0wQJJzEqeqmI"
+  }
+ ],
+ "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+ "sign_now": 4102441200,
+ "signed": [
+  {
+   "agent_id": "research-agent",
+   "capability": "github.read_repo",
+   "capability_version": 1,
+   "context_bindings": {
+    "repo": "org/research"
+   },
+   "name": "basic",
+   "payload": "{\"agent_id\":\"research-agent\",\"capability\":\"github.read_repo\",\"capability_version\":1,\"context_bindings\":{\"repo\":\"org/research\"},\"exp\":4102444800,\"v\":2}",
+   "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.pRd_oHyikKyenmmiCxpg6gsHcLQF13ojI6sjldmYuh0",
+   "token_id": "4d1f52fe88fd01cb",
+   "ttl": 3600
+  },
+  {
+   "agent_id": "a",
+   "capability": "secrets.echo",
+   "capability_version": 1,
+   "context_bindings": null,
+   "name": "no-bindings",
+   "payload": "{\"agent_id\":\"a\",\"capability\":\"secrets.echo\",\"capability_version\":1,\"context_bindings\":{},\"exp\":4102444800,\"v\":2}",
+   "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5Ijoic2VjcmV0cy5lY2hvIiwiY2FwYWJpbGl0eV92ZXJzaW9uIjoxLCJjb250ZXh0X2JpbmRpbmdzIjp7fSwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.LstFZtP1KdUJiBbivc7YVskQVtXkSO9IVQvyYKYEkEQ",
+   "token_id": "27d72eeef99b5a4e",
+   "ttl": 3600
+  },
+  {
+   "agent_id": "agent-7",
+   "capability": "x.y",
+   "capability_version": 7,
+   "context_bindings": {},
+   "name": "version-7",
+   "payload": "{\"agent_id\":\"agent-7\",\"capability\":\"x.y\",\"capability_version\":7,\"context_bindings\":{},\"exp\":4102444800,\"v\":2}",
+   "token": "eyJhZ2VudF9pZCI6ImFnZW50LTciLCJjYXBhYmlsaXR5IjoieC55IiwiY2FwYWJpbGl0eV92ZXJzaW9uIjo3LCJjb250ZXh0X2JpbmRpbmdzIjp7fSwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.jYVQEJG6t5Ue03WUM3qxaA2MjQC4z8dr1byAwusmWCI",
+   "token_id": "1bc5495f0aa6909a",
+   "ttl": 3600
+  },
+  {
+   "agent_id": "a<b>&c",
+   "capability": "cap.<>&'\"",
+   "capability_version": 2,
+   "context_bindings": {
+    "q": "<script>alert(1)</script>&x=y"
+   },
+   "name": "html-chars",
+   "payload": "{\"agent_id\":\"a<b>&c\",\"capability\":\"cap.<>&'\\\"\",\"capability_version\":2,\"context_bindings\":{\"q\":\"<script>alert(1)</script>&x=y\"},\"exp\":4102444800,\"v\":2}",
+   "token": "eyJhZ2VudF9pZCI6ImE8Yj4mYyIsImNhcGFiaWxpdHkiOiJjYXAuPD4mJ1wiIiwiY2FwYWJpbGl0eV92ZXJzaW9uIjoyLCJjb250ZXh0X2JpbmRpbmdzIjp7InEiOiI8c2NyaXB0PmFsZXJ0KDEpPC9zY3JpcHQ-Jng9eSJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.gBbTxxzHZhdXDPfVLx_P-hiw1-7BjfD4fkwSTzNR-Xk",
+   "token_id": "93319cd99ef646bf",
+   "ttl": 3600
+  },
+  {
+   "agent_id": "h\u00e9llo \u2603",
+   "capability": "caf\u00e9.read",
+   "capability_version": 1,
+   "context_bindings": {
+    "e": "\ud83d\ude00 emoji",
+    "name": "\u65e5\u672c\u8a9e"
+   },
+   "name": "unicode",
+   "payload": "{\"agent_id\":\"h\\u00e9llo \\u2603\",\"capability\":\"caf\\u00e9.read\",\"capability_version\":1,\"context_bindings\":{\"e\":\"\\ud83d\\ude00 emoji\",\"name\":\"\\u65e5\\u672c\\u8a9e\"},\"exp\":4102444800,\"v\":2}",
+   "token": "eyJhZ2VudF9pZCI6ImhcdTAwZTlsbG8gXHUyNjAzIiwiY2FwYWJpbGl0eSI6ImNhZlx1MDBlOS5yZWFkIiwiY2FwYWJpbGl0eV92ZXJzaW9uIjoxLCJjb250ZXh0X2JpbmRpbmdzIjp7ImUiOiJcdWQ4M2RcdWRlMDAgZW1vamkiLCJuYW1lIjoiXHU2NWU1XHU2NzJjXHU4YTllIn0sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.bPOo2yNn_wkKLuYhANn8w-vsSmYcj6U8TNOcMLiDDA0",
+   "token_id": "351c9cfc4e875d55",
+   "ttl": 3600
+  },
+  {
+   "agent_id": "a\u0000b\u001fc\u007fd",
+   "capability": "c\n\r\t\b\f\\\"",
+   "capability_version": 1,
+   "context_bindings": {
+    "k": "\u0001\u0002\u007f\u2028\u2029\ufeff"
+   },
+   "name": "controls-and-del",
+   "payload": "{\"agent_id\":\"a\\u0000b\\u001fc\\u007fd\",\"capability\":\"c\\n\\r\\t\\b\\f\\\\\\\"\",\"capability_version\":1,\"context_bindings\":{\"k\":\"\\u0001\\u0002\\u007f\\u2028\\u2029\\ufeff\"},\"exp\":4102444800,\"v\":2}",
+   "token": "eyJhZ2VudF9pZCI6ImFcdTAwMDBiXHUwMDFmY1x1MDA3ZmQiLCJjYXBhYmlsaXR5IjoiY1xuXHJcdFxiXGZcXFwiIiwiY2FwYWJpbGl0eV92ZXJzaW9uIjoxLCJjb250ZXh0X2JpbmRpbmdzIjp7ImsiOiJcdTAwMDFcdTAwMDJcdTAwN2ZcdTIwMjhcdTIwMjlcdWZlZmYifSwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.vWhBGii_jnIeFaJvcKNKHKJdBc-gq9P8f-95IYc53Gg",
+   "token_id": "14bfa21d30ccb71a",
+   "ttl": 3600
+  },
+  {
+   "agent_id": "z",
+   "capability": "z.z",
+   "capability_version": 1,
+   "context_bindings": {
+    "": 7,
+    "Z": 4,
+    "a": 2,
+    "b": 1,
+    "\u00e9": 3,
+    "\uffff": 6,
+    "\ud83d\ude00": 5
+   },
+   "name": "key-order",
+   "payload": "{\"agent_id\":\"z\",\"capability\":\"z.z\",\"capability_version\":1,\"context_bindings\":{\"\":7,\"Z\":4,\"a\":2,\"b\":1,\"\\u00e9\":3,\"\\uffff\":6,\"\\ud83d\\ude00\":5},\"exp\":4102444800,\"v\":2}",
+   "token": "eyJhZ2VudF9pZCI6InoiLCJjYXBhYmlsaXR5Ijoiei56IiwiY2FwYWJpbGl0eV92ZXJzaW9uIjoxLCJjb250ZXh0X2JpbmRpbmdzIjp7IiI6NywiWiI6NCwiYSI6MiwiYiI6MSwiXHUwMGU5IjozLCJcdWZmZmYiOjYsIlx1ZDgzZFx1ZGUwMCI6NX0sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.qDS4j4cMwjcCFOKcRIpGHYMcDpshMh7ip-c2S0LOiSg",
+   "token_id": "f9aa31f78726b3ec",
+   "ttl": 3600
+  },
+  {
+   "agent_id": "n",
+   "capability": "n.n",
+   "capability_version": 1,
+   "context_bindings": {
+    "big": 9223372036854775808,
+    "bigger": 1180591620717411303424,
+    "f1": 1.0,
+    "f10": 5e-324,
+    "f11": 1.7976931348623157e+308,
+    "f12": 100.0,
+    "f13": 1234567890123456.0,
+    "f2": 0.1,
+    "f3": 1e-05,
+    "f4": 1e+16,
+    "f5": 1.5e+300,
+    "f6": 123456.789,
+    "f7": -0.0,
+    "f8": 1000000000000000.0,
+    "f9": 0.0001,
+    "int": 42,
+    "neg": -17,
+    "zero": 0
+   },
+   "name": "number-zoo",
+   "payload": "{\"agent_id\":\"n\",\"capability\":\"n.n\",\"capability_version\":1,\"context_bindings\":{\"big\":9223372036854775808,\"bigger\":1180591620717411303424,\"f1\":1.0,\"f10\":5e-324,\"f11\":1.7976931348623157e+308,\"f12\":100.0,\"f13\":1234567890123456.0,\"f2\":0.1,\"f3\":1e-05,\"f4\":1e+16,\"f5\":1.5e+300,\"f6\":123456.789,\"f7\":-0.0,\"f8\":1000000000000000.0,\"f9\":0.0001,\"int\":42,\"neg\":-17,\"zero\":0},\"exp\":4102444800,\"v\":2}",
+   "token": "eyJhZ2VudF9pZCI6Im4iLCJjYXBhYmlsaXR5Ijoibi5uIiwiY2FwYWJpbGl0eV92ZXJzaW9uIjoxLCJjb250ZXh0X2JpbmRpbmdzIjp7ImJpZyI6OTIyMzM3MjAzNjg1NDc3NTgwOCwiYmlnZ2VyIjoxMTgwNTkxNjIwNzE3NDExMzAzNDI0LCJmMSI6MS4wLCJmMTAiOjVlLTMyNCwiZjExIjoxLjc5NzY5MzEzNDg2MjMxNTdlKzMwOCwiZjEyIjoxMDAuMCwiZjEzIjoxMjM0NTY3ODkwMTIzNDU2LjAsImYyIjowLjEsImYzIjoxZS0wNSwiZjQiOjFlKzE2LCJmNSI6MS41ZSszMDAsImY2IjoxMjM0NTYuNzg5LCJmNyI6LTAuMCwiZjgiOjEwMDAwMDAwMDAwMDAwMDAuMCwiZjkiOjAuMDAwMSwiaW50Ijo0MiwibmVnIjotMTcsInplcm8iOjB9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.4DbFzZcRmBhZ7jRdN9A8GobTInXYVMVQKQ6H6lcB9T4",
+   "token_id": "1322d1fab009fce3",
+   "ttl": 3600
+  },
+  {
+   "agent_id": "n",
+   "capability": "n.n",
+   "capability_version": 3,
+   "context_bindings": {
+    "f": false,
+    "l": [
+     1,
+     "two",
+     [
+      3.5,
+      null
+     ],
+     {
+      "x": {
+       "y": []
+      }
+     }
+    ],
+    "n": null,
+    "o": {
+     "a": [
+      true
+     ],
+     "b": {}
+    },
+    "t": true
+   },
+   "name": "nested",
+   "payload": "{\"agent_id\":\"n\",\"capability\":\"n.n\",\"capability_version\":3,\"context_bindings\":{\"f\":false,\"l\":[1,\"two\",[3.5,null],{\"x\":{\"y\":[]}}],\"n\":null,\"o\":{\"a\":[true],\"b\":{}},\"t\":true},\"exp\":4102444800,\"v\":2}",
+   "token": "eyJhZ2VudF9pZCI6Im4iLCJjYXBhYmlsaXR5Ijoibi5uIiwiY2FwYWJpbGl0eV92ZXJzaW9uIjozLCJjb250ZXh0X2JpbmRpbmdzIjp7ImYiOmZhbHNlLCJsIjpbMSwidHdvIixbMy41LG51bGxdLHsieCI6eyJ5IjpbXX19XSwibiI6bnVsbCwibyI6eyJhIjpbdHJ1ZV0sImIiOnt9fSwidCI6dHJ1ZX0sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.m_lFyc7t8AYA91oDjq1cfHIjIMYPN_1DOvj8rRB0fb4",
+   "token_id": "bf831789cda91f8f",
+   "ttl": 3600
+  }
+ ],
+ "ttl": 3600,
+ "v1": [
+  {
+   "agent": "agent-1",
+   "capabilities": [
+    "write",
+    "read"
+   ],
+   "expires_at": 4102444800,
+   "hook": {
+    "empty_key|delete|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|ns|intruder": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|other-ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|write|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "signed|delete|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token does not cover delete on ns"
+    },
+    "signed|read|ns|agent-1": {
+     "decision": "allow",
+     "reason": "v1 token valid"
+    },
+    "signed|read|ns|intruder": {
+     "decision": "deny",
+     "reason": "capability_token bound to agent 'agent-1', caller claimed 'intruder'"
+    },
+    "signed|read|other-ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token does not cover read on other-ns"
+    },
+    "signed|write|ns|agent-1": {
+     "decision": "allow",
+     "reason": "v1 token valid"
+    }
+   },
+   "issued_at": 1700000000,
+   "name": "basic",
+   "namespace": "ns",
+   "to_compact_empty_key": "eyJhIjoiYWdlbnQtMSIsImMiOlsicmVhZCIsIndyaXRlIl0sImkiOjE3MDAwMDAwMDAsIm4iOiJucyIsInQiOiIwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZiIsIngiOjQxMDI0NDQ4MDB9.h7FLIHPYw6yZ9Z_JzMOQUNnwwgAn8OK6YsYfVfkSxYk",
+   "to_compact_signed": "eyJhIjoiYWdlbnQtMSIsImMiOlsicmVhZCIsIndyaXRlIl0sImkiOjE3MDAwMDAwMDAsIm4iOiJucyIsInQiOiIwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZiIsIngiOjQxMDI0NDQ4MDB9.M8_4GHu96v6jSEYNKiG78KSWACAomKaG3es1JJEhFk4",
+   "token_id": "0123456789abcdef0123456789abcdef"
+  },
+  {
+   "agent": "agent-2",
+   "capabilities": [
+    "*"
+   ],
+   "expires_at": 4102444800,
+   "hook": {
+    "empty_key|delete|*|agent-2": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|*|agent-2": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|*|intruder": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|other-ns|agent-2": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|write|*|agent-2": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "signed|delete|*|agent-2": {
+     "decision": "allow",
+     "reason": "v1 token valid"
+    },
+    "signed|read|*|agent-2": {
+     "decision": "allow",
+     "reason": "v1 token valid"
+    },
+    "signed|read|*|intruder": {
+     "decision": "deny",
+     "reason": "capability_token bound to agent 'agent-2', caller claimed 'intruder'"
+    },
+    "signed|read|other-ns|agent-2": {
+     "decision": "allow",
+     "reason": "v1 token valid"
+    },
+    "signed|write|*|agent-2": {
+     "decision": "allow",
+     "reason": "v1 token valid"
+    }
+   },
+   "issued_at": 1700000000,
+   "name": "wildcards",
+   "namespace": "*",
+   "to_compact_empty_key": "eyJhIjoiYWdlbnQtMiIsImMiOlsiKiJdLCJpIjoxNzAwMDAwMDAwLCJuIjoiKiIsInQiOiJmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZiIsIngiOjQxMDI0NDQ4MDB9.t8c3zVLCUvi89oI48__TiCYYvDIb43RskM7oBki94ZU",
+   "to_compact_signed": "eyJhIjoiYWdlbnQtMiIsImMiOlsiKiJdLCJpIjoxNzAwMDAwMDAwLCJuIjoiKiIsInQiOiJmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZiIsIngiOjQxMDI0NDQ4MDB9.Yv_3BYQFNlRmKF9gbA-L614bTD0Nr9wv5smbmytswfU",
+   "token_id": "ffffffffffffffffffffffffffffffff"
+  },
+  {
+   "agent": "h\u00e9llo<&>",
+   "capabilities": [
+    "r\u00e9ad"
+   ],
+   "expires_at": 4102444800,
+   "hook": {
+    "empty_key|delete|n\u00e9s\ud83d\ude00|h\u00e9llo<&>": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|n\u00e9s\ud83d\ude00|h\u00e9llo<&>": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|n\u00e9s\ud83d\ude00|intruder": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|other-ns|h\u00e9llo<&>": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|write|n\u00e9s\ud83d\ude00|h\u00e9llo<&>": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "signed|delete|n\u00e9s\ud83d\ude00|h\u00e9llo<&>": {
+     "decision": "deny",
+     "reason": "capability_token does not cover delete on n\u00e9s\ud83d\ude00"
+    },
+    "signed|read|n\u00e9s\ud83d\ude00|h\u00e9llo<&>": {
+     "decision": "deny",
+     "reason": "capability_token does not cover read on n\u00e9s\ud83d\ude00"
+    },
+    "signed|read|n\u00e9s\ud83d\ude00|intruder": {
+     "decision": "deny",
+     "reason": "capability_token bound to agent 'h\u00e9llo<&>', caller claimed 'intruder'"
+    },
+    "signed|read|other-ns|h\u00e9llo<&>": {
+     "decision": "deny",
+     "reason": "capability_token does not cover read on other-ns"
+    },
+    "signed|write|n\u00e9s\ud83d\ude00|h\u00e9llo<&>": {
+     "decision": "deny",
+     "reason": "capability_token does not cover write on n\u00e9s\ud83d\ude00"
+    }
+   },
+   "issued_at": 1700000000,
+   "name": "unicode",
+   "namespace": "n\u00e9s\ud83d\ude00",
+   "to_compact_empty_key": "eyJhIjoiaFx1MDBlOWxsbzwmPiIsImMiOlsiclx1MDBlOWFkIl0sImkiOjE3MDAwMDAwMDAsIm4iOiJuXHUwMGU5c1x1ZDgzZFx1ZGUwMCIsInQiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsIngiOjQxMDI0NDQ4MDB9.CKY_4IqNBcr0-ELLlQU04_otK2qk1j9P5tfnBemJ2So",
+   "to_compact_signed": "eyJhIjoiaFx1MDBlOWxsbzwmPiIsImMiOlsiclx1MDBlOWFkIl0sImkiOjE3MDAwMDAwMDAsIm4iOiJuXHUwMGU5c1x1ZDgzZFx1ZGUwMCIsInQiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsIngiOjQxMDI0NDQ4MDB9.qrCcZ1Nn0KlLQ3jR7QOjg491_ZNYCKY53-GhAFVFFwM",
+   "token_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+   "agent": "agent-1",
+   "capabilities": [
+    "read"
+   ],
+   "expires_at": 1700000060,
+   "hook": {
+    "empty_key|delete|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|ns|intruder": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|other-ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|write|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "signed|delete|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token does not cover delete on ns"
+    },
+    "signed|read|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token does not cover read on ns"
+    },
+    "signed|read|ns|intruder": {
+     "decision": "deny",
+     "reason": "capability_token bound to agent 'agent-1', caller claimed 'intruder'"
+    },
+    "signed|read|other-ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token does not cover read on other-ns"
+    },
+    "signed|write|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token does not cover write on ns"
+    }
+   },
+   "issued_at": 1700000000,
+   "name": "expired",
+   "namespace": "ns",
+   "to_compact_empty_key": "eyJhIjoiYWdlbnQtMSIsImMiOlsicmVhZCJdLCJpIjoxNzAwMDAwMDAwLCJuIjoibnMiLCJ0IjoiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmIiLCJ4IjoxNzAwMDAwMDYwfQ.EzsEWwQ0gQz9d7EBEI6pJGhR5kSTYTcx60z-exYCPx4",
+   "to_compact_signed": "eyJhIjoiYWdlbnQtMSIsImMiOlsicmVhZCJdLCJpIjoxNzAwMDAwMDAwLCJuIjoibnMiLCJ0IjoiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmIiLCJ4IjoxNzAwMDAwMDYwfQ.QgYm4MucetuqRVR4PiXKJx394lYTGbE9L0HjiDEE0J0",
+   "token_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  {
+   "agent": "agent-1",
+   "capabilities": [
+    "read"
+   ],
+   "expires_at": 4102444800,
+   "hook": {
+    "empty_key|delete|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|ns|intruder": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|other-ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|write|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "signed|delete|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token does not cover delete on ns"
+    },
+    "signed|read|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token does not cover read on ns"
+    },
+    "signed|read|ns|intruder": {
+     "decision": "deny",
+     "reason": "capability_token bound to agent 'agent-1', caller claimed 'intruder'"
+    },
+    "signed|read|other-ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token does not cover read on other-ns"
+    },
+    "signed|write|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token does not cover write on ns"
+    }
+   },
+   "issued_at": 4102444790,
+   "name": "not-yet-valid",
+   "namespace": "ns",
+   "to_compact_empty_key": "eyJhIjoiYWdlbnQtMSIsImMiOlsicmVhZCJdLCJpIjo0MTAyNDQ0NzkwLCJuIjoibnMiLCJ0IjoiY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2MiLCJ4Ijo0MTAyNDQ0ODAwfQ.hS4pVrd7fPIQoGdnaXxXb_C9wZFZyb_ZRfe8S5wF9UE",
+   "to_compact_signed": "eyJhIjoiYWdlbnQtMSIsImMiOlsicmVhZCJdLCJpIjo0MTAyNDQ0NzkwLCJuIjoibnMiLCJ0IjoiY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2MiLCJ4Ijo0MTAyNDQ0ODAwfQ.ULhTsU8meH4qnVbaBgTMqBRUH8NULREzr7oWxqDsck4",
+   "token_id": "cccccccccccccccccccccccccccccccc"
+  },
+  {
+   "agent": "agent-1",
+   "capabilities": [],
+   "expires_at": 4102444800,
+   "hook": {
+    "empty_key|delete|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|ns|intruder": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|read|other-ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "empty_key|write|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token signature invalid"
+    },
+    "signed|delete|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token does not cover delete on ns"
+    },
+    "signed|read|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token does not cover read on ns"
+    },
+    "signed|read|ns|intruder": {
+     "decision": "deny",
+     "reason": "capability_token bound to agent 'agent-1', caller claimed 'intruder'"
+    },
+    "signed|read|other-ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token does not cover read on other-ns"
+    },
+    "signed|write|ns|agent-1": {
+     "decision": "deny",
+     "reason": "capability_token does not cover write on ns"
+    }
+   },
+   "issued_at": 1700000000,
+   "name": "empty-caps",
+   "namespace": "ns",
+   "to_compact_empty_key": "eyJhIjoiYWdlbnQtMSIsImMiOltdLCJpIjoxNzAwMDAwMDAwLCJuIjoibnMiLCJ0IjoiZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGQiLCJ4Ijo0MTAyNDQ0ODAwfQ.OdSc1IN6fV62tqnkXRZKJcAEV3Y6p4mrHXo4mk3bh64",
+   "to_compact_signed": "eyJhIjoiYWdlbnQtMSIsImMiOltdLCJpIjoxNzAwMDAwMDAwLCJuIjoibnMiLCJ0IjoiZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGQiLCJ4Ijo0MTAyNDQ0ODAwfQ.9UECvcKsE0tn6Xx5LsdrnP5rOkiaqkEp_bUbUsOhYAU",
+   "token_id": "dddddddddddddddddddddddddddddddd"
+  }
+ ]
+}

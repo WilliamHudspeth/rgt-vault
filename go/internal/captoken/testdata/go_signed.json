@@ -1,0 +1,84 @@
+{
+ "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+ "v1": [
+  {
+   "name": "go-v1-basic",
+   "agent": "agent-go",
+   "namespace": "ns",
+   "capabilities": [
+    "write",
+    "read"
+   ],
+   "issued_at": 1700000000,
+   "expires_at": 4102444800,
+   "token_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+   "token": "eyJhIjoiYWdlbnQtZ28iLCJjIjpbInJlYWQiLCJ3cml0ZSJdLCJpIjoxNzAwMDAwMDAwLCJuIjoibnMiLCJ0IjoiMGYwZjBmMGYwZjBmMGYwZjBmMGYwZjBmMGYwZjBmMGYiLCJ4Ijo0MTAyNDQ0ODAwfQ.m_x97kK6zAbNBC_tjaoao71p7_3yN2M4f3Zt7UC5Vj0"
+  },
+  {
+   "name": "go-v1-unicode",
+   "agent": "é\u003c\u0026\u003e",
+   "namespace": "☃",
+   "capabilities": [
+    "*"
+   ],
+   "issued_at": 1700000000,
+   "expires_at": 4102444800,
+   "token_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+   "token": "eyJhIjoiXHUwMGU5PCY-IiwiYyI6WyIqIl0sImkiOjE3MDAwMDAwMDAsIm4iOiJcdTI2MDMiLCJ0IjoiMGYwZjBmMGYwZjBmMGYwZjBmMGYwZjBmMGYwZjBmMGYiLCJ4Ijo0MTAyNDQ0ODAwfQ.VduEAaiSiX4AzBngj339nPbc3Km6Aah-WsqG_Icj7Lg"
+  }
+ ],
+ "v2": [
+  {
+   "name": "go-plain",
+   "agent_id": "go-agent",
+   "capability": "go.cap",
+   "capability_version": 1,
+   "context_bindings": null,
+   "token": "eyJhZ2VudF9pZCI6ImdvLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdvLmNhcCIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.Yq5nn2v4F6zr_H9RRNy2AUNMAbbIq87ceYmaj9Pc_HY"
+  },
+  {
+   "name": "go-html",
+   "agent_id": "\u003ca\u0026b\u003e",
+   "capability": "x.\"y\"",
+   "capability_version": 3,
+   "context_bindings": {
+    "l": [
+     "a",
+     1,
+     null,
+     true
+    ],
+    "n": 7,
+    "q": "\u003c\u0026\u003e"
+   },
+   "token": "eyJhZ2VudF9pZCI6IjxhJmI-IiwiY2FwYWJpbGl0eSI6InguXCJ5XCIiLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjMsImNvbnRleHRfYmluZGluZ3MiOnsibCI6WyJhIiwxLG51bGwsdHJ1ZV0sIm4iOjcsInEiOiI8Jj4ifSwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.WaorvofZ_4ZxEkQ1_9JnlM6QzU3tZvEE7yEu8_6VOHU"
+  },
+  {
+   "name": "go-unicode",
+   "agent_id": "é☃😀",
+   "capability": "c\u0000",
+   "capability_version": 2,
+   "context_bindings": {
+    "f": 0.5,
+    "g": 1e+21,
+    "h": 1,
+    "ké": "日本"
+   },
+   "token": "eyJhZ2VudF9pZCI6Ilx1MDBlOVx1MjYwM1x1ZDgzZFx1ZGUwMCIsImNhcGFiaWxpdHkiOiJjXHUwMDAwXHUwMDdmIiwiY2FwYWJpbGl0eV92ZXJzaW9uIjoyLCJjb250ZXh0X2JpbmRpbmdzIjp7ImYiOjAuNSwiZyI6MWUrMjEsImgiOjEuMCwia1x1MDBlOSI6Ilx1NjVlNVx1NjcyYyJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.5rhCplVSxTM3h0HUMTl2bi10BPqdQCJqafY76xU84-g"
+  },
+  {
+   "name": "go-key-order",
+   "agent_id": "o",
+   "capability": "o.o",
+   "capability_version": 1,
+   "context_bindings": {
+    "Z": 4,
+    "a": 2,
+    "b": 1,
+    "é": 3,
+    "😀": 5
+   },
+   "token": "eyJhZ2VudF9pZCI6Im8iLCJjYXBhYmlsaXR5Ijoiby5vIiwiY2FwYWJpbGl0eV92ZXJzaW9uIjoxLCJjb250ZXh0X2JpbmRpbmdzIjp7IloiOjQsImEiOjIsImIiOjEsIlx1MDBlOSI6MywiXHVkODNkXHVkZTAwIjo1fSwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.qjhUonAvR4urQzKZJy6ik5lw2qDObelzCEbHZB3pcho"
+  }
+ ]
+}
