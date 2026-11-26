@@ -19,4 +19,4 @@ Rules: external tools run with an argv (never a shell); errors carry the tool na
 Opt-in live tests: `RGT_TEST_REAL_KEYRING=1`, `RGT_TEST_MACOS_KEYCHAIN=1`, TPM test (needs tpm2-tools + tss group), Windows DPAPI/WinVault tests (run on Windows).
 
 Known limits: a DPAPI blob sealed with `CRYPTPROTECT_LOCAL_MACHINE` (Python's format) can be unsealed by any local user who can read the
-file, so restrict the blob's ACL (and use entropy where possible). The macOS keychain secret cannot be hidden from `security`'s own stdin pipeline of the sealing process.
+file, so restrict the blob's ACL (and use entropy where possible).

@@ -9,6 +9,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// dpapiLocalMachine is CRYPTPROTECT_LOCAL_MACHINE (0x4), the flags value the
+// Python provider passes to Crypt[Un]ProtectData.
+const dpapiLocalMachine = 0x4
+
 // The Win32 DATA_BLOB wrappers below need unsafe in exactly three places:
 // taking the address of a Go slice's first byte, viewing the OS-allocated
 // output buffer as a slice, and releasing it with LocalFree. Nothing here

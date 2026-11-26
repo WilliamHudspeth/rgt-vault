@@ -13,10 +13,6 @@ import (
 // DefaultDPAPIBlobPath is the Windows default of python/providers/__init__.py.
 const DefaultDPAPIBlobPath = `C:\ProgramData\vault\sealed.bin`
 
-// dpapiLocalMachine is CRYPTPROTECT_LOCAL_MACHINE (0x4), the flags value the
-// Python provider passes to Crypt[Un]ProtectData.
-const dpapiLocalMachine = 0x4
-
 // DPAPI seams: dpapi_windows.go installs the real crypt32 calls; every other
 // OS gets stubs returning ErrUnsupportedPlatform. Tests replace them.
 var (
