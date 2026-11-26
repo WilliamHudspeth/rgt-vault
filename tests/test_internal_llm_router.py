@@ -16,6 +16,9 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
+if os.name == "nt":  # internal/llm is POSIX-only maintainer tooling (usage.py imports fcntl)
+    pytest.skip("internal/llm is POSIX-only", allow_module_level=True)
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -172,7 +175,6 @@ def test_default_state_path_is_not_in_tmp_and_follows_xdg(monkeypatch, tmp_path)
     assert kanban_loop.DEFAULT_STATE_PATH == kanban_loop.default_state_dir() / "kanban_loop_state.json"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX modes")
 def test_save_state_creates_0700_dir_and_0600_file(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     old_umask = os.umask(0o022)  # permissive umask must not leak through
@@ -187,7 +189,6 @@ def test_save_state_creates_0700_dir_and_0600_file(monkeypatch, tmp_path):
     assert [p.name for p in path.parent.iterdir()] == [path.name]  # no temp leftovers
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX modes")
 def test_save_state_tightens_loose_default_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     d = kanban_loop.default_state_dir()
@@ -197,7 +198,6 @@ def test_save_state_tightens_loose_default_dir(monkeypatch, tmp_path):
     assert stat.S_IMODE(d.stat().st_mode) == 0o700
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX modes")
 def test_save_state_overwrites_existing_loose_file_as_0600(tmp_path):
     path = tmp_path / "s.json"
     path.write_text("{}")
@@ -217,7 +217,6 @@ def test_write_is_atomic_original_survives_failed_write(monkeypatch, tmp_path):
     assert [p.name for p in tmp_path.iterdir()] == ["s.json"]  # temp file cleaned up
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX symlinks/uid")
 def test_write_private_text_does_not_follow_planted_symlink(tmp_path):
     """A pre-planted symlink at the target is replaced, not written through."""
     victim = tmp_path / "victim.txt"
@@ -229,7 +228,6 @@ def test_write_private_text_does_not_follow_planted_symlink(tmp_path):
     assert not link.is_symlink() and link.read_text() == "new"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX modes")
 def test_default_state_dir_symlink_is_rejected(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     victim = tmp_path / "victim"
@@ -240,7 +238,6 @@ def test_default_state_dir_symlink_is_rejected(monkeypatch, tmp_path):
     assert stat.S_IMODE(victim.stat().st_mode) == 0o755 and not list(victim.iterdir())
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX modes")
 def test_default_state_dir_with_special_bits_is_reset_to_0700(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     d = kanban_loop.default_state_dir()
@@ -250,7 +247,6 @@ def test_default_state_dir_with_special_bits_is_reset_to_0700(monkeypatch, tmp_p
     assert stat.S_IMODE(d.stat().st_mode) == 0o700
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX symlinks/uid")
 def test_default_state_dir_owned_by_someone_else_is_rejected(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     monkeypatch.setattr(kanban_loop.os, "getuid", lambda: os.stat(tmp_path).st_uid + 1)
