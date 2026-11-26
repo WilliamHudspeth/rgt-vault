@@ -23,6 +23,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
 
       - name: Install Syft
         uses: anchore/sbom-action/download-syft@v0

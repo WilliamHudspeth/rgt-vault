@@ -6,7 +6,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20260622092256-25656177ba8e
-	github.com/go-chi/chi/v5 v5.2.2
+	github.com/go-chi/chi/v5 v5.5.0
 	github.com/spf13/cobra v1.9.1
 	golang.org/x/crypto v0.53.0
 )

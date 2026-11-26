@@ -13,10 +13,12 @@
         ...
         html = response.body.decode("utf-8")
         html = html.replace(
-            f'href="{swagger_css}"', f'href="{swagger_css}" integrity="{SWAGGER_CSS_INTEGRITY}" crossorigin="anonymous"'
+            f'href="{swagger_css}"',
+            f'href="{swagger_css}" integrity="{SWAGGER_CSS_INTEGRITY}" crossorigin="anonymous"'
         )
         html = html.replace(
-            f'src="{swagger_js}"', f'src="{swagger_js}" integrity="{SWAGGER_JS_INTEGRITY}" crossorigin="anonymous"'
+            f'src="{swagger_js}"',
+            f'src="{swagger_js}" integrity="{SWAGGER_JS_INTEGRITY}" crossorigin="anonymous"'
         )
         return HTMLResponse(content=html, status_code=response.status_code)
     ```
