@@ -240,11 +240,12 @@ func TestHandle_InvalidRequests(t *testing.T) {
 
 func TestCallTool_LeaseSecret_Found(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/v1/secrets/ns1/mykey" {
-			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		q := r.URL.Query()
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/secrets" || q.Get("namespace") != "ns1" || q.Get("name") != "mykey" {
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"namespace":"ns1","name":"mykey","value":"s3cr3t"}`)
+		fmt.Fprint(w, `{"namespace":"ns1","secrets":[{"name":"mykey","value":"s3cr3t"}]}`)
 	}))
 	defer ts.Close()
 	s := newTestServer(ts)
@@ -258,30 +259,39 @@ func TestCallTool_LeaseSecret_Found(t *testing.T) {
 	}
 }
 
-// ---- tools/call lease_secret (NOT found / no value / bad JSON) ---------
+// ---- tools/call lease_secret (NOT found / no value / bad JSON / errors) --
 
 func TestCallTool_LeaseSecret_NotFound(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprint(w, `{"error":"NotFound","detail":"secret ns1/missing not found at /var/lib/vault"}`)
+		// The server answers an unknown exact name with an empty list.
+		fmt.Fprint(w, `{"namespace":"ns1","secrets":[]}`)
 	}))
 	defer ts.Close()
 	s := newTestServer(ts)
 
 	text, isError := s.callTool("lease_secret", map[string]any{"namespace": "ns1", "name": "missing"})
-	if !isError {
-		t.Fatalf("expected isError=true; text=%s", text)
+	if !isError || text != "secret not found" {
+		t.Fatalf("got (%q, %v)", text, isError)
 	}
-	if text != "backend error: 404 Not Found" {
-		t.Errorf("expected sanitized 404, got %q", text)
+}
+
+func TestCallTool_LeaseSecret_BackendErrorSanitized(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, `{"error":"NotFound","detail":"secret ns1/missing not found at /var/lib/vault"}`)
+	}))
+	defer ts.Close()
+	text, isError := newTestServer(ts).callTool("lease_secret", map[string]any{"namespace": "ns1", "name": "missing"})
+	if !isError || text != "backend error: 404 Not Found" {
+		t.Errorf("expected sanitized 404, got (%q, %v)", text, isError)
 	}
 }
 
 func TestCallTool_LeaseSecret_NoValueOrBadJSON(t *testing.T) {
 	for body, want := range map[string]string{
-		`{"name":"k","namespace":"ns1"}`: "backend did not return a secret value",
-		`not json`:                       "backend returned an invalid response",
+		`{"secrets":[{"name":"k"}]}`:                 "backend did not return a secret value",
+		`{"secrets":[{"name":"other","value":"x"}]}`: "secret not found",
+		`not json`: "backend returned an invalid response",
 	} {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, body)

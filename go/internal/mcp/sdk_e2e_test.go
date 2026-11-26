@@ -88,6 +88,17 @@ func (f *fakeVault) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(http.StatusUnauthorized)
 		return
 	}
+	// Transitional plaintext path (D5): GET /v1/secrets?namespace=&name=.
+	if r.Method == http.MethodGet && r.URL.Path == "/v1/secrets" {
+		ns, nm := r.URL.Query().Get("namespace"), r.URL.Query().Get("name")
+		out := []map[string]any{}
+		if v, ok := f.secrets[ns+"/"+nm]; ok && !f.revoked[ns+"/"+nm] {
+			out = append(out, map[string]any{"name": nm, "namespace": ns, "value": v})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"namespace": ns, "secrets": out})
+		return
+	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/secrets/"), "/")
 	if len(parts) < 2 {
 		fail(http.StatusNotFound)
@@ -101,8 +112,6 @@ func (f *fakeVault) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	switch {
-	case r.Method == http.MethodGet && len(parts) == 2:
-		_ = json.NewEncoder(w).Encode(map[string]any{"namespace": parts[0], "name": parts[1], "value": val})
 	case r.Method == http.MethodPost && len(parts) == 3 && parts[2] == "use":
 		if parts[1] == "broken" {
 			fail(http.StatusInternalServerError)
@@ -218,7 +227,7 @@ func runLifecycle(t *testing.T, transport sdk.Transport, fv *fakeVault) {
 		t.Fatalf("revoke_secret: isError=%v text=%q", res.IsError, toolText(t, res))
 	}
 	res = callTool("lease_secret", map[string]any{"namespace": "prod", "name": "api-key"})
-	if !res.IsError || toolText(t, res) != "backend error: 404 Not Found" {
+	if !res.IsError || toolText(t, res) != "secret not found" {
 		t.Fatalf("lease after revoke: isError=%v text=%q", res.IsError, toolText(t, res))
 	}
 
@@ -228,11 +237,11 @@ func runLifecycle(t *testing.T, transport sdk.Transport, fv *fakeVault) {
 		t.Fatalf("backend saw %d calls, want 5: %+v", len(calls), calls)
 	}
 	wantPaths := []string{
-		"GET /v1/secrets/prod/api-key",
+		"GET /v1/secrets",
 		"POST /v1/secrets/prod/api-key/use",
 		"POST /v1/secrets/prod/broken/use",
 		"POST /v1/secrets/prod/api-key/revoke",
-		"GET /v1/secrets/prod/api-key",
+		"GET /v1/secrets",
 	}
 	for i, c := range calls {
 		if got := c.Method + " " + c.Path; got != wantPaths[i] {

@@ -370,9 +370,11 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 	case "lease_secret":
 		ns := getStr("namespace")
 		nm := getStr("name")
-		// Single-secret route; the list route is not a plaintext source (it is
-		// being changed to return metadata only).
-		reqURL := s.backendURL + "/v1/secrets/" + url.PathEscape(ns) + "/" + url.PathEscape(nm)
+		// TODO(D5/G9): the server's transitional plaintext path is the
+		// exact-name filter on the list route; it returns that one secret
+		// with its value (audited). Unfiltered lists and the single-secret
+		// GET are metadata only. This moves when G9/G10 replace the route.
+		reqURL := s.backendURL + "/v1/secrets?namespace=" + url.QueryEscape(ns) + "&name=" + url.QueryEscape(nm)
 		resp, body, err := s.do("GET", reqURL, nil)
 		if err != nil {
 			return s.unreachable(name, err)
@@ -381,15 +383,24 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 			return s.backendError("lease_secret", resp, body)
 		}
 		var res struct {
-			Value *string `json:"value"`
+			Secrets []struct {
+				Name  string  `json:"name"`
+				Value *string `json:"value"`
+			} `json:"secrets"`
 		}
 		if err := json.Unmarshal(body, &res); err != nil {
 			return "backend returned an invalid response", true
 		}
-		if res.Value == nil {
-			return "backend did not return a secret value", true
+		for _, sec := range res.Secrets {
+			if sec.Name != nm {
+				continue
+			}
+			if sec.Value == nil {
+				return "backend did not return a secret value", true
+			}
+			return *sec.Value, false
 		}
-		return *res.Value, false
+		return "secret not found", true
 
 	case "revoke_secret":
 		ns := getStr("namespace")
