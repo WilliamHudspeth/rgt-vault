@@ -63,11 +63,11 @@ func NewTPMProvider(privatePath, publicPath string, opts ...TPMOption) (*TPMProv
 	if err := validPCRBank(p.PCRBank); err != nil {
 		return nil, err
 	}
-	if !isRegular(privatePath) {
-		return nil, fmt.Errorf("sealed private blob not found: %s: %w", privatePath, fs.ErrNotExist)
+	if err := statRegular(privatePath, "sealed private blob"); err != nil {
+		return nil, err
 	}
-	if !isRegular(publicPath) {
-		return nil, fmt.Errorf("sealed public blob not found: %s: %w", publicPath, fs.ErrNotExist)
+	if err := statRegular(publicPath, "sealed public blob"); err != nil {
+		return nil, err
 	}
 	if text, err := os.ReadFile(pcrsPath(privatePath)); err == nil {
 		if list, ok := parsePCRList(string(text)); ok {
@@ -75,11 +75,6 @@ func NewTPMProvider(privatePath, publicPath string, opts ...TPMOption) (*TPMProv
 		}
 	}
 	return p, nil
-}
-
-func isRegular(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && fi.Mode().IsRegular()
 }
 
 // pcrsPath is Path(priv).with_suffix(".pcrs"): the last extension is replaced.
@@ -150,39 +145,45 @@ func tpmRun(ctx context.Context, run Runner, args ...string) error {
 // tpm2_startauthsession, tpm2_policypcr, tpm2_unseal.
 func (p *TPMProvider) GetMasterSecret() ([]byte, error) {
 	ctx := context.Background()
-	dir := filepath.Dir(p.PrivatePath)
 
-	// P0-1: the unseal target is created next to the sealed blobs with an
-	// explicit 0600 mode and refused otherwise; it holds the plaintext secret.
-	outFile, err := os.CreateTemp(dir, ".rgt-unseal-*")
+	// P0-1: everything the tools write (contexts and the plaintext unseal
+	// target) lives in a private 0700 scratch directory created next to the
+	// sealed blobs, so other users can neither read the plaintext nor plant
+	// symlinks at the predictable names. The unseal target is also created
+	// 0600 up front and refused otherwise. Unique names let concurrent
+	// unseals (even in one process) coexist.
+	scratch, err := os.MkdirTemp(filepath.Dir(p.PrivatePath), ".rgt-tpm-")
 	if err != nil {
-		return nil, fmt.Errorf("%w: cannot create unseal scratch file: %w", ErrTPM, err)
+		return nil, fmt.Errorf("%w: cannot create unseal scratch directory: %w", ErrTPM, err)
 	}
-	outPath := outFile.Name()
-	_ = outFile.Close()
-	if err := os.Chmod(outPath, 0o600); err != nil {
-		_ = os.Remove(outPath)
-		return nil, fmt.Errorf("%w: could not set 0600 permissions on %s; refusing to unseal master secret "+
-			"to a file with permissive mode", ErrTPM, outPath)
-	}
-	// Context files derive their names from the unique unseal file, so
-	// concurrent unseals (even in one process) never collide.
-	ctxPath := outPath + ".child.ctx"
-	primaryCtx := outPath + ".primary.ctx"
-	sessionPath := outPath + ".session.ctx"
+	outPath := filepath.Join(scratch, "unseal.out")
+	ctxPath := filepath.Join(scratch, "child.ctx")
+	primaryCtx := filepath.Join(scratch, "primary.ctx")
+	sessionPath := filepath.Join(scratch, "session.ctx")
 
 	defer func() {
-		// Flush first (the tools read the saved context files), then unlink.
-		// Python unlinked first, which made its flush calls fail silently.
+		// Flush first (the tools read the saved context files), then remove.
+		// Python removed the files first, which made its flush calls fail.
 		for _, h := range []string{ctxPath, primaryCtx, sessionPath} {
 			if _, err := os.Stat(h); err == nil {
-				_ = tpmRun(ctx, p.run, "tpm2_flushcontext", "-c", h)
+				// tpm2-tools >= 4 takes the saved context as a positional argument.
+				_ = tpmRun(ctx, p.run, "tpm2_flushcontext", h)
 			}
 		}
-		for _, f := range []string{outPath, ctxPath, primaryCtx, sessionPath} {
-			_ = os.Remove(f)
-		}
+		zeroAndRemove(outPath)
+		_ = os.RemoveAll(scratch)
 	}()
+
+	out, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("%w: cannot create unseal target: %w", ErrTPM, err)
+	}
+	chmodErr := out.Chmod(0o600)
+	_ = out.Close()
+	if chmodErr != nil {
+		return nil, fmt.Errorf("%w: could not set 0600 permissions on the unseal target; refusing to unseal "+
+			"master secret to a file with permissive mode", ErrTPM)
+	}
 
 	// Modern tpm2-tools needs an explicit primary; -T is deliberately not
 	// passed so TCTI auto-discovery is used.
@@ -205,14 +206,30 @@ func (p *TPMProvider) GetMasterSecret() ([]byte, error) {
 		return nil, fmt.Errorf("%w: cannot read unsealed secret: %w", ErrTPM, err)
 	}
 	if len(secret) == 0 {
-		return nil, fmt.Errorf("%w: unsealed empty secret – PCR policy may have rejected release", ErrTPM)
+		return nil, fmt.Errorf("%w: unsealed empty secret \u2013 PCR policy may have rejected release", ErrTPM)
 	}
 	return secret, nil
 }
 
+// zeroAndRemove overwrites a (plaintext) file with zeros before unlinking it,
+// best effort, so the secret does not linger in the file's blocks.
+func zeroAndRemove(path string) {
+	if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() {
+		if f, err := os.OpenFile(path, os.O_WRONLY, 0); err == nil {
+			_, _ = f.Write(make([]byte, fi.Size()))
+			_ = f.Sync()
+			_ = f.Close()
+		}
+	}
+	_ = os.Remove(path)
+}
+
 // RotateMasterSecret seals a fresh 32-byte secret with the same PCR policy
-// into a scratch directory and renames the blobs over the existing ones.
-// As in Python the three renames are not one atomic step.
+// into a scratch directory and installs the new blobs over the existing ones.
+// Unlike Python, the previous blobs are kept as "<name>.rgt-old" until every
+// file is installed, and restored if any step fails, so a failure part-way
+// (for example a public blob on another filesystem) cannot leave a private
+// blob that no longer matches its public blob.
 func (p *TPMProvider) RotateMasterSecret() ([]byte, error) {
 	secret, err := newMasterSecret()
 	if err != nil {
@@ -230,21 +247,67 @@ func (p *TPMProvider) RotateMasterSecret() ([]byte, error) {
 		Wipe(secret)
 		return nil, err
 	}
-	if err := os.Rename(newPriv, p.PrivatePath); err != nil {
-		Wipe(secret)
-		return nil, fmt.Errorf("%w: install rotated private blob: %w", ErrTPM, err)
+	installs := []installFile{
+		{newPriv, p.PrivatePath, false},
+		{newPub, p.PublicPath, false},
+		{pcrsPath(newPriv), pcrsPath(p.PrivatePath), true},
 	}
-	if err := os.Rename(newPub, p.PublicPath); err != nil {
+	if err := installAll(installs); err != nil {
 		Wipe(secret)
-		return nil, fmt.Errorf("%w: install rotated public blob: %w", ErrTPM, err)
-	}
-	if _, err := os.Stat(pcrsPath(newPriv)); err == nil {
-		if err := os.Rename(pcrsPath(newPriv), pcrsPath(p.PrivatePath)); err != nil {
-			Wipe(secret)
-			return nil, fmt.Errorf("%w: install rotated PCR list: %w", ErrTPM, err)
-		}
+		return nil, fmt.Errorf("%w: install rotated blobs: %w", ErrTPM, err)
 	}
 	return secret, nil
+}
+
+// installAll renames each src over dst, backing up an existing dst first and
+// rolling everything back if any step fails.
+type installFile struct {
+	src, dst string
+	optional bool // skipped when src does not exist (the .pcrs file)
+}
+
+func installAll(files []installFile) error {
+	type undo struct{ dst, bak string }
+	var done []undo
+	rollback := func() {
+		for i := len(done) - 1; i >= 0; i-- {
+			u := done[i]
+			if u.bak != "" {
+				_ = os.Rename(u.bak, u.dst)
+			} else {
+				_ = os.Remove(u.dst)
+			}
+		}
+	}
+	for _, f := range files {
+		if _, err := os.Stat(f.src); err != nil {
+			if errors.Is(err, fs.ErrNotExist) && f.optional {
+				continue // the PCR list file is optional
+			}
+			rollback()
+			return err
+		}
+		bak := ""
+		if _, err := os.Lstat(f.dst); err == nil {
+			bak = f.dst + ".rgt-old"
+			if err := os.Rename(f.dst, bak); err != nil {
+				rollback()
+				return err
+			}
+		}
+		if err := os.Rename(f.src, f.dst); err != nil {
+			done = append(done, undo{f.dst, bak})
+			rollback()
+			return err
+		}
+		done = append(done, undo{f.dst, bak})
+	}
+	for _, u := range done {
+		if u.bak != "" {
+			_ = os.Remove(u.bak)
+		}
+	}
+	return nil
 }
 
 // SealTPM seals masterSecret to the PCR policy (default [0 7] in bank sha256
@@ -256,6 +319,9 @@ func SealTPM(masterSecret []byte, outputDir string, pcrList []int, pcrBank strin
 }
 
 func sealTPM(ctx context.Context, run Runner, masterSecret []byte, outDir string, pcrList []int, bank string) (string, string, error) {
+	if len(masterSecret) == 0 {
+		return "", "", errors.New("refusing to seal an empty master secret")
+	}
 	if len(pcrList) == 0 {
 		pcrList = defaultPCRList
 	}
@@ -276,22 +342,27 @@ func sealTPM(ctx context.Context, run Runner, masterSecret []byte, outDir string
 	privatePath := filepath.Join(outDir, "master_secret.priv")
 	publicPath := filepath.Join(outDir, "master_secret.pub")
 
-	// P0-1 (seal side): the plaintext secret only ever touches a 0600 file.
-	sf, err := os.CreateTemp(outDir, ".rgt-seal-*")
+	// P0-1 (seal side): the plaintext secret, the primary context and the
+	// policy digest live in a private 0700 scratch directory; the secret
+	// file itself is 0600 and zeroed before removal.
+	scratch, err := os.MkdirTemp(outDir, ".rgt-seal-")
 	if err != nil {
-		return "", "", fmt.Errorf("%w: cannot create seal scratch file: %w", ErrTPM, err)
+		return "", "", fmt.Errorf("%w: cannot create seal scratch directory: %w", ErrTPM, err)
 	}
-	secretFile := sf.Name()
-	primaryCtx := filepath.Join(outDir, "primary.ctx")
-	policyDigest := filepath.Join(outDir, "policy.digest")
+	secretFile := filepath.Join(scratch, "secret.in")
+	primaryCtx := filepath.Join(scratch, "primary.ctx")
+	policyDigest := filepath.Join(scratch, "policy.digest")
 	defer func() {
-		for _, f := range []string{secretFile, primaryCtx, policyDigest} {
-			_ = os.Remove(f)
-		}
+		zeroAndRemove(secretFile)
+		_ = os.RemoveAll(scratch)
 		// Flush the transient primary from TPM memory; failures are ignored.
 		_, _ = run(ctx, "tpm2_flushcontext", []string{"-t"}, nil)
 	}()
-	if err := os.Chmod(secretFile, 0o600); err != nil {
+	sf, err := os.OpenFile(secretFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", "", fmt.Errorf("%w: cannot create seal scratch file: %w", ErrTPM, err)
+	}
+	if err := sf.Chmod(0o600); err != nil {
 		_ = sf.Close()
 		return "", "", fmt.Errorf("%w: could not set 0600 on seal scratch file", ErrTPM)
 	}
@@ -315,6 +386,10 @@ func sealTPM(ctx context.Context, run Runner, masterSecret []byte, outDir string
 			return "", "", err
 		}
 	}
+
+	// tpm2_create writes the blobs with the process umask; tighten them.
+	_ = os.Chmod(privatePath, 0o600)
+	_ = os.Chmod(publicPath, 0o600)
 
 	// Persist the PCR list so unseal rebuilds exactly the same policy.
 	nums := make([]string, len(pcrList))

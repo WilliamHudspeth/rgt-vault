@@ -91,8 +91,8 @@ func TestDPAPIEntropyAndFailures(t *testing.T) {
 	junk := filepath.Join(dir, "junk.bin")
 	_ = os.WriteFile(junk, []byte("***not base64***"), 0o600)
 	jp, _ := NewDPAPIProvider(junk, nil)
-	if _, err := jp.GetMasterSecret(); err == nil {
-		t.Fatal("invalid base64 accepted")
+	if _, err := jp.GetMasterSecret(); !errors.Is(err, ErrMasterSecretUnavailable) {
+		t.Fatalf("invalid base64: %v", err)
 	}
 
 	// File vanishes after construction.
@@ -102,6 +102,27 @@ func TestDPAPIEntropyAndFailures(t *testing.T) {
 	_ = os.Remove(gone)
 	if _, err := gp.GetMasterSecret(); err == nil {
 		t.Fatal("read of vanished file succeeded")
+	}
+}
+
+func TestSealDPAPIRejectsEmptySecret(t *testing.T) {
+	useFakeDPAPI(t)
+	if err := SealDPAPI(nil, filepath.Join(t.TempDir(), "b"), nil); err == nil {
+		t.Fatal("empty secret sealed")
+	}
+}
+
+func TestStatRegularPermissionIsNotNotFound(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "locked")
+	_ = os.Mkdir(locked, 0o000)
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	err := statRegular(filepath.Join(locked, "blob"), "x")
+	if err == nil || errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("permission error must not be reported as not-found: %v", err)
 	}
 }
 

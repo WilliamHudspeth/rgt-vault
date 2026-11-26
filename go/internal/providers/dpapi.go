@@ -34,8 +34,8 @@ type DPAPIProvider struct {
 // NewDPAPIProvider returns a provider for the blob at blobPath. Like Python,
 // the file must already exist.
 func NewDPAPIProvider(blobPath string, entropy []byte) (*DPAPIProvider, error) {
-	if fi, err := os.Stat(blobPath); err != nil || !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("DPAPI blob not found: %s: %w", blobPath, fs.ErrNotExist)
+	if err := statRegular(blobPath, "DPAPI blob"); err != nil {
+		return nil, err
 	}
 	return &DPAPIProvider{BlobPath: blobPath, Entropy: entropy}, nil
 }
@@ -49,7 +49,7 @@ func (p *DPAPIProvider) GetMasterSecret() ([]byte, error) {
 	}
 	blob, err := decodeStdBase64(string(text))
 	if err != nil {
-		return nil, errors.New("DPAPI blob file is not valid base64")
+		return nil, fmt.Errorf("%w: DPAPI blob file is not valid base64", ErrMasterSecretUnavailable)
 	}
 	secret, err := dpapiUnprotect(blob, p.Entropy)
 	if err != nil {
@@ -76,6 +76,9 @@ func (p *DPAPIProvider) RotateMasterSecret() ([]byte, error) {
 // "Vault Master Secret") and writes base64 of the blob to outputPath, creating
 // parent directories. The file is replaced atomically.
 func SealDPAPI(masterSecret []byte, outputPath string, entropy []byte) error {
+	if len(masterSecret) == 0 {
+		return errors.New("refusing to seal an empty master secret")
+	}
 	blob, err := dpapiProtect(masterSecret, entropy)
 	if err != nil {
 		return err
@@ -106,6 +109,9 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
 	if _, err = tmp.Write(data); err != nil {
 		return err
 	}
+	if err = tmp.Sync(); err != nil {
+		return err
+	}
 	if err = tmp.Close(); err != nil {
 		return err
 	}
@@ -122,4 +128,21 @@ func decodeStdBase64(s string) ([]byte, error) {
 		return r
 	}, s)
 	return base64.StdEncoding.DecodeString(s)
+}
+
+// statRegular checks that path is a regular file. A missing file wraps
+// fs.ErrNotExist; any other failure (for example a permission error on the
+// parent directory) is reported as itself instead of as "not found".
+func statRegular(path, what string) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%s not found: %s: %w", what, path, fs.ErrNotExist)
+		}
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s not found: %s is not a regular file: %w", what, path, fs.ErrNotExist)
+	}
+	return nil
 }

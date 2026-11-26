@@ -106,8 +106,9 @@ func TestWinVaultCollisionUsesCompoundTarget(t *testing.T) {
 	if got, _ := winVaultGet(s, "svc", "bob"); got != "pw-bob2" {
 		t.Fatalf("bob2: %q", got)
 	}
-	if _, ok := s.m["bob@svc"]; !ok {
-		t.Fatal("previous bob entry preserved as bob@svc")
+	// A rotation by the same user must not keep the old secret around.
+	if _, ok := s.m["bob@svc"]; ok {
+		t.Fatal("same-user rotation must not preserve the old secret under bob@svc")
 	}
 }
 
@@ -130,6 +131,14 @@ func TestWinVaultGetFallbackAndMissing(t *testing.T) {
 	// Empty username matches whatever is under the service name.
 	if got, err := winVaultGet(s2, "svc", ""); err != nil || got != "x" {
 		t.Fatalf("empty username: %q %v", got, err)
+	}
+}
+
+func TestWinVaultUndecodableFailsClosed(t *testing.T) {
+	s := newFakeCredStore()
+	s.m["svc"] = fakeCred{"u", []byte{0x00, 0xD8}} // lone surrogate, invalid UTF-8
+	if _, err := winVaultGet(s, "svc", "u"); err == nil || errors.Is(err, errKeyNotFound) {
+		t.Fatalf("must be an error, not 'missing': %v", err)
 	}
 }
 

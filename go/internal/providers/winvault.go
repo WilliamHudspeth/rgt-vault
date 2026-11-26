@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"errors"
 	"fmt"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -51,7 +52,13 @@ func winVaultGet(s credStore, service, user string) (string, error) {
 		}
 	}
 	if res != nil {
-		return decodeWinBlob(res.Blob), nil
+		v := decodeWinBlob(res.Blob)
+		if v == "" && len(res.Blob) > 0 {
+			// An entry exists but cannot be decoded: fail closed rather than
+			// report "missing" (which would let InitializeIfMissing overwrite it).
+			return "", errors.New("credential blob is neither UTF-16 nor UTF-8")
+		}
+		return v, nil
 	}
 	// go-keyring convention, for entries written by go-keyring itself.
 	res, err = s.Read(service + ":" + user)
@@ -69,9 +76,11 @@ func winVaultSet(s credStore, service, user, value string) error {
 	if err != nil {
 		return err
 	}
-	if existing != nil {
-		// Preserve the existing entry under a compound target (even when it
-		// is the same user, exactly like Python).
+	// Python also re-saves an existing entry of the SAME user under the
+	// compound target. We skip that: it would keep a rotated (possibly
+	// compromised) master secret in the Credential Manager indefinitely, and
+	// winVaultGet could resurrect it. Entries of OTHER users are preserved.
+	if existing != nil && existing.UserName != user {
 		if err := s.Write(winCompoundName(existing.UserName, service), existing.UserName, existing.Blob); err != nil {
 			return fmt.Errorf("preserve existing credential: %w", err)
 		}

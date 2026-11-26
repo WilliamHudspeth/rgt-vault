@@ -113,9 +113,9 @@ func decodeKeyringSecret(encoded string) ([]byte, error) {
 	s := strings.TrimRight(strings.TrimSpace(encoded), "=")
 	s = strings.NewReplacer("+", "-", "/", "_").Replace(s)
 	raw, err := base64.RawURLEncoding.DecodeString(s)
-	if err != nil {
+	if err != nil || len(raw) == 0 {
 		// Do not include the stored value in the error.
-		return nil, fmt.Errorf("%w: keyring entry is not valid urlsafe-base64", ErrMasterSecretUnavailable)
+		return nil, fmt.Errorf("%w: keyring entry is empty or not valid urlsafe-base64", ErrMasterSecretUnavailable)
 	}
 	return raw, nil
 }

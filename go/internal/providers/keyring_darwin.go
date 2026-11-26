@@ -2,26 +2,17 @@
 
 package providers
 
-import (
-	"context"
-	"errors"
+import "context"
 
-	"github.com/zalando/go-keyring"
-)
-
-// macOS: reads go through go-keyring (it understands raw values, which is
-// what Python keyring writes). Writes do NOT use keyring.Set because
-// go-keyring prefixes values with "go-keyring-base64:", which Python's
-// keyring would then return verbatim and fail to decode. The value is plain
-// urlsafe-base64 (ASCII), so it is stored raw through `security -i`, the same
-// way [SealMacOSKeychain] does.
+// macOS: both directions go through the same absolute-path `security`
+// invocations as [MacOSKeychainProvider]/[SealMacOSKeychain], with the
+// commandTimeout and output-free errors of [execRunner]. go-keyring is not
+// used here because keyring.Set prefixes values with "go-keyring-base64:",
+// which Python's keyring would return verbatim and fail to decode. The value
+// is plain urlsafe-base64 (ASCII), stored raw, so Python and Go interoperate.
 
 func platformKeyringGet(service, user string) (string, error) {
-	v, err := keyring.Get(service, user)
-	if errors.Is(err, keyring.ErrNotFound) {
-		return "", errKeyNotFound
-	}
-	return v, err
+	return securityFind(context.Background(), execRunner, service, user)
 }
 
 func platformKeyringSet(service, user, value string) error {

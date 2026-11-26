@@ -14,11 +14,11 @@ const (
 )
 
 const (
-	macOSSecurityTool = "security"
+	macOSSecurityTool = "/usr/bin/security" // absolute: never resolved through $PATH
 	// securityItemNotFound is `security`'s exit status for errSecItemNotFound.
 	securityItemNotFound = 44
 	// securityMaxCommand mirrors the 4096-byte limit of `security -i` lines.
-	securityMaxCommand = 4096
+	securityMaxCommand = 4095 // fgets(buf, 4096) in security -i, minus the NUL
 )
 
 // MacOSKeychainProvider reads the master secret from a generic-password item
@@ -45,22 +45,35 @@ func NewMacOSKeychainProvider(service, account string) *MacOSKeychainProvider {
 
 // GetMasterSecret runs `security find-generic-password -s S -a A -w`.
 func (p *MacOSKeychainProvider) GetMasterSecret() ([]byte, error) {
-	out, err := p.run(context.Background(), macOSSecurityTool,
-		[]string{"find-generic-password", "-s", p.Service, "-a", p.Account, "-w"}, nil)
+	secret, err := securityFind(context.Background(), p.run, p.Service, p.Account)
 	if err != nil {
-		var ee *ExitError
 		reason := describeRunError(err)
-		if errors.As(err, &ee) && ee.Code == securityItemNotFound {
+		if errors.Is(err, errKeyNotFound) {
 			reason = "item not found in keychain"
 		}
 		return nil, fmt.Errorf("%w: failed to read keychain item %q/%q: %s", ErrMasterSecretUnavailable, p.Service, p.Account, reason)
 	}
-	secret := strings.TrimSpace(string(out))
-	Wipe(out)
 	if secret == "" {
 		return nil, fmt.Errorf("%w: keychain item exists but password is empty", ErrMasterSecretUnavailable)
 	}
 	return []byte(secret), nil
+}
+
+// securityFind runs `security find-generic-password -s S -a A -w` and returns
+// the stripped password. errKeyNotFound means errSecItemNotFound (exit 44).
+func securityFind(ctx context.Context, run Runner, service, account string) (string, error) {
+	out, err := run(ctx, macOSSecurityTool,
+		[]string{"find-generic-password", "-s", service, "-a", account, "-w"}, nil)
+	if err != nil {
+		var ee *ExitError
+		if errors.As(err, &ee) && ee.Code == securityItemNotFound {
+			return "", errKeyNotFound
+		}
+		return "", err
+	}
+	secret := strings.TrimSpace(string(out))
+	Wipe(out)
+	return secret, nil
 }
 
 // SealMacOSKeychain stores masterSecret as the password of the generic-password
@@ -85,6 +98,15 @@ func sealMacOS(ctx context.Context, run Runner, secret []byte, service, account 
 			return err
 		}
 	}
+	// The command is a single line parsed by security(1)'s own tokenizer, not
+	// by a shell: refuse anything whose quoting we cannot guarantee (control
+	// characters would end the line; quotes and backslashes are interpreted
+	// differently by the tokenizer than by POSIX shells).
+	for name, v := range map[string]string{"service": service, "account": account, "secret": string(secret)} {
+		if err := checkSecurityToken(name, v); err != nil {
+			return err
+		}
+	}
 	if service == "" || account == "" {
 		return errors.New("keychain service and account are required")
 	}
@@ -97,7 +119,9 @@ func sealMacOS(ctx context.Context, run Runner, secret []byte, service, account 
 	if len(line) > securityMaxCommand {
 		return errors.New("keychain item values are too large for security(1)")
 	}
-	_, err := run(ctx, macOSSecurityTool, []string{"-i"}, []byte(line))
+	stdin := []byte(line)
+	defer Wipe(stdin)
+	_, err := run(ctx, macOSSecurityTool, []string{"-i"}, stdin)
 	if err != nil {
 		return fmt.Errorf("security add-generic-password failed: %s", describeRunError(err))
 	}
@@ -115,6 +139,18 @@ func checkMacOSSecret(secret []byte) error {
 	}
 	if secret[0] == ' ' || secret[len(secret)-1] == ' ' {
 		return errors.New("macOS keychain master secret must not start or end with a space")
+	}
+	return nil
+}
+
+// checkSecurityToken rejects characters that would break out of the single
+// line handed to `security -i`: control characters, and the quote and
+// backslash characters whose handling differs between security(1) and POSIX.
+func checkSecurityToken(name, v string) error {
+	for i := 0; i < len(v); i++ {
+		if c := v[i]; c < 0x20 || c == 0x7f || c == '\\' || c == '\'' || c == '"' || c == '`' {
+			return fmt.Errorf("keychain %s contains a character that cannot be passed safely to security(1)", name)
+		}
 	}
 	return nil
 }

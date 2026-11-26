@@ -29,14 +29,22 @@ func takeBlob(out *windows.DataBlob) []byte {
 		return nil
 	}
 	view := unsafe.Slice(out.Data, out.Size)
+	defer func() { // wipe and free even if the copy below panics
+		clear(view)
+		_, _ = windows.LocalFree(windows.Handle(unsafe.Pointer(out.Data)))
+	}()
 	res := make([]byte, len(view))
 	copy(res, view)
-	clear(view)
-	_, _ = windows.LocalFree(windows.Handle(unsafe.Pointer(out.Data)))
 	return res
 }
 
+// maxBlob keeps len() within the DATA_BLOB uint32 size field.
+const maxBlob = 1 << 30
+
 func platformDPAPIUnprotect(blob, entropy []byte) ([]byte, error) {
+	if len(blob) > maxBlob || len(entropy) > maxBlob {
+		return nil, fmt.Errorf("DPAPI input too large")
+	}
 	in := toBlob(blob)
 	var ent *windows.DataBlob
 	if len(entropy) > 0 {
@@ -51,6 +59,9 @@ func platformDPAPIUnprotect(blob, entropy []byte) ([]byte, error) {
 }
 
 func platformDPAPIProtect(secret, entropy []byte) ([]byte, error) {
+	if len(secret) > maxBlob || len(entropy) > maxBlob {
+		return nil, fmt.Errorf("DPAPI input too large")
+	}
 	in := toBlob(secret)
 	var ent *windows.DataBlob
 	if len(entropy) > 0 {

@@ -29,11 +29,12 @@ func argAfter(t *testing.T, c call, flag string) string {
 // the permission bits of the unseal file at the time of tpm2_unseal.
 type fakeTPM struct {
 	*fakeRunner
-	secret     []byte
-	unsealMode os.FileMode
-	failTool   string
-	failErr    error
-	failStdout string
+	secret      []byte
+	unsealMode  os.FileMode
+	scratchMode os.FileMode
+	failTool    string
+	failErr     error
+	failStdout  string
 }
 
 func newFakeTPM(secret []byte) *fakeTPM {
@@ -51,6 +52,9 @@ func newFakeTPM(secret []byte) *fakeTPM {
 			out := argAfter(&testing.T{}, c, "-o")
 			if fi, err := os.Stat(out); err == nil {
 				f.unsealMode = fi.Mode().Perm()
+			}
+			if fi, err := os.Stat(filepath.Dir(out)); err == nil {
+				f.scratchMode = fi.Mode().Perm()
 			}
 			_ = os.WriteFile(out, f.secret, 0o600)
 		case "tpm2_create":
@@ -136,10 +140,21 @@ func TestTPMUnsealSequence(t *testing.T) {
 			t.Errorf("%s argv:\n got %v\nwant %v", name, byName[name].Args, args)
 		}
 	}
-	for _, p := range []string{prim, child, sess, out} {
-		if filepath.Dir(p) != dir {
-			t.Errorf("scratch file %s must live beside the sealed blobs", p)
+	scratch := filepath.Dir(out)
+	for _, p := range []string{prim, child, sess} {
+		if filepath.Dir(p) != scratch {
+			t.Errorf("%s must live in the private scratch dir %s", p, scratch)
 		}
+	}
+	if filepath.Dir(scratch) != dir || !strings.HasPrefix(filepath.Base(scratch), ".rgt-tpm-") {
+		t.Errorf("scratch dir %s must be created beside the sealed blobs", scratch)
+	}
+	if fi, err := os.Stat(scratch); err == nil || !os.IsNotExist(err) {
+		_ = fi
+		t.Errorf("scratch dir not removed: %v", err)
+	}
+	if f.scratchMode != 0o700 {
+		t.Errorf("scratch dir mode %v, want 0700", f.scratchMode)
 	}
 	if f.unsealMode != 0o600 {
 		t.Errorf("unseal file mode %v, want 0600", f.unsealMode)
@@ -159,7 +174,8 @@ func TestTPMUnsealSequence(t *testing.T) {
 	for _, c := range f.calls {
 		if c.Name == "tpm2_flushcontext" {
 			flushed++
-			if c.Args[0] != "-c" {
+			// Positional saved-context argument (tpm2-tools >= 4).
+			if len(c.Args) != 1 || !strings.HasSuffix(c.Args[0], ".ctx") {
 				t.Errorf("flush argv %v", c.Args)
 			}
 		}
@@ -342,9 +358,13 @@ func TestSealTPM(t *testing.T) {
 	for _, c := range f.calls {
 		byName[c.Name] = c
 	}
-	digest := filepath.Join(out, "policy.digest")
-	primary := filepath.Join(out, "primary.ctx")
 	secretFile := argAfter(t, byName["tpm2_create"], "-i")
+	scratch := filepath.Dir(secretFile)
+	digest := filepath.Join(scratch, "policy.digest")
+	primary := filepath.Join(scratch, "primary.ctx")
+	if filepath.Dir(scratch) != out {
+		t.Errorf("seal scratch %s must be inside the output dir", scratch)
+	}
 	wantArgs := map[string][]string{
 		"tpm2_createpolicy":  {"--policy-pcr", "-l", "sha256:0+sha256:2+sha256:7", "-L", digest},
 		"tpm2_createprimary": {"-C", "o", "-G", "rsa", "-c", primary},
@@ -458,26 +478,54 @@ func TestTPMRotate(t *testing.T) {
 	}
 }
 
-func TestTPMRotateInstallFailures(t *testing.T) {
-	// Targets that cannot be replaced (directories) make each rename fail.
-	for _, which := range []string{"priv", "pub", "pcrs"} {
-		dir, priv, pub := sealedFixture(t)
-		f := newFakeTPM(nil)
-		p, _ := NewTPMProvider(priv, pub, WithRunner(f.Run))
-		switch which {
-		case "priv":
-			_ = os.Remove(priv)
-			_ = os.Mkdir(priv, 0o700)
-			p.PrivatePath = priv
-		case "pub":
-			_ = os.Remove(pub)
-			_ = os.Mkdir(pub, 0o700)
-		case "pcrs":
-			_ = os.Mkdir(filepath.Join(dir, "master_secret.pcrs"), 0o700)
-			_ = os.WriteFile(filepath.Join(dir, "master_secret.pcrs", "keep"), nil, 0o600)
-		}
-		if _, err := p.RotateMasterSecret(); !errors.Is(err, ErrTPM) {
-			t.Errorf("%s: %v", which, err)
-		}
+func TestTPMRotateRollsBackOnInstallFailure(t *testing.T) {
+	dir, priv, pub := sealedFixture(t)
+	pcrs := filepath.Join(dir, "master_secret.pcrs")
+	_ = os.WriteFile(pcrs, []byte("0 7\n"), 0o600)
+	f := newFakeTPM(nil)
+	p, _ := NewTPMProvider(priv, pub, WithRunner(f.Run))
+	// The public blob lives in a directory that does not exist, so installing
+	// it fails AFTER the private blob was already replaced.
+	p.PublicPath = filepath.Join(dir, "gone", "master_secret.pub")
+	if _, err := p.RotateMasterSecret(); !errors.Is(err, ErrTPM) {
+		t.Fatalf("got %v", err)
 	}
+	if b, _ := os.ReadFile(priv); string(b) != "priv" {
+		t.Fatalf("private blob not restored: %q", b)
+	}
+	if b, _ := os.ReadFile(pcrs); string(b) != "0 7\n" {
+		t.Fatalf("pcrs changed: %q", b)
+	}
+	if left := dirNames(t, dir); !reflect.DeepEqual(left, []string{"master_secret.pcrs", "master_secret.priv", "master_secret.pub"}) {
+		t.Fatalf("leftovers after rollback: %v", left)
+	}
+}
+
+func TestInstallAllMissingSource(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "dst")
+	_ = os.WriteFile(dst, []byte("old"), 0o600)
+	err := installAll([]installFile{{filepath.Join(dir, "nosrc"), dst, false}})
+	if err == nil {
+		t.Fatal("missing source accepted")
+	}
+	if b, _ := os.ReadFile(dst); string(b) != "old" {
+		t.Fatal("destination modified")
+	}
+}
+
+func TestSealTPMRejectsEmptySecret(t *testing.T) {
+	if _, _, err := sealTPM(t.Context(), newFakeTPM(nil).Run, nil, t.TempDir(), nil, ""); err == nil {
+		t.Fatal("empty secret sealed")
+	}
+}
+
+func TestZeroAndRemove(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s")
+	_ = os.WriteFile(p, []byte("plaintext"), 0o600)
+	zeroAndRemove(p)
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatal("not removed")
+	}
+	zeroAndRemove(p) // missing file is fine
 }

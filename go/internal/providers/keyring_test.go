@@ -95,6 +95,11 @@ func TestDecodeKeyringSecretVariants(t *testing.T) {
 	if _, err := decodeKeyringSecret("!!!!"); !errors.Is(err, ErrMasterSecretUnavailable) {
 		t.Errorf("invalid: %v", err)
 	}
+	for _, empty := range []string{"   ", "====", " = "} {
+		if _, err := decodeKeyringSecret(empty); !errors.Is(err, ErrMasterSecretUnavailable) {
+			t.Errorf("%q must not decode to an empty secret: %v", empty, err)
+		}
+	}
 	if _, err := decodeKeyringSecret("A"); err == nil {
 		t.Error("length 1 mod 4 must fail")
 	}

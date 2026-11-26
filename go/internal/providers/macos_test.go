@@ -17,7 +17,7 @@ func TestMacOSGetSecret(t *testing.T) {
 		t.Fatalf("got %q %v", got, err)
 	}
 	want := []string{"find-generic-password", "-s", "com.agentvault.master", "-a", "master-key", "-w"}
-	if len(r.calls) != 1 || r.calls[0].Name != "security" || !reflect.DeepEqual(r.calls[0].Args, want) {
+	if len(r.calls) != 1 || r.calls[0].Name != "/usr/bin/security" || !reflect.DeepEqual(r.calls[0].Args, want) {
 		t.Fatalf("argv: %v", r.calls)
 	}
 	if r.calls[0].Stdin != "" {
@@ -57,7 +57,7 @@ func TestSealMacOS(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := r.calls[0]
-	if c.Name != "security" || !reflect.DeepEqual(c.Args, []string{"-i"}) {
+	if c.Name != "/usr/bin/security" || !reflect.DeepEqual(c.Args, []string{"-i"}) {
 		t.Fatalf("argv must be just -i (secret never in argv): %v", c)
 	}
 	want := "add-generic-password -U -s svc -a acct -w c2VjcmV0/+== -T /usr/bin/security\n"
@@ -67,10 +67,10 @@ func TestSealMacOS(t *testing.T) {
 
 	// Not updatable, awkward service name needing quotes.
 	r2 := &fakeRunner{}
-	if err := sealMacOS(t.Context(), r2.Run, []byte("a b'c"), "my svc", "it's", false, true); err != nil {
+	if err := sealMacOS(t.Context(), r2.Run, []byte("a b c"), "my svc", "my acct", false, true); err != nil {
 		t.Fatal(err)
 	}
-	want = `add-generic-password -s 'my svc' -a 'it'"'"'s' -w 'a b'"'"'c' -T /usr/bin/security` + "\n"
+	want = "add-generic-password -s 'my svc' -a 'my acct' -w 'a b c' -T /usr/bin/security\n"
 	if r2.calls[0].Stdin != want {
 		t.Fatalf("quoting:\n got %q\nwant %q", r2.calls[0].Stdin, want)
 	}
@@ -105,6 +105,46 @@ func TestSealMacOSValidation(t *testing.T) {
 	err := SealMacOSKeychainWith(r.Run, []byte("ok"), "s", "a", false)
 	if err == nil || strings.Contains(err.Error(), "LEAK") || !strings.Contains(err.Error(), "exit status 1") {
 		t.Fatalf("seal failure: %v", err)
+	}
+}
+
+func TestSealMacOSRejectsInjection(t *testing.T) {
+	r := &fakeRunner{}
+	for name, tc := range map[string][3]string{
+		"newline in service": {"s\nlist-keychains", "a", "secret"},
+		"cr in account":      {"s", "a\r", "secret"},
+		"quote in service":   {"s'x", "a", "secret"},
+		"backslash secret":   {"s", "a", `sec\ret`},
+		"dquote account":     {"s", `a"b`, "secret"},
+		"backtick":           {"s", "a", "se`cret"},
+		"del":                {"s", "a", "se\x7fcret"},
+	} {
+		// validate=false is the keyring-darwin path: it must be checked too.
+		if err := sealMacOS(t.Context(), r.Run, []byte(tc[2]), tc[0], tc[1], false, false); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	if len(r.calls) != 0 {
+		t.Fatalf("security must not run: %v", r.calls)
+	}
+}
+
+func TestSealMacOSLengthLimit(t *testing.T) {
+	r := &fakeRunner{}
+	// Build a line of exactly 4096 bytes (incl. the newline): must be refused.
+	base := len("add-generic-password -s s -a a -w  -T /usr/bin/security\n")
+	if err := sealMacOS(t.Context(), r.Run, []byte(strings.Repeat("x", 4096-base)), "s", "a", false, true); err == nil {
+		t.Fatal("4096-byte line accepted")
+	}
+	if err := sealMacOS(t.Context(), r.Run, []byte(strings.Repeat("x", 4095-base)), "s", "a", false, true); err != nil {
+		t.Fatalf("4095-byte line rejected: %v", err)
+	}
+}
+
+func TestSecurityFindNotFound(t *testing.T) {
+	r := &fakeRunner{handle: func(call) ([]byte, error) { return nil, &ExitError{Code: 44} }}
+	if _, err := securityFind(t.Context(), r.Run, "s", "a"); !errors.Is(err, errKeyNotFound) {
+		t.Fatalf("%v", err)
 	}
 }
 
