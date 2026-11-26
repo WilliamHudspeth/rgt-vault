@@ -5,6 +5,8 @@
 package server
 
 import (
+	"net/http"
+
 	"github.com/go-chi/chi/v5"
 	"rgt-vault-server/internal/server/handlers"
 )
@@ -31,11 +33,28 @@ import (
 func NewRouter(h *handlers.Handlers, mw *Middleware) chi.Router {
 	r := chi.NewRouter()
 
-	// Global middleware stack (applied to all routes)
-	r.Use(mw.CORSMiddleware)
+	// Global middleware stack (applied to all routes, outermost first).
+	// Recover sits just inside the logger so a panic anywhere below becomes a
+	// generic, logged 500; CORS answers preflights for allowed origins only
+	// and tags allowed-origin responses (including 405s); the method
+	// allow-list then refuses TRACE and unknown verbs before authentication;
+	// auth guards everything else (including any OPTIONS request that was not
+	// a legitimate preflight).
 	r.Use(mw.SecurityHeadersMiddleware)
 	r.Use(mw.LoggingMiddleware)
+	r.Use(mw.RecoverMiddleware)
+	r.Use(mw.CORSMiddleware)
+	r.Use(mw.MethodMiddleware)
 	r.Use(mw.AuthMiddleware)
+	r.Use(mw.BodyLimitMiddleware)
+
+	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
+		WriteJSONError(w, http.StatusNotFound, "NotFound", "not found")
+	})
+	r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Allow", allowHeaderValue)
+		WriteJSONError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+	})
 
 	// -----------------------------------------------------------------------
 	// Public routes (auth skipped by AuthMiddleware for /healthz)

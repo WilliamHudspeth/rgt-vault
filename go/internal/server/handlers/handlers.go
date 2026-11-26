@@ -10,7 +10,9 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -29,11 +31,24 @@ import (
 // Secret represents a stored secret.
 type Secret struct {
 	Name      string `json:"name"`
-	Value     string `json:"value"`
+	Value     string `json:"-"` // never serialised by accident; see ListSecrets
 	Namespace string `json:"namespace"`
 	Agent     string `json:"agent"`
 	Purpose   string `json:"purpose"`
 	CreatedAt string `json:"created_at"`
+}
+
+// SecretMeta is the list/metadata view of a secret. It has no value field.
+type SecretMeta struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Agent     string `json:"agent"`
+	Purpose   string `json:"purpose"`
+	CreatedAt string `json:"created_at"`
+}
+
+func metaOf(s Secret) SecretMeta {
+	return SecretMeta{Name: s.Name, Namespace: s.Namespace, Agent: s.Agent, Purpose: s.Purpose, CreatedAt: s.CreatedAt}
 }
 
 // AuditEntry represents a single audit log line.
@@ -287,11 +302,50 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	}
 }
 
+// maxBodyMsg is returned when the request body exceeds the configured limit.
+const maxBodyMsg = "request body too large"
+
+// decodeJSON decodes exactly one JSON value from the request body into dst.
+// Unknown fields and trailing data are rejected (400); a body larger than the
+// limit installed by the server's body-limit middleware is rejected with 413.
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst interface{}) bool {
+	if r.Body == nil {
+		writeError(w, newAppError(http.StatusBadRequest, "ValidationError", "invalid JSON body"))
+		return false
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	err := dec.Decode(dst)
+	if err == nil {
+		// Reject trailing garbage / a second JSON value.
+		if _, terr := dec.Token(); terr != io.EOF {
+			err = terr
+			if err == nil {
+				err = errors.New("trailing data after JSON body")
+			}
+		}
+	}
+	if err == nil {
+		return true
+	}
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) {
+		w.Header().Set("Connection", "close")
+		writeError(w, newAppError(http.StatusRequestEntityTooLarge, "RequestTooLarge", maxBodyMsg))
+		return false
+	}
+	// Deliberately generic: the decoder's message can quote request content.
+	writeError(w, newAppError(http.StatusBadRequest, "ValidationError", "invalid JSON body"))
+	return false
+}
+
 // writeError writes a JSON error response.
 func writeError(w http.ResponseWriter, err error) {
 	appErr, ok := err.(*AppError)
 	if !ok {
-		appErr = &AppError{Code: http.StatusInternalServerError, Type: "InternalError", Message: err.Error()}
+		// Never echo an unexpected error's text to the client.
+		log.Printf("ERROR: unexpected handler error: %v", err)
+		appErr = &AppError{Code: http.StatusInternalServerError, Type: "InternalError", Message: "internal server error"}
 	}
 	writeJSON(w, appErr.Code, map[string]string{
 		"error":  appErr.Type,
@@ -348,8 +402,7 @@ type SetSecretRequest struct {
 // SetSecret handles POST /v1/secrets.
 func (h *Handlers) SetSecret(w http.ResponseWriter, r *http.Request) {
 	var req SetSecretRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, newAppError(http.StatusBadRequest, "ValidationError", "invalid JSON body"))
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	if req.Name == "" {
@@ -410,16 +463,55 @@ func (h *Handlers) GetSecret(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 // ListSecrets handles GET /v1/secrets.
+//
+// The list never contains secret values: each entry is a SecretMeta.
+//
+// TODO(D5/G9): transitional plaintext path. The Go CLI `get` and the MCP
+// `lease_secret` tool still fetch plaintext with GET /v1/secrets?name=<exact>
+// (go/cmd/rgt-vault/commands.go runGet, go/internal/mcp/mcp.go lease_secret).
+// To avoid breaking them before B12/G10 move them off this route, an EXACT
+// `name` filter returns that one secret INCLUDING its value, and the read is
+// audited. An unfiltered list, and every other route, never returns a value.
+// This path is removed when the server moves onto the real vault (G9) and the
+// CLI `get` becomes an offline, operator-only operation.
 func (h *Handlers) ListSecrets(w http.ResponseWriter, r *http.Request) {
 	namespace := r.URL.Query().Get("namespace")
 	if namespace == "" {
 		namespace = "default"
 	}
 
+	if name := r.URL.Query().Get("name"); name != "" {
+		h.listSecretWithValue(w, namespace, name)
+		return
+	}
+
 	secrets := h.Store.ListSecrets(namespace)
+	metas := make([]SecretMeta, 0, len(secrets))
+	for _, s := range secrets {
+		metas = append(metas, metaOf(s))
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"namespace": namespace,
-		"secrets":   secrets,
+		"secrets":   metas,
+	})
+}
+
+// transitionalSecret is the one response shape that carries a value.
+// TODO(D5/G9): delete together with the plaintext-by-name path.
+type transitionalSecret struct {
+	SecretMeta
+	Value string `json:"value"`
+}
+
+func (h *Handlers) listSecretWithValue(w http.ResponseWriter, namespace, name string) {
+	out := []transitionalSecret{}
+	if sec, err := h.Store.GetSecret(namespace, name); err == nil {
+		out = append(out, transitionalSecret{SecretMeta: metaOf(*sec), Value: sec.Value})
+		h.Store.AddAuditEntry("SECRET_READ", "api", namespace+"/"+name)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"namespace": namespace,
+		"secrets":   out,
 	})
 }
 
@@ -441,8 +533,7 @@ func (h *Handlers) UseSecret(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 
 	var req UseSecretRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, newAppError(http.StatusBadRequest, "ValidationError", "invalid JSON body"))
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	if req.Action == "" {
@@ -533,8 +624,7 @@ type RotateRequest struct {
 // Rotate handles POST /v1/rotate.
 func (h *Handlers) Rotate(w http.ResponseWriter, r *http.Request) {
 	var req RotateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, newAppError(http.StatusBadRequest, "ValidationError", "invalid JSON body"))
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
@@ -611,8 +701,7 @@ type SimulateRequest struct {
 // PolicySimulate handles POST /v1/policy/simulate.
 func (h *Handlers) PolicySimulate(w http.ResponseWriter, r *http.Request) {
 	var req SimulateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, newAppError(http.StatusBadRequest, "ValidationError", "invalid JSON body"))
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	if req.Agent == "" {
