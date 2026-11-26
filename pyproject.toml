@@ -88,6 +88,9 @@ rgt_vault = "python"
 [tool.ruff]
 line-length = 120
 target-version = "py39"
+# Python scripts under go/ are Go-test vector generators run against the frozen
+# Python reference; they are not product code and are not linted/formatted.
+extend-exclude = ["go"]
 
 [tool.ruff.lint]
 # E/F (pyflakes+pycodestyle) and I (isort). B (bugbear) / UP (pyupgrade) are
