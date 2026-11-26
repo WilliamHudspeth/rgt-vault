@@ -67,7 +67,7 @@ def _ensure_private_dir(d: Path) -> None:
     d.mkdir(parents=True, exist_ok=True, mode=0o700)
     if d == default:
         st = d.lstat()
-        if st.st_uid != os.getuid():
+        if hasattr(os, "getuid") and st.st_uid != os.getuid():  # no uid on Windows
             raise PermissionError(f"state dir {d} is not owned by the current user")
         if stat.S_IMODE(st.st_mode) != 0o700:
             d.chmod(0o700)
