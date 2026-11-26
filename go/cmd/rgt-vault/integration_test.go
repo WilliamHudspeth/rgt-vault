@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/json"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -32,22 +30,10 @@ func TestIntegration_SetGetListRevoke(t *testing.T) {
 		t.Fatalf("set: exit %d out %q err %q", code, out, stderr)
 	}
 
-	// get: the single-secret route. B3 (RGT-232) keeps it returning `value`;
-	// the pre-B3 stub returns metadata only, in which case get must fail
-	// loudly rather than print something wrong.
-	t.Run("get", func(t *testing.T) {
-		code, out, stderr := cli("", "get", "api-key", "--namespace", "prod")
-		if serverReturnsValue(t, srv.URL, token, "prod", "api-key") {
-			if code != 0 || out != "s3cr3t-value\n" {
-				t.Fatalf("get: exit %d out %q err %q", code, out, stderr)
-			}
-			return
-		}
-		if code != 1 || !strings.Contains(stderr, "did not return a secret value") {
-			t.Fatalf("get on metadata-only server: exit %d err %q", code, stderr)
-		}
-		t.Log("server GET one is metadata-only (pre-B3); asserted the explicit error path")
-	})
+	// get: through the server's D5 transitional plaintext route.
+	if code, out, stderr := cli("", "get", "api-key", "--namespace", "prod"); code != 0 || out != "s3cr3t-value\n" {
+		t.Fatalf("get: exit %d out %q err %q", code, out, stderr)
+	}
 
 	// list: names only
 	code, out, stderr := cli("", "list", "--namespace", "prod")
@@ -70,19 +56,4 @@ func TestIntegration_SetGetListRevoke(t *testing.T) {
 	if code, out, stderr := cli("", "verify-audit"); code != 0 || out != "OK\n" {
 		t.Fatalf("verify-audit: exit %d out %q err %q", code, out, stderr)
 	}
-}
-
-func serverReturnsValue(t *testing.T, base, token, ns, name string) bool {
-	t.Helper()
-	req, _ := http.NewRequest(http.MethodGet, base+"/v1/secrets/"+ns+"/"+name, nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	var m map[string]any
-	_ = json.NewDecoder(resp.Body).Decode(&m)
-	_, ok := m["value"]
-	return ok
 }

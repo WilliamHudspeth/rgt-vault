@@ -133,30 +133,39 @@ func (c *cli) runSet(name, namespace, agent, purpose, valueFile string) error {
 	return nil
 }
 
-// runGet reads the single-secret route. The list route is metadata only and
-// is never used as a plaintext source.
+// runGet fetches the plaintext through the server's transitional D5 route:
+// the exact-name filter GET /v1/secrets?namespace=&name= returns that one
+// secret with its value (audited). Unfiltered lists and the single-secret GET
+// are metadata only. TODO(D5/G10): becomes an offline, operator-only read.
 func (c *cli) runGet(name, namespace string) error {
-	body, status, err := c.do(http.MethodGet, c.secretURL(namespace, name, ""), nil)
+	reqURL := c.host + "/v1/secrets?namespace=" + url.QueryEscape(namespace) + "&name=" + url.QueryEscape(name)
+	body, status, err := c.do(http.MethodGet, reqURL, nil)
 	if err != nil {
 		return err
-	}
-	if status == http.StatusNotFound {
-		return fmt.Errorf("secret %q not found in namespace %q", name, namespace)
 	}
 	if status != http.StatusOK {
 		return fmt.Errorf("get failed: HTTP %d", status)
 	}
 	var resp struct {
-		Value *string `json:"value"`
+		Secrets []struct {
+			Name  string  `json:"name"`
+			Value *string `json:"value"`
+		} `json:"secrets"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return fmt.Errorf("parsing response: %w", err)
 	}
-	if resp.Value == nil {
-		return errors.New("server did not return a secret value")
+	for _, s := range resp.Secrets {
+		if s.Name != name {
+			continue
+		}
+		if s.Value == nil {
+			return errors.New("server did not return a secret value")
+		}
+		fmt.Fprintln(c.stdout, *s.Value)
+		return nil
 	}
-	fmt.Fprintln(c.stdout, *resp.Value)
-	return nil
+	return fmt.Errorf("secret %q not found in namespace %q", name, namespace)
 }
 
 // listResponse matches {"namespace":"...","secrets":[...]} from GET /v1/secrets.
