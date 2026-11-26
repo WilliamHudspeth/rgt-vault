@@ -19,7 +19,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [go, python]
+        include:
+          - language: go
+            build-mode: manual
+          - language: python
+            build-mode: none
     steps:
       - uses: actions/checkout@v7
       - name: Setup Go
@@ -27,10 +31,17 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
           queries: security-and-quality
+      - name: Build Go
+        if: matrix.language == 'go'
+        run: cd go && go build ./...
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
