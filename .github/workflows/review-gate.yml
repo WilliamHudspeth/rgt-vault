@@ -174,7 +174,7 @@ jobs:
     steps:
       - name: Verify all gates green
         run: |
-          if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ]; then
+          if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ] || [ "${{ contains(needs.*.result, 'cancelled') }}" = "true" ]; then
             echo "One or more required status checks failed."
             exit 1
           fi
