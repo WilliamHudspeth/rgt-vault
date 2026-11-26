@@ -139,8 +139,13 @@ class SecureBuffer:
         if self._closed:
             return
         if sys.platform == "win32":
-            # RtlSecureZeroMemory = SecureZeroMemory
-            ctypes.windll.kernel32.RtlSecureZeroMemory(ctypes.c_void_p(self._addr), ctypes.c_size_t(self.size))
+            # RtlSecureZeroMemory/SecureZeroMemory are __forceinline macros in winnt.h,
+            # not exported DLL symbols — ctypes can't resolve them. msvcrt's memset,
+            # called through ctypes (a real cross-module call), is not elided by the
+            # optimizer for the same reason the libc.memset call below isn't.
+            msvcrt = ctypes.CDLL("msvcrt", use_errno=True)
+            msvcrt.memset.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_size_t]
+            msvcrt.memset(ctypes.c_void_p(self._addr), 0, ctypes.c_size_t(self.size))
         else:
             # libc memset is not elided when called via ctypes
             libc = ctypes.CDLL(None)

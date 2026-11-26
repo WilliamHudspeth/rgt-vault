@@ -315,7 +315,19 @@ class StorageBackend:
                     INSERT INTO secrets (secret_id, namespace, name, version, ciphertext, checksum, created_at, updated_at, status, dek_version, note, require_2fa)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?)
                 """,
-                    (secret_id, namespace, name, next_version, ciphertext, checksum, now, now, dek_version, note, 1 if require_2fa else 0),
+                    (
+                        secret_id,
+                        namespace,
+                        name,
+                        next_version,
+                        ciphertext,
+                        checksum,
+                        now,
+                        now,
+                        dek_version,
+                        note,
+                        1 if require_2fa else 0,
+                    ),
                 )
 
                 # P2-4 audit fix: write the audit entry inside the same
@@ -437,7 +449,9 @@ class StorageBackend:
             (safe_action, secret_name, timestamp, safe_details, prev_hash, entry_hash, policy_hash, agent_id),
         )
 
-    def list_secrets(self, namespace: str, policy_hash: str = "", limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    def list_secrets(
+        self, namespace: str, policy_hash: str = "", limit: int = 100, offset: int = 0
+    ) -> List[Dict[str, Any]]:
         if limit < 1 or limit > 1000:
             raise ValueError("limit must be between 1 and 1000")
         if offset < 0:
@@ -545,12 +559,12 @@ class StorageBackend:
                 cursor.execute(
                     "SELECT id, namespace, name, ciphertext, dek_version FROM secrets WHERE status = 'ACTIVE'"
                 )
-                
+
                 while True:
                     rows = cursor.fetchmany(1000)
                     if not rows:
                         break
-                        
+
                     for record_id, namespace, name, ciphertext, dek_version in rows:
                         new_ct, new_ver = rewrite_fn(
                             record_id,
@@ -574,7 +588,7 @@ class StorageBackend:
     def bulk_rewrite_legacy_secrets(self, rewrite_fn) -> int:
         """Apply ``rewrite_fn`` to every ACTIVE secret with dek_version=0, in a
         single SQLite transaction.
-        
+
         Using fetchmany() minimizes memory overhead for large databases.
         """
         rewritten = 0
@@ -585,12 +599,12 @@ class StorageBackend:
                 cursor.execute(
                     "SELECT id, namespace, name, ciphertext, dek_version FROM secrets WHERE status = 'ACTIVE' AND dek_version = 0"
                 )
-                
+
                 while True:
                     rows = cursor.fetchmany(1000)
                     if not rows:
                         break
-                        
+
                     for record_id, namespace, name, ciphertext, dek_version in rows:
                         new_ct, new_ver = rewrite_fn(
                             record_id,

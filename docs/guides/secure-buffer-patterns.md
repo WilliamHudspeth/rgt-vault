@@ -17,15 +17,16 @@ The safest way to use a `SecureBuffer` is via a context manager. This guarantees
 ```python
 from rgt_vault.crypto.buffer import SecureBuffer
 
+
 def process_secret(encrypted_payload):
     # Allocate a SecureBuffer. The memory is pinned.
     with SecureBuffer(size=32) as plaintext_buf:
         # Decrypt directly into the mutable buffer
         cipher.decrypt_into(encrypted_payload, plaintext_buf)
-        
+
         # Use the secret via memoryview to avoid copies
         submit_to_api(memoryview(plaintext_buf))
-        
+
     # <-- At this indentation level, plaintext_buf is completely zeroized.
 ```
 

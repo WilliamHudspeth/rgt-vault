@@ -45,6 +45,23 @@ from rgt_vault.exceptions import (
     ValidationError,
 )
 
+
+def _is_pydantic_model(obj: Any) -> bool:
+    """True if ``obj`` is a pydantic ``BaseModel`` subclass.
+
+    pydantic is an optional dependency (it ships with the ``server`` extra).
+    When it is not installed no schema can be a pydantic model, so this
+    returns False and validation falls through to the JSON Schema path.
+    """
+    if not isinstance(obj, type):
+        return False
+    try:
+        from pydantic import BaseModel
+    except ImportError:
+        return False
+    return issubclass(obj, BaseModel)
+
+
 # ---------------------------------------------------------------------
 # CapabilityContext: the handler's view of "what's going on"
 # ---------------------------------------------------------------------
@@ -98,9 +115,10 @@ class CapabilitySpec:
         if not isinstance(payload, Mapping):
             raise ValidationError("capability payload must be a dict")
 
-        from pydantic import BaseModel
-        if isinstance(self.params_schema, type) and issubclass(self.params_schema, BaseModel):
-            from pydantic import TypeAdapter, ValidationError as PydanticValidationError
+        if _is_pydantic_model(self.params_schema):
+            from pydantic import TypeAdapter
+            from pydantic import ValidationError as PydanticValidationError
+
             try:
                 TypeAdapter(self.params_schema).validate_python(payload)
                 return
@@ -110,6 +128,7 @@ class CapabilitySpec:
         if isinstance(self.params_schema, dict):
             try:
                 import jsonschema
+
                 try:
                     jsonschema.validate(instance=payload, schema=self.params_schema)
                     return
@@ -187,8 +206,7 @@ class CapabilityRegistry:
         versions = set(int(v) for v in (supported_versions or {1}))
         if not versions or any(v < 1 for v in versions):
             raise ValueError("supported_versions must be positive ints")
-        from pydantic import BaseModel
-        if isinstance(params_schema, type) and issubclass(params_schema, BaseModel):
+        if _is_pydantic_model(params_schema):
             schema_val = params_schema
         elif isinstance(params_schema, dict):
             schema_val = params_schema

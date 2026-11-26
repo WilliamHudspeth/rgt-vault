@@ -52,7 +52,7 @@ def _hotp(key: bytes, counter: int, *, digits: int, algorithm: str) -> str:
     h = hmac.new(key, msg, digest_fn).digest()
     offset = h[-1] & 0x0F
     code_int = struct.unpack(">I", h[offset : offset + 4])[0] & 0x7FFFFFFF
-    return str(code_int % (10 ** digits)).zfill(digits)
+    return str(code_int % (10**digits)).zfill(digits)
 
 
 def generate(
@@ -171,11 +171,5 @@ def provisioning_uri(
     # The colon is the issuer/account label separator and stays literal;
     # only the two components are percent-encoded.
     label = f"{quote(issuer)}:{quote(account_name)}"
-    params = (
-        f"secret={secret}"
-        f"&issuer={quote(issuer)}"
-        f"&algorithm={algorithm}"
-        f"&digits={digits}"
-        f"&period={period}"
-    )
+    params = f"secret={secret}&issuer={quote(issuer)}&algorithm={algorithm}&digits={digits}&period={period}"
     return f"otpauth://totp/{label}?{params}"

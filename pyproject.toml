@@ -57,6 +57,7 @@ dev = [
     "bandit>=1.7",
     "pip-audit>=2.7",
     "build>=1.2",
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.urls]

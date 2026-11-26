@@ -43,13 +43,13 @@ class _InMemoryProvider(MasterSecretProvider):
 class Scenario:
     """One concrete human <-> agent <-> service story."""
 
-    service: str                       # e.g. "GitHub"
-    agent: str                         # e.g. "research-agent"
-    secret_title: str                  # e.g. "GitHub Production Token"
-    secret_value: str                  # the (fake) secret the human stores
-    note: str                          # <= 25-word operator note
-    capability: str                    # e.g. "create_github_issue"
-    purpose: str                       # e.g. "Open a bug report from a failed test"
+    service: str  # e.g. "GitHub"
+    agent: str  # e.g. "research-agent"
+    secret_title: str  # e.g. "GitHub Production Token"
+    secret_value: str  # the (fake) secret the human stores
+    note: str  # <= 25-word operator note
+    capability: str  # e.g. "create_github_issue"
+    purpose: str  # e.g. "Open a bug report from a failed test"
     request_fields: Dict[str, str] = field(default_factory=dict)  # shown in the card
     # use_secret receives the leased token buffer and returns the agent-visible
     # result string. It MUST NOT return the secret. This is where a live run
@@ -66,7 +66,7 @@ def _print_card(scn: Scenario) -> None:
     print(f"   Agent:      {scn.agent}")
     print(f"   Action:     {scn.capability}")
     for k, v in scn.request_fields.items():
-        print(f"   {k+':':<11} {v}")
+        print(f"   {k + ':':<11} {v}")
     print(f"   Requires:   {scn.secret_title}")
     print(f"   Purpose:    {scn.purpose}")
     print("   Approve?    [Y] approve (with TOTP)   [N] deny")
@@ -90,8 +90,9 @@ def run(scn: Scenario) -> int:
         )
 
         # 1. Human stores the secret (note is operator metadata, not the value).
-        vault.set_secret(scn.secret_title, scn.secret_value, namespace=NS, agent="human",
-                         note=scn.note, require_2fa=True)
+        vault.set_secret(
+            scn.secret_title, scn.secret_value, namespace=NS, agent="human", note=scn.note, require_2fa=True
+        )
         print(f"\n[human]  Stored '{scn.secret_title}'  (note: {scn.note})")
 
         # 2. The agent can enumerate titles + notes, never values.
@@ -108,8 +109,7 @@ def run(scn: Scenario) -> int:
             for _ in range(300):
                 pending = broker.list_pending()
                 if pending:
-                    broker.approve(pending[0].request_id,
-                                   totp_code=totp.generate(totp_secret), operator="human")
+                    broker.approve(pending[0].request_id, totp_code=totp.generate(totp_secret), operator="human")
                     return
                 time.sleep(0.01)
 
