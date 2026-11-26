@@ -788,7 +788,7 @@ def build_app(
                 )
         return {"agent": agent, "capabilities": authorized}
 
-    app.vault = vault  # type: ignore[attr-defined]  # read by tests/test_server_hardening.py
+    setattr(app, "vault", vault)  # read by tests/test_server_hardening.py
     return app
 
 
