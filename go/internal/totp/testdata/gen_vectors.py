@@ -72,7 +72,11 @@ def main():
         cases.append((base_secret, c, ts + period, 1, algo, digits, period))
         cases.append((base_secret, c, ts + 2 * period, 1, algo, digits, period))
     for secret, code, t, window, algo, digits, period in cases:
-        res = attempt(lambda: totp.verify(secret, code, timestamp=t, window=window, algorithm=algo, digits=digits, period=period))
+        res = attempt(
+            lambda s=secret, c=code, ts_=t, w=window, a=algo, d=digits, p=period: totp.verify(
+                s, c, timestamp=ts_, window=w, algorithm=a, digits=d, period=p
+            )
+        )
         out["verify"].append({"secret": secret, "code": code, "time": t, "window": window, "algorithm": algo, "digits": digits, "period": period, "python": res})
 
     # replay-guarded verifier: sequences of (offset_seconds, which code) at fixed times

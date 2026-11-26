@@ -14,7 +14,8 @@ from rgt_vault.hook import HookRequest, TwoFactorHook
 from rgt_vault.token import HMACTokenVerifier
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-data = json.load(open(os.path.join(HERE, "go_signed.json"), encoding="utf-8"))
+with open(os.path.join(HERE, "go_signed.json"), encoding="utf-8") as fh:
+    data = json.load(fh)
 key = bytes.fromhex(data["key_hex"])
 ver = HMACTokenVerifier(key)
 failed = 0

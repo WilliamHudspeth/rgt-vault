@@ -15,7 +15,6 @@ import hashlib
 import hmac
 import json
 import os
-import time
 from unittest import mock
 
 from rgt_vault import hook as hookmod
@@ -239,7 +238,6 @@ def main():
     out["context_bool_equals_number_python_ok"] = True
 
     # ---- v1 tokens (python/hook.py) ---------------------------------------
-    hook = TwoFactorHook(KEY)
     out["v1"] = []
     v1_cases = [
         ("basic", "agent-1", "ns", ["write", "read"], 1700000000, FAR_FUTURE, "0123456789abcdef0123456789abcdef"),
