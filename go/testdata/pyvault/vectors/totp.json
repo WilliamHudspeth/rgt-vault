@@ -1,0 +1,1088 @@
+{
+  "description": "RFC 6238 TOTP (rgt_vault.totp). 'rfc6238' are the published Appendix B values (asserted by the generator). Secrets are FIXED TEST SEEDS. verify: window = +/- steps; 'raises' marks an exception that Python lets escape (hmac.compare_digest on a non-ASCII digit string).",
+  "base_timestamp": 1700000000,
+  "rfc6238": [
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "secret_ascii": "12345678901234567890",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 59,
+      "code": "94287082"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "secret_ascii": "12345678901234567890",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 1111111109,
+      "code": "07081804"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "secret_ascii": "12345678901234567890",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 1111111111,
+      "code": "14050471"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "secret_ascii": "12345678901234567890",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 1234567890,
+      "code": "89005924"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "secret_ascii": "12345678901234567890",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 2000000000,
+      "code": "69279037"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "secret_ascii": "12345678901234567890",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 20000000000,
+      "code": "65353130"
+    },
+    {
+      "algorithm": "SHA256",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA",
+      "secret_ascii": "12345678901234567890123456789012",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 59,
+      "code": "46119246"
+    },
+    {
+      "algorithm": "SHA256",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA",
+      "secret_ascii": "12345678901234567890123456789012",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 1111111109,
+      "code": "68084774"
+    },
+    {
+      "algorithm": "SHA256",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA",
+      "secret_ascii": "12345678901234567890123456789012",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 1111111111,
+      "code": "67062674"
+    },
+    {
+      "algorithm": "SHA256",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA",
+      "secret_ascii": "12345678901234567890123456789012",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 1234567890,
+      "code": "91819424"
+    },
+    {
+      "algorithm": "SHA256",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA",
+      "secret_ascii": "12345678901234567890123456789012",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 2000000000,
+      "code": "90698825"
+    },
+    {
+      "algorithm": "SHA256",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA",
+      "secret_ascii": "12345678901234567890123456789012",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 20000000000,
+      "code": "77737706"
+    },
+    {
+      "algorithm": "SHA512",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA",
+      "secret_ascii": "1234567890123456789012345678901234567890123456789012345678901234",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 59,
+      "code": "90693936"
+    },
+    {
+      "algorithm": "SHA512",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA",
+      "secret_ascii": "1234567890123456789012345678901234567890123456789012345678901234",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 1111111109,
+      "code": "25091201"
+    },
+    {
+      "algorithm": "SHA512",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA",
+      "secret_ascii": "1234567890123456789012345678901234567890123456789012345678901234",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 1111111111,
+      "code": "99943326"
+    },
+    {
+      "algorithm": "SHA512",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA",
+      "secret_ascii": "1234567890123456789012345678901234567890123456789012345678901234",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 1234567890,
+      "code": "93441116"
+    },
+    {
+      "algorithm": "SHA512",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA",
+      "secret_ascii": "1234567890123456789012345678901234567890123456789012345678901234",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 2000000000,
+      "code": "38618901"
+    },
+    {
+      "algorithm": "SHA512",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA",
+      "secret_ascii": "1234567890123456789012345678901234567890123456789012345678901234",
+      "digits": 8,
+      "period": 30,
+      "timestamp": 20000000000,
+      "code": "47863826"
+    }
+  ],
+  "generate": [
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 0,
+      "code": "755224"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 29,
+      "code": "755224"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 30,
+      "code": "287082"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 59,
+      "code": "287082"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 60,
+      "code": "359152"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 1700000000,
+      "code": "921300"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 1700000029,
+      "code": "732303"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 1700000030,
+      "code": "732303"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 4102444800,
+      "code": "612575"
+    },
+    {
+      "algorithm": "SHA256",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 0,
+      "code": "920136"
+    },
+    {
+      "algorithm": "SHA256",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 29,
+      "code": "920136"
+    },
+    {
+      "algorithm": "SHA256",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 30,
+      "code": "119246"
+    },
+    {
+      "algorithm": "SHA256",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 59,
+      "code": "119246"
+    },
+    {
+      "algorithm": "SHA256",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 60,
+      "code": "882438"
+    },
+    {
+      "algorithm": "SHA256",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 1700000000,
+      "code": "769631"
+    },
+    {
+      "algorithm": "SHA256",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 1700000029,
+      "code": "269558"
+    },
+    {
+      "algorithm": "SHA256",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 1700000030,
+      "code": "269558"
+    },
+    {
+      "algorithm": "SHA256",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 4102444800,
+      "code": "474973"
+    },
+    {
+      "algorithm": "SHA512",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 0,
+      "code": "550594"
+    },
+    {
+      "algorithm": "SHA512",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 29,
+      "code": "550594"
+    },
+    {
+      "algorithm": "SHA512",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 30,
+      "code": "693936"
+    },
+    {
+      "algorithm": "SHA512",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 59,
+      "code": "693936"
+    },
+    {
+      "algorithm": "SHA512",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 60,
+      "code": "765371"
+    },
+    {
+      "algorithm": "SHA512",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 1700000000,
+      "code": "826435"
+    },
+    {
+      "algorithm": "SHA512",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 1700000029,
+      "code": "002109"
+    },
+    {
+      "algorithm": "SHA512",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 1700000030,
+      "code": "002109"
+    },
+    {
+      "algorithm": "SHA512",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 4102444800,
+      "code": "452708"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 7,
+      "period": 30,
+      "timestamp": 1700000000,
+      "code": "1921300"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 8,
+      "period": 60,
+      "timestamp": 1700000000,
+      "code": "15895298"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 15,
+      "timestamp": 1700000014,
+      "code": "545777"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 15,
+      "timestamp": 1700000015,
+      "code": "545777"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 10,
+      "period": 30,
+      "timestamp": 1700000000,
+      "code": "1681921300"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 59.999,
+      "code": "287082",
+      "why": "fractional timestamp: floor(t / period)"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 1700000029.999999,
+      "code": "732303",
+      "why": "fractional timestamp: floor(t / period)"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 1700000030.0,
+      "code": "732303",
+      "why": "fractional timestamp: floor(t / period)"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "gezdgnbvgy3tqojqgezdgnbvgy3tqojq",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 1700000000,
+      "code": "921300",
+      "why": "secret spelling: lowercase decodes to the same key"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "GEZD GNBV GY3T QOJQ GEZD GNBV GY3T QOJQ",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 1700000000,
+      "code": "921300",
+      "why": "secret spelling: spaces decodes to the same key"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "  GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ  ",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 1700000000,
+      "code": "921300",
+      "why": "secret spelling: surrounding_spaces decodes to the same key"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "NBSWY3DPEB3W64TMMQ======",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 1700000000,
+      "code": "212840",
+      "why": "secret spelling: complete_padding decodes to the same key"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": " nbswy3dpeb3w64tmmq======  ",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 1700000000,
+      "code": "212840",
+      "why": "secret spelling: complete_padding_lowercase_spaced decodes to the same key"
+    },
+    {
+      "algorithm": "SHA1",
+      "secret": "NBSWY3DPEB3W64TMMQ",
+      "digits": 6,
+      "period": 30,
+      "timestamp": 1700000000,
+      "code": "212840",
+      "why": "secret spelling: unpadded_11_bytes decodes to the same key"
+    }
+  ],
+  "verify": [
+    {
+      "name": "current_step",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "921300",
+      "window": 1,
+      "expect": {
+        "returns": true
+      }
+    },
+    {
+      "name": "previous_step_window1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "276857",
+      "window": 1,
+      "expect": {
+        "returns": true
+      }
+    },
+    {
+      "name": "next_step_window1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "732303",
+      "window": 1,
+      "expect": {
+        "returns": true
+      }
+    },
+    {
+      "name": "two_steps_back_window1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "713364",
+      "window": 1,
+      "expect": {
+        "returns": false
+      }
+    },
+    {
+      "name": "two_steps_ahead_window1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "136087",
+      "window": 1,
+      "expect": {
+        "returns": false
+      }
+    },
+    {
+      "name": "previous_step_window0",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "276857",
+      "window": 0,
+      "expect": {
+        "returns": false
+      }
+    },
+    {
+      "name": "current_step_window0",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "921300",
+      "window": 0,
+      "expect": {
+        "returns": true
+      }
+    },
+    {
+      "name": "two_steps_back_window2",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "713364",
+      "window": 2,
+      "expect": {
+        "returns": true
+      }
+    },
+    {
+      "name": "three_steps_ahead_window2",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "253938",
+      "window": 2,
+      "expect": {
+        "returns": false
+      }
+    },
+    {
+      "name": "surrounding_whitespace_accepted",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": " 921300\n",
+      "window": 1,
+      "expect": {
+        "returns": true
+      }
+    },
+    {
+      "name": "wrong_code",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "000000",
+      "window": 1,
+      "expect": {
+        "returns": false
+      }
+    },
+    {
+      "name": "too_short",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "92130",
+      "window": 1,
+      "expect": {
+        "returns": false
+      }
+    },
+    {
+      "name": "too_long",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "9213000",
+      "window": 1,
+      "expect": {
+        "returns": false
+      }
+    },
+    {
+      "name": "empty",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "",
+      "window": 1,
+      "expect": {
+        "returns": false
+      }
+    },
+    {
+      "name": "whitespace_only",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "   ",
+      "window": 1,
+      "expect": {
+        "returns": false
+      }
+    },
+    {
+      "name": "non_digits",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "12a456",
+      "window": 1,
+      "expect": {
+        "returns": false
+      }
+    },
+    {
+      "name": "negative_sign",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "-12345",
+      "window": 1,
+      "expect": {
+        "returns": false
+      }
+    },
+    {
+      "name": "plus_sign",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "+12345",
+      "window": 1,
+      "expect": {
+        "returns": false
+      }
+    },
+    {
+      "name": "fullwidth_digits_raise",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "１２３４５６",
+      "window": 1,
+      "expect": {
+        "raises": "TypeError"
+      }
+    },
+    {
+      "name": "arabic_indic_digits_raise",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "١٢٣٤٥٦",
+      "window": 1,
+      "expect": {
+        "raises": "TypeError"
+      }
+    },
+    {
+      "name": "invalid_base32_secret",
+      "secret": "not*base32!",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "921300",
+      "window": 1,
+      "expect": {
+        "returns": false
+      }
+    },
+    {
+      "name": "empty_secret",
+      "secret": "",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "921300",
+      "window": 1,
+      "expect": {
+        "returns": false
+      }
+    },
+    {
+      "name": "extra_padding_is_invalid",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ====",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "921300",
+      "window": 1,
+      "why": "padding is re-added after stripping spaces; extra '=' -> binascii.Error -> False",
+      "expect": {
+        "returns": false
+      }
+    },
+    {
+      "name": "sha256_code_checked_as_sha1",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "769631",
+      "window": 1,
+      "expect": {
+        "returns": false
+      }
+    },
+    {
+      "name": "other_secret",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "timestamp": 1700000000,
+      "code": "410518",
+      "window": 1,
+      "expect": {
+        "returns": false
+      }
+    }
+  ],
+  "replay_guard": [
+    {
+      "name": "same_code_twice",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "window": 1,
+      "steps": [
+        {
+          "code": "921300",
+          "timestamp": 1700000000
+        },
+        {
+          "code": "921300",
+          "timestamp": 1700000000
+        }
+      ],
+      "expect": [
+        true,
+        false
+      ]
+    },
+    {
+      "name": "next_step_then_old_step",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "window": 1,
+      "steps": [
+        {
+          "code": "732303",
+          "timestamp": 1700000030
+        },
+        {
+          "code": "921300",
+          "timestamp": 1700000000
+        }
+      ],
+      "expect": [
+        true,
+        false
+      ]
+    },
+    {
+      "name": "old_step_then_next",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "window": 1,
+      "steps": [
+        {
+          "code": "921300",
+          "timestamp": 1700000000
+        },
+        {
+          "code": "732303",
+          "timestamp": 1700000030
+        }
+      ],
+      "expect": [
+        true,
+        true
+      ]
+    },
+    {
+      "name": "window_consumes_counter_not_time",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "window": 1,
+      "steps": [
+        {
+          "code": "732303",
+          "timestamp": 1700000000
+        },
+        {
+          "code": "921300",
+          "timestamp": 1700000000
+        },
+        {
+          "code": "732303",
+          "timestamp": 1700000000
+        }
+      ],
+      "expect": [
+        true,
+        false,
+        false
+      ]
+    },
+    {
+      "name": "far_future_then_back",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "window": 1,
+      "steps": [
+        {
+          "code": "921300",
+          "timestamp": 1700000000
+        },
+        {
+          "code": "136087",
+          "timestamp": 1700000060
+        },
+        {
+          "code": "732303",
+          "timestamp": 1700000030
+        },
+        {
+          "code": "921300",
+          "timestamp": 1700000000
+        }
+      ],
+      "expect": [
+        true,
+        true,
+        false,
+        false
+      ]
+    },
+    {
+      "name": "whitespace_stripped_then_malformed",
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "window": 1,
+      "steps": [
+        {
+          "code": " 921300 ",
+          "timestamp": 1700000000
+        },
+        {
+          "code": "abc",
+          "timestamp": 1700000000
+        },
+        {
+          "code": "",
+          "timestamp": 1700000000
+        }
+      ],
+      "expect": [
+        true,
+        false,
+        false
+      ]
+    },
+    {
+      "name": "invalid_secret",
+      "secret": "!!!",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "window": 1,
+      "steps": [
+        {
+          "code": "123456",
+          "timestamp": 1700000000
+        }
+      ],
+      "expect": [
+        false
+      ]
+    }
+  ],
+  "provisioning_uri": [
+    {
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "account": "alice",
+      "issuer": "rgt-vault",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "uri": "otpauth://totp/rgt-vault:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=rgt-vault&algorithm=SHA1&digits=6&period=30",
+      "why": "urllib.parse.quote default safe='/' (slash stays literal; space -> %20; '~' unreserved)"
+    },
+    {
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "account": "alice@example.com",
+      "issuer": "rgt-vault",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "uri": "otpauth://totp/rgt-vault:alice%40example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=rgt-vault&algorithm=SHA1&digits=6&period=30",
+      "why": "urllib.parse.quote default safe='/' (slash stays literal; space -> %20; '~' unreserved)"
+    },
+    {
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "account": "jürgen müller",
+      "issuer": "My Co & Sons",
+      "digits": 8,
+      "period": 60,
+      "algorithm": "SHA256",
+      "uri": "otpauth://totp/My%20Co%20%26%20Sons:j%C3%BCrgen%20m%C3%BCller?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=My%20Co%20%26%20Sons&algorithm=SHA256&digits=8&period=60",
+      "why": "urllib.parse.quote default safe='/' (slash stays literal; space -> %20; '~' unreserved)"
+    },
+    {
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "account": "a/b c",
+      "issuer": "rgt/vault",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA512",
+      "uri": "otpauth://totp/rgt/vault:a/b%20c?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=rgt/vault&algorithm=SHA512&digits=6&period=30",
+      "why": "urllib.parse.quote default safe='/' (slash stays literal; space -> %20; '~' unreserved)"
+    },
+    {
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "account": "名前:x",
+      "issuer": "日本",
+      "digits": 7,
+      "period": 45,
+      "algorithm": "SHA1",
+      "uri": "otpauth://totp/%E6%97%A5%E6%9C%AC:%E5%90%8D%E5%89%8D%3Ax?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=%E6%97%A5%E6%9C%AC&algorithm=SHA1&digits=7&period=45",
+      "why": "urllib.parse.quote default safe='/' (slash stays literal; space -> %20; '~' unreserved)"
+    },
+    {
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "account": "ac:count?x=1&y=2#frag",
+      "issuer": "is:suer",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "uri": "otpauth://totp/is%3Asuer:ac%3Acount%3Fx%3D1%26y%3D2%23frag?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=is%3Asuer&algorithm=SHA1&digits=6&period=30",
+      "why": "urllib.parse.quote default safe='/' (slash stays literal; space -> %20; '~' unreserved)"
+    },
+    {
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "account": "",
+      "issuer": "",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "uri": "otpauth://totp/:?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=&algorithm=SHA1&digits=6&period=30",
+      "why": "urllib.parse.quote default safe='/' (slash stays literal; space -> %20; '~' unreserved)"
+    },
+    {
+      "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      "account": "u+v~w!x*y'z(1)",
+      "issuer": "100% real",
+      "digits": 6,
+      "period": 30,
+      "algorithm": "SHA1",
+      "uri": "otpauth://totp/100%25%20real:u%2Bv~w%21x%2Ay%27z%281%29?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=100%25%20real&algorithm=SHA1&digits=6&period=30",
+      "why": "urllib.parse.quote default safe='/' (slash stays literal; space -> %20; '~' unreserved)"
+    }
+  ]
+}
