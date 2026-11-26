@@ -1,0 +1,9 @@
+{
+  "master_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "vault_id": "0b9f4c1e-7d2a-4e8b-9c3f-1a2b3c4d5e6f",
+  "epoch": 1,
+  "dek_hex": "67198d21994928e400986dc27a531c182258b485e990891d32b84c187dc93f81",
+  "secret_aad": "0b9f4c1e-7d2a-4e8b-9c3f-1a2b3c4d5e6f:default:api_key",
+  "secret_ciphertext_hex": "0000000000000000000000006d882c8c29e3b44fdd23108862b7c987755fce1fbc9975e400ff71ee6608cf8b40",
+  "secret_plaintext": "sk-test-plaintext"
+}

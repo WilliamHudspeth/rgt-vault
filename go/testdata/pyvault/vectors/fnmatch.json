@@ -1,0 +1,389 @@
+{
+  "description": "Raw fnmatch.fnmatchcase(value, pattern) results from the generating Python (3.12.3). Only patterns whose meaning is stable across Python 3.9-3.13 are included.",
+  "cases": [
+    {
+      "value": "abc",
+      "pattern": "*",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "",
+      "pattern": "*",
+      "why": "star matches empty",
+      "match": true
+    },
+    {
+      "value": "a/b/c",
+      "pattern": "*",
+      "why": "star crosses /",
+      "match": true
+    },
+    {
+      "value": "a/b/c",
+      "pattern": "a*c",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "a/b",
+      "pattern": "a?b",
+      "why": "? matches /",
+      "match": true
+    },
+    {
+      "value": "ab",
+      "pattern": "a?b",
+      "why": "",
+      "match": false
+    },
+    {
+      "value": "a\nb",
+      "pattern": "a?b",
+      "why": "? matches newline",
+      "match": true
+    },
+    {
+      "value": "a\nb",
+      "pattern": "a*b",
+      "why": "* matches newline",
+      "match": true
+    },
+    {
+      "value": "abc",
+      "pattern": "a[bc]c",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "abc",
+      "pattern": "a[!b]c",
+      "why": "",
+      "match": false
+    },
+    {
+      "value": "axc",
+      "pattern": "a[!b]c",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "a-c",
+      "pattern": "a[a-]c",
+      "why": "trailing - is literal",
+      "match": true
+    },
+    {
+      "value": "abc",
+      "pattern": "a[a-c]c",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "aBc",
+      "pattern": "a[a-c]c",
+      "why": "case-sensitive range",
+      "match": false
+    },
+    {
+      "value": "a]c",
+      "pattern": "a[]]c",
+      "why": "] first in class is literal",
+      "match": true
+    },
+    {
+      "value": "a]c",
+      "pattern": "a[!]]c",
+      "why": "",
+      "match": false
+    },
+    {
+      "value": "axc",
+      "pattern": "a[!]]c",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "a[c",
+      "pattern": "a[[]c",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "a[c",
+      "pattern": "a[c",
+      "why": "unterminated [ is literal",
+      "match": true
+    },
+    {
+      "value": "a[",
+      "pattern": "a[",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "a^c",
+      "pattern": "a[^b]c",
+      "why": "^ at class start is literal in fnmatch",
+      "match": true
+    },
+    {
+      "value": "abc",
+      "pattern": "a[^b]c",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "a\\c",
+      "pattern": "a\\c",
+      "why": "backslash is literal, not an escape",
+      "match": true
+    },
+    {
+      "value": "ac",
+      "pattern": "a\\c",
+      "why": "",
+      "match": false
+    },
+    {
+      "value": "a*c",
+      "pattern": "a\\*c",
+      "why": "no escape mechanism: \\ then wildcard",
+      "match": false
+    },
+    {
+      "value": "a.c",
+      "pattern": "a.c",
+      "why": "regex metachar . is literal",
+      "match": true
+    },
+    {
+      "value": "abc",
+      "pattern": "a.c",
+      "why": "",
+      "match": false
+    },
+    {
+      "value": "a+c",
+      "pattern": "a+c",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "(x)",
+      "pattern": "(x)",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "x{2}",
+      "pattern": "x{2}",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "xx",
+      "pattern": "x{2}",
+      "why": "",
+      "match": false
+    },
+    {
+      "value": "A",
+      "pattern": "a",
+      "why": "case-sensitive",
+      "match": false
+    },
+    {
+      "value": "a",
+      "pattern": "A",
+      "why": "",
+      "match": false
+    },
+    {
+      "value": "é",
+      "pattern": "é",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "é",
+      "pattern": "é",
+      "why": "no normalisation",
+      "match": false
+    },
+    {
+      "value": "🔐",
+      "pattern": "?",
+      "why": "? matches one code point (astral)",
+      "match": true
+    },
+    {
+      "value": "🔐x",
+      "pattern": "?x",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "deploy/prod",
+      "pattern": "deploy/*",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "deploy",
+      "pattern": "deploy/*",
+      "why": "",
+      "match": false
+    },
+    {
+      "value": "ab",
+      "pattern": "ab*",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "abcabc",
+      "pattern": "*abc",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "abcabd",
+      "pattern": "*abc",
+      "why": "",
+      "match": false
+    },
+    {
+      "value": "",
+      "pattern": "",
+      "why": "empty pattern matches empty value",
+      "match": true
+    },
+    {
+      "value": "x",
+      "pattern": "",
+      "why": "",
+      "match": false
+    },
+    {
+      "value": "",
+      "pattern": "?",
+      "why": "",
+      "match": false
+    },
+    {
+      "value": "aaa",
+      "pattern": "a*a*a",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "aa",
+      "pattern": "a*a*a",
+      "why": "",
+      "match": false
+    },
+    {
+      "value": "-",
+      "pattern": "[a-c-]",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "b",
+      "pattern": "[a-c-]",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "z",
+      "pattern": "[a-c-]",
+      "why": "",
+      "match": false
+    },
+    {
+      "value": "5",
+      "pattern": "[0-9]",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "a",
+      "pattern": "[0-9]",
+      "why": "",
+      "match": false
+    },
+    {
+      "value": "5",
+      "pattern": "[!0-9]",
+      "why": "",
+      "match": false
+    },
+    {
+      "value": "[",
+      "pattern": "[[]",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "!",
+      "pattern": "[!]",
+      "why": "",
+      "match": false
+    },
+    {
+      "value": "a",
+      "pattern": "[a",
+      "why": "",
+      "match": false
+    },
+    {
+      "value": "[a",
+      "pattern": "[a",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "**",
+      "pattern": "**",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "a",
+      "pattern": "**",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "/",
+      "pattern": "?",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "//",
+      "pattern": "??",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "a b",
+      "pattern": "a b",
+      "why": "spaces",
+      "match": true
+    },
+    {
+      "value": "a b",
+      "pattern": "a?b",
+      "why": "",
+      "match": true
+    },
+    {
+      "value": "tab\there",
+      "pattern": "tab?here",
+      "why": "",
+      "match": true
+    }
+  ]
+}

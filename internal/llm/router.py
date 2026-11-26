@@ -16,6 +16,7 @@ Task types and chains are in routes.yaml under "chains:" (sequential) and
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -36,6 +37,8 @@ from .providers import (
 from .types import Provider, Reply
 
 DEFAULT_ROUTES_PATH = Path(__file__).parent / "routes.yaml"
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +82,14 @@ class RouteConfig:
         """
         path = path or DEFAULT_ROUTES_PATH
         if not path.exists():
+            # RGT-91: never fall back silently. The built-in defaults mirror
+            # routes.yaml (a test guards against drift) but the operator
+            # should know their config was not used.
+            log.error(
+                "routes file %s not found; using built-in default routes "
+                "(security-review is claude-cli first, no groq)",
+                path,
+            )
             return cls.default()
         data = yaml.safe_load(path.read_text()) or {}
         env_path = data.get("env_path")
@@ -134,19 +145,26 @@ class RouteConfig:
 
     @classmethod
     def default(cls) -> "RouteConfig":
-        """Hard-coded fallback when routes.yaml is missing."""
+        """Hard-coded fallback when routes.yaml is missing.
+
+        Must mirror routes.yaml (RGT-91). tests/test_internal_llm_router.py
+        fails if the two drift apart.
+        """
         return cls(
             chains={
                 TASK_CODE_REVIEW: [
                     "ollama:qwen2.5-coder:3b",
+                    "gemini-cli",
                     "groq",
                     "mistral",
                     "cohere",
                 ],
                 TASK_DESIGN_REVIEW: ["gemini-cli", "claude-cli"],
-                TASK_SECURITY_REVIEW: ["gemini-cli", "claude-cli", "groq"],
-                TASK_FAST_QA: ["ollama:qwen2.5:0.5b", "groq", "mistral"],
-                TASK_GENERAL: ["groq", "mistral", "ollama:qwen2.5:7b", "gemini-cli"],
+                # OPUS-19: no groq here (third-party cloud, different trust
+                # class); fail loud rather than downgrade a security review.
+                TASK_SECURITY_REVIEW: ["claude-cli", "gemini-cli"],
+                TASK_FAST_QA: ["ollama:qwen2.5:0.5b", "groq", "mistral", "gemini-cli"],
+                TASK_GENERAL: ["gemini-cli", "groq", "mistral", "ollama:qwen2.5:7b"],
             },
             # 2-model review pairs. Primary does the heavy thinking, secondary
             # cross-checks. Hermes synthesizes the final verdict.
@@ -168,8 +186,8 @@ class RouteConfig:
                     "secondary": "ollama:qwen2.5:0.5b",
                 },
                 TASK_GENERAL: {
-                    "primary": "groq",
-                    "secondary": "mistral",
+                    "primary": "gemini-cli",
+                    "secondary": "groq",
                 },
             },
             # Big models for primary generation (write tasks).
@@ -278,16 +296,27 @@ class Router:
             except Exception as e:
                 attempts.append((spec, f"build failed: {e}"))
                 continue
-            if not provider.is_available():
-                attempts.append((spec, "unavailable"))
-                continue
             if dry_run:
+                # Dry run never calls complete(), so a probe is the only way
+                # to report availability and costs nothing extra.
+                try:
+                    probe_ok = provider.is_available()
+                except Exception as e:
+                    attempts.append((spec, f"probe exception: {type(e).__name__}: {e}"))
+                    continue
+                if not probe_ok:
+                    attempts.append((spec, "unavailable"))
+                    continue
                 return Reply(
                     text="",
                     provider=provider.name,
                     model=provider.model,
                     error="dry-run: not actually called",
                 )
+            # RGT-86: no separate is_available() probe before complete()
+            # (TOCTOU + a second round trip). Providers report "unavailable"
+            # by returning an error Reply from complete(), which is just a
+            # failed attempt here.
             # OPUS-1: an exception inside provider.complete() (not just
             # an ok=False reply) used to abort the whole chain. Catch
             # unexpected exceptions, treat as a failed attempt, fall
@@ -372,8 +401,8 @@ class Router:
             provider = self._get(spec)
         except Exception as e:
             return Reply(text="", provider=spec, model="?", error=f"build failed: {e}")
-        if not provider.is_available():
-            return Reply(text="", provider=spec, model="?", error="unavailable")
+        # RGT-86: call complete() once; a failure Reply/exception means the
+        # provider is unavailable. No separate is_available() round trip.
         try:
             return provider.complete(
                 prompt,
