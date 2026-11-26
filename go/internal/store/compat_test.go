@@ -465,7 +465,7 @@ func TestPythonReadsGoWrites(t *testing.T) {
 			t.Errorf("python verify_audit_chain on Go-modified %s: %v / after python writes %v", db, r["chain_ok"], r["chain_ok_after_python_writes"])
 		}
 		found := false
-		for _, a := range r["active_secrets"].([]any) {
+		for _, a := range r["active_entries"].([]any) {
 			am := a.(map[string]any)
 			if am["namespace"] == "go" && am["name"] == "from_go" {
 				found = am["version"] == float64(2) && am["requires_2fa"] == true && am["is_honeytoken"] == true

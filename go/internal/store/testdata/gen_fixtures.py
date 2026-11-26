@@ -29,7 +29,11 @@ Usage, from the repo root with `pip install -e '.[server,dev]'` in a venv:
       report: real verify_audit_chain verdict, row counts, metadata, every
       ACTIVE secret read back through get_secret (checksum-verified), the
       list_secrets view per namespace, a full export_data, and a second chain
-      verdict after Python appended its own rows on top of Go's.
+      verdict after Python appended its own rows on top of Go's. The report
+      holds only counts, ids, versions and booleans, never secret material.
+
+  python go/internal/store/testdata/gen_fixtures.py --out DIR
+      Write fresh fixtures to DIR instead (to compare with the checked-in ones).
 
 Fixtures are not byte-reproducible (they embed wall-clock timestamps and
 random ids); the checked-in files are the pinned artefacts and Go tests only
@@ -172,7 +176,8 @@ def build_edge(tmp):
     return db, tampered, edge_ok, tampered_ok
 
 
-def generate():
+def generate(out=HERE):
+    out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         v, db = build_vault(tmp)
         vault_id = v.storage.get_vault_id()
@@ -209,20 +214,25 @@ def generate():
             "edge": {"chain_ok": edge_ok, "rows": dump(edge, "SELECT * FROM audit_logs ORDER BY id")},
             "tampered": {"chain_ok": tampered_ok},
         }
-        shutil.copy(db, HERE / "pyvault.db")
-        shutil.copy(edge, HERE / "pyedge.db")
-        shutil.copy(tampered, HERE / "pytampered.db")
-    (HERE / "pyexport.json").write_text(json.dumps(export, indent=2) + "\n")
-    (HERE / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
-    print(f"wrote fixtures to {HERE}: chain_ok={chain_ok} edge_ok={edge_ok} tampered_ok={tampered_ok}")
+        shutil.copy(db, out / "pyvault.db")
+        shutil.copy(edge, out / "pyedge.db")
+        shutil.copy(tampered, out / "pytampered.db")
+    (out / "pyexport.json").write_text(json.dumps(export, indent=2) + "\n")
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+    print(f"wrote fixtures to {out}: chain_ok={chain_ok} edge_ok={edge_ok} tampered_ok={tampered_ok}")
 
 
 def verify_db(db):
+    """Print a report of counts, ids, versions and booleans only.
+
+    The report never contains secret material: no plaintext, no ciphertext,
+    no checksum and nothing else returned by get_secret. Reads are checked
+    here, in Python; a mismatch exits non-zero instead of being reported.
+    """
     st = StorageBackend(db)
     report = {"chain_ok": verify(st), "audit_rows": st.audit_log_count()}
     report["vault_id"] = st.get_vault_id()
     report["key_epoch"] = st.get_key_epoch()
-    report["dek_usage"] = list(st.get_dek_usage())
     conn = sqlite3.connect(db)
     report["migrations"] = [r[0] for r in conn.execute("SELECT version FROM schema_migrations ORDER BY version")]
     active = conn.execute(
@@ -230,28 +240,31 @@ def verify_db(db):
     ).fetchall()
     namespaces = sorted({r[0] for r in conn.execute("SELECT namespace FROM secrets")})
     conn.close()
-    secrets = []
-    for ns, name, version, checksum in active:
-        ct, dek_version = st.get_secret(ns, name)  # real checksum verification + audit row
-        assert hashlib.sha256(ct).hexdigest() == checksum
-        secrets.append(
+    entries = []
+    for ns, name, version, stored_sum in active:
+        # Real get_secret: verifies the checksum and appends an audit row.
+        ct, _ = st.get_secret(ns, name)
+        intact = hashlib.sha256(ct).hexdigest() == stored_sum
+        del ct
+        if not intact:
+            # Fail closed (non-zero exit); never report anything derived
+            # from the secret read.
+            raise SystemExit(f"read-back mismatch for {ns}/{name}")
+        entries.append(
             {
                 "namespace": ns,
                 "name": name,
                 "version": version,
-                "dek_version": dek_version,
-                "ciphertext_sha256": checksum,
                 "requires_2fa": st.requires_2fa(ns, name),
                 "is_honeytoken": st.is_honeytoken(ns, name),
             }
         )
-    report["active_secrets"] = secrets
-    report["list"] = {ns: st.list_secrets(ns) for ns in namespaces}
-    exported = st.export_data()
-    report["export_counts"] = {k: len(v) for k, v in exported.items()}
+    report["active_entries"] = entries
+    report["list_counts"] = {ns: len(st.list_secrets(ns)) for ns in namespaces}
+    report["export_counts"] = {k: len(v) for k, v in st.export_data().items()}
     report["chain_ok_after_python_writes"] = verify(st)
     report["audit_rows_after_python_writes"] = st.audit_log_count()
-    print(json.dumps(report, indent=2, ensure_ascii=False))
+    print(json.dumps(report, indent=2))
 
 
 if __name__ == "__main__":
@@ -259,5 +272,7 @@ if __name__ == "__main__":
         verify_db(sys.argv[2])
     elif len(sys.argv) == 1:
         generate()
+    elif len(sys.argv) == 3 and sys.argv[1] == "--out":
+        generate(Path(sys.argv[2]))
     else:
         sys.exit(__doc__)
