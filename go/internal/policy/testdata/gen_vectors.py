@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
-import itertools
 import json
 import platform
 import random
