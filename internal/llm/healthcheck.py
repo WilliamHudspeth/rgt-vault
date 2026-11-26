@@ -135,8 +135,10 @@ def main() -> int:
 
     # Background loops
     print("\n[3] BACKGROUND LOOPS")
+    from internal.llm.kanban_loop import DEFAULT_STATE_PATH  # RGT-90: default moved out of /tmp
+
     for state_file, label in [
-        ("/tmp/rgt_kanban_loop_state.json", "loop A (standard)"),
+        (str(DEFAULT_STATE_PATH), "loop A (standard)"),
         ("/tmp/rgt_kanban_loop_state_b.json", "loop B (deep-dive)"),
         ("/tmp/rgt_kanban_loop_state_c.json", "loop C (maxed-out)"),
     ]:

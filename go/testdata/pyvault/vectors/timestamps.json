@@ -1,0 +1,181 @@
+{
+  "description": "datetime(..., tzinfo=timezone.utc).isoformat() as used for audit_logs.timestamp and keychain created_at. '+00:00' (never 'Z'); a fractional part of exactly 6 digits when microsecond != 0 and NO fractional part at all when microsecond == 0; year zero-padded to 4 digits.",
+  "cases": [
+    {
+      "year": 2026,
+      "month": 1,
+      "day": 15,
+      "hour": 10,
+      "minute": 20,
+      "second": 30,
+      "microsecond": 123456,
+      "unix_micro": 1768472430123456,
+      "isoformat": "2026-01-15T10:20:30.123456+00:00"
+    },
+    {
+      "year": 2026,
+      "month": 1,
+      "day": 15,
+      "hour": 10,
+      "minute": 20,
+      "second": 31,
+      "microsecond": 0,
+      "unix_micro": 1768472431000000,
+      "isoformat": "2026-01-15T10:20:31+00:00"
+    },
+    {
+      "year": 2026,
+      "month": 1,
+      "day": 15,
+      "hour": 10,
+      "minute": 20,
+      "second": 32,
+      "microsecond": 1,
+      "unix_micro": 1768472432000001,
+      "isoformat": "2026-01-15T10:20:32.000001+00:00"
+    },
+    {
+      "year": 2026,
+      "month": 1,
+      "day": 15,
+      "hour": 10,
+      "minute": 20,
+      "second": 33,
+      "microsecond": 100000,
+      "unix_micro": 1768472433100000,
+      "isoformat": "2026-01-15T10:20:33.100000+00:00"
+    },
+    {
+      "year": 2026,
+      "month": 1,
+      "day": 15,
+      "hour": 10,
+      "minute": 20,
+      "second": 33,
+      "microsecond": 10,
+      "unix_micro": 1768472433000010,
+      "isoformat": "2026-01-15T10:20:33.000010+00:00"
+    },
+    {
+      "year": 2026,
+      "month": 12,
+      "day": 31,
+      "hour": 23,
+      "minute": 59,
+      "second": 59,
+      "microsecond": 999999,
+      "unix_micro": 1798761599999999,
+      "isoformat": "2026-12-31T23:59:59.999999+00:00"
+    },
+    {
+      "year": 1970,
+      "month": 1,
+      "day": 1,
+      "hour": 0,
+      "minute": 0,
+      "second": 0,
+      "microsecond": 0,
+      "unix_micro": 0,
+      "isoformat": "1970-01-01T00:00:00+00:00"
+    },
+    {
+      "year": 1970,
+      "month": 1,
+      "day": 1,
+      "hour": 0,
+      "minute": 0,
+      "second": 0,
+      "microsecond": 1,
+      "unix_micro": 1,
+      "isoformat": "1970-01-01T00:00:00.000001+00:00"
+    },
+    {
+      "year": 2000,
+      "month": 2,
+      "day": 29,
+      "hour": 12,
+      "minute": 0,
+      "second": 0,
+      "microsecond": 0,
+      "unix_micro": 951825600000000,
+      "isoformat": "2000-02-29T12:00:00+00:00"
+    },
+    {
+      "year": 2024,
+      "month": 2,
+      "day": 29,
+      "hour": 23,
+      "minute": 59,
+      "second": 59,
+      "microsecond": 500000,
+      "unix_micro": 1709251199500000,
+      "isoformat": "2024-02-29T23:59:59.500000+00:00"
+    },
+    {
+      "year": 2038,
+      "month": 1,
+      "day": 19,
+      "hour": 3,
+      "minute": 14,
+      "second": 8,
+      "microsecond": 0,
+      "unix_micro": 2147483648000000,
+      "isoformat": "2038-01-19T03:14:08+00:00"
+    },
+    {
+      "year": 2100,
+      "month": 1,
+      "day": 1,
+      "hour": 0,
+      "minute": 0,
+      "second": 0,
+      "microsecond": 0,
+      "unix_micro": 4102444800000000,
+      "isoformat": "2100-01-01T00:00:00+00:00"
+    },
+    {
+      "year": 9999,
+      "month": 12,
+      "day": 31,
+      "hour": 23,
+      "minute": 59,
+      "second": 59,
+      "microsecond": 999999,
+      "unix_micro": 253402300799999999,
+      "isoformat": "9999-12-31T23:59:59.999999+00:00"
+    },
+    {
+      "year": 1,
+      "month": 1,
+      "day": 1,
+      "hour": 0,
+      "minute": 0,
+      "second": 0,
+      "microsecond": 0,
+      "unix_micro": -62135596800000000,
+      "isoformat": "0001-01-01T00:00:00+00:00"
+    },
+    {
+      "year": 999,
+      "month": 3,
+      "day": 4,
+      "hour": 5,
+      "minute": 6,
+      "second": 7,
+      "microsecond": 8,
+      "unix_micro": -30636384832999992,
+      "isoformat": "0999-03-04T05:06:07.000008+00:00"
+    },
+    {
+      "year": 2026,
+      "month": 6,
+      "day": 1,
+      "hour": 0,
+      "minute": 0,
+      "second": 0,
+      "microsecond": 120000,
+      "unix_micro": 1780272000120000,
+      "isoformat": "2026-06-01T00:00:00.120000+00:00"
+    }
+  ]
+}

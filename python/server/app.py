@@ -187,9 +187,10 @@ def build_app(
     from rgt_vault.approval import ApprovalBroker as _Broker
 
     active_broker: Optional[_Broker] = broker
-    gate = getattr(vault, "approval_gate", None)
-    if active_broker is None and isinstance(gate, _Broker):
-        active_broker = gate
+    if active_broker is None:
+        gate = getattr(vault, "approval_gate", None)
+        if isinstance(gate, _Broker):
+            active_broker = gate
 
     import os
 

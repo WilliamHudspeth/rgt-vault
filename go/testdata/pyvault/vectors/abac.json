@@ -1,0 +1,1041 @@
+{
+  "description": "ABAC (rgt_vault.auth.ABACPolicyEngine). Matching is fnmatch.fnmatchcase on agent, namespace, purpose, action (missing rule attribute == '*'). '*' and '?' cross '/' and newlines. Explicit deny wins; otherwise the LAST matching allow rule is reported. effect is compared case-insensitively. 'ttl' = get_lease_ttl(agent, action) (default 300).",
+  "policies": {
+    "allow_all_list": "- effect: allow\n",
+    "scoped": "rules:\n  - {effect: allow, agent: \"ci-*\", namespace: \"prod/*\", purpose: \"deploy*\", action: read, ttl: 60}\n  - {effect: allow, agent: \"ci-bot\", namespace: \"*\", purpose: \"*\", action: \"*\", ttl: 120}\n  - {effect: deny, agent: \"*\", namespace: \"secret.*\", purpose: \"*\", action: \"*\"}\n  - {effect: allow, agent: ops, namespace: \"[ab]?\", purpose: \"[!x]*\", action: \"re*\"}\n  - {effect: ALLOW, agent: caseins}\n  - {effect: allow, agent: admin, action: write, ttl: abc}\n  - {effect: allow, agent: ttl0, ttl: 0}\n  - {agent: noeffect}\n  - {effect: \"\", agent: emptyeffect}\n  - {effect: permit, agent: unknowneffect}\n",
+    "purpose_slash": "rules:\n  - {effect: allow, agent: deployer, purpose: \"deploy/*\", action: read}\n  - {effect: allow, agent: single, purpose: \"a?c\", action: read}\n  - {effect: allow, agent: classy, purpose: \"rel[0-9]/*\", action: read}\n  - {effect: allow, agent: literal, purpose: \"a/b/c\", action: read}\n",
+    "deny_precedence": "rules:\n  - {effect: deny, agent: \"bad*\"}\n  - {effect: allow}\n  - {effect: deny, agent: x, namespace: locked}\n",
+    "deny_after_allow": "rules:\n  - {effect: allow, agent: \"*\"}\n  - {effect: deny, agent: mallory}\n  - {effect: allow, agent: mallory, namespace: public}\n",
+    "last_allow_wins_for_rule": "rules:\n  - {effect: allow, agent: \"u*\", ttl: 10}\n  - {effect: allow, agent: \"user\", ttl: 20}\n",
+    "case_sensitive": "- {effect: allow, agent: Alice, namespace: Prod, purpose: Deploy, action: Read}\n",
+    "unicode": "- {effect: allow, agent: \"agent-日*\", namespace: \"café\", purpose: \"*🔐*\"}\n",
+    "classes": "rules:\n  - {effect: allow, agent: \"bot-[0-9][0-9]\", namespace: \"ns?\", purpose: \"*\", action: \"[rw]*\"}\n  - {effect: allow, agent: \"[!a-c]*\", namespace: \"open\", purpose: \"*\", action: read}\n  - {effect: deny, agent: \"bot-13\"}\n  - {effect: allow, agent: \"x[]]y\", namespace: \"*\", purpose: \"*\", action: \"*\"}\n  - {effect: allow, agent: \"br[ack\", namespace: \"*\", purpose: \"*\", action: \"*\"}\n",
+    "empty_rules": "rules: []\n",
+    "dict_no_rules_key": "foo: bar\n",
+    "scalar_policy": "just a string\n",
+    "empty_policy": "",
+    "ttl_order": "rules:\n  - {effect: allow, agent: \"*\", action: read, ttl: 10}\n  - {effect: allow, agent: bot, action: \"*\", ttl: 20}\n  - {effect: allow, agent: bot, action: read, ttl: 30}\n  - {effect: allow, action: write, ttl: 40}\n  - {effect: allow, agent: \"*\", action: \"*\", ttl: 50}\n  - {effect: allow, agent: floaty, action: read, ttl: 1.9}\n  - {effect: allow, agent: booly, action: read, ttl: true}\n  - {effect: allow, agent: strttl, action: read, ttl: \"42\"}\n  - {effect: allow, agent: nullttl, action: read, ttl: null}\n  - {effect: allow, agent: negttl, action: read, ttl: -5}\n  - {effect: allow, agent: listttl, action: read, ttl: [1]}\n"
+  },
+  "cases": [
+    {
+      "policy": "allow_all_list",
+      "agent": "anyone",
+      "namespace": "any",
+      "purpose": "any",
+      "action": "read",
+      "why": "rule with only an effect matches everything",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 0,
+      "ttl": 300
+    },
+    {
+      "policy": "allow_all_list",
+      "agent": "",
+      "namespace": "",
+      "purpose": "",
+      "action": "",
+      "why": "empty strings match the default '*'",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 0,
+      "ttl": 300
+    },
+    {
+      "policy": "scoped",
+      "agent": "ci-bot",
+      "namespace": "prod/app",
+      "purpose": "deploy-now",
+      "action": "read",
+      "why": "rule 0 matches ('*' crosses '/' in namespace)",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 1,
+      "ttl": 120
+    },
+    {
+      "policy": "scoped",
+      "agent": "ci-bot",
+      "namespace": "prod/app/deep/er",
+      "purpose": "deploy",
+      "action": "read",
+      "why": "'*' after prod/ matches nested slashes",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 1,
+      "ttl": 120
+    },
+    {
+      "policy": "scoped",
+      "agent": "ci-bot",
+      "namespace": "prod",
+      "purpose": "deploy",
+      "action": "read",
+      "why": "rule 0 needs 'prod/' prefix; rule 1 (ci-bot, *) still allows",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 1,
+      "ttl": 120
+    },
+    {
+      "policy": "scoped",
+      "agent": "ci-x",
+      "namespace": "prod/app",
+      "purpose": "deploy",
+      "action": "read",
+      "why": "ci-* matches ci-x",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 0,
+      "ttl": 300
+    },
+    {
+      "policy": "scoped",
+      "agent": "ci-x",
+      "namespace": "prod/app",
+      "purpose": "deploy",
+      "action": "write",
+      "why": "wrong action for rule 0 -> denied",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "scoped",
+      "agent": "ci-x",
+      "namespace": "staging",
+      "purpose": "deploy",
+      "action": "read",
+      "why": "wrong namespace -> denied",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "scoped",
+      "agent": "ci-bot",
+      "namespace": "secret.db",
+      "purpose": "x",
+      "action": "read",
+      "why": "explicit deny overrides rule 1's allow",
+      "allowed": false,
+      "reason": "Explicit deny rule matched",
+      "matched_rule_index": 2,
+      "ttl": 120
+    },
+    {
+      "policy": "scoped",
+      "agent": "ci-bot",
+      "namespace": "secret.",
+      "purpose": "x",
+      "action": "read",
+      "why": "deny pattern 'secret.*' matches 'secret.' (empty star)",
+      "allowed": false,
+      "reason": "Explicit deny rule matched",
+      "matched_rule_index": 2,
+      "ttl": 120
+    },
+    {
+      "policy": "scoped",
+      "agent": "ci-bot",
+      "namespace": "secret",
+      "purpose": "x",
+      "action": "read",
+      "why": "'secret' does not match 'secret.*' -> allowed",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 1,
+      "ttl": 120
+    },
+    {
+      "policy": "scoped",
+      "agent": "ops",
+      "namespace": "ab",
+      "purpose": "anything",
+      "action": "read",
+      "why": "[ab]? matches 'ab'; [!x]* matches 'anything'; re* matches read",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 3,
+      "ttl": 300
+    },
+    {
+      "policy": "scoped",
+      "agent": "ops",
+      "namespace": "ba",
+      "purpose": "zzz",
+      "action": "revoke",
+      "why": "matches",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 3,
+      "ttl": 300
+    },
+    {
+      "policy": "scoped",
+      "agent": "ops",
+      "namespace": "cb",
+      "purpose": "zzz",
+      "action": "read",
+      "why": "[ab] does not match 'c'",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "scoped",
+      "agent": "ops",
+      "namespace": "ab",
+      "purpose": "xray",
+      "action": "read",
+      "why": "[!x]* fails for purpose starting with x",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "scoped",
+      "agent": "ops",
+      "namespace": "a/",
+      "purpose": "zzz",
+      "action": "read",
+      "why": "'?' matches '/' (fnmatch has no path semantics)",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 3,
+      "ttl": 300
+    },
+    {
+      "policy": "scoped",
+      "agent": "ops",
+      "namespace": "abc",
+      "purpose": "zzz",
+      "action": "read",
+      "why": "'[ab]?' is exactly two chars",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "scoped",
+      "agent": "caseins",
+      "namespace": "n",
+      "purpose": "p",
+      "action": "a",
+      "why": "effect 'ALLOW' is lower-cased",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 4,
+      "ttl": 300
+    },
+    {
+      "policy": "scoped",
+      "agent": "admin",
+      "namespace": "n",
+      "purpose": "p",
+      "action": "write",
+      "why": "ttl 'abc' is invalid -> 300",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 5,
+      "ttl": 300
+    },
+    {
+      "policy": "scoped",
+      "agent": "ttl0",
+      "namespace": "n",
+      "purpose": "p",
+      "action": "read",
+      "why": "ttl 0 is clamped to 1",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 6,
+      "ttl": 300
+    },
+    {
+      "policy": "scoped",
+      "agent": "noeffect",
+      "namespace": "n",
+      "purpose": "p",
+      "action": "read",
+      "why": "rule without an effect never allows",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "scoped",
+      "agent": "emptyeffect",
+      "namespace": "n",
+      "purpose": "p",
+      "action": "read",
+      "why": "empty effect never allows",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "scoped",
+      "agent": "unknowneffect",
+      "namespace": "n",
+      "purpose": "p",
+      "action": "read",
+      "why": "unknown effect never allows",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "scoped",
+      "agent": "stranger",
+      "namespace": "n",
+      "purpose": "p",
+      "action": "read",
+      "why": "default deny",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "purpose_slash",
+      "agent": "deployer",
+      "namespace": "ns",
+      "purpose": "deploy/prod",
+      "action": "read",
+      "why": "'*' crosses '/' in purpose",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 0,
+      "ttl": 300
+    },
+    {
+      "policy": "purpose_slash",
+      "agent": "deployer",
+      "namespace": "ns",
+      "purpose": "deploy/prod/eu/west",
+      "action": "read",
+      "why": "multiple slashes",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 0,
+      "ttl": 300
+    },
+    {
+      "policy": "purpose_slash",
+      "agent": "deployer",
+      "namespace": "ns",
+      "purpose": "deploy/",
+      "action": "read",
+      "why": "empty tail still matches",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 0,
+      "ttl": 300
+    },
+    {
+      "policy": "purpose_slash",
+      "agent": "deployer",
+      "namespace": "ns",
+      "purpose": "deploy",
+      "action": "read",
+      "why": "needs the slash",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "purpose_slash",
+      "agent": "single",
+      "namespace": "ns",
+      "purpose": "a/c",
+      "action": "read",
+      "why": "'?' matches '/'",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 1,
+      "ttl": 300
+    },
+    {
+      "policy": "purpose_slash",
+      "agent": "single",
+      "namespace": "ns",
+      "purpose": "abc",
+      "action": "read",
+      "why": "",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 1,
+      "ttl": 300
+    },
+    {
+      "policy": "purpose_slash",
+      "agent": "single",
+      "namespace": "ns",
+      "purpose": "a//c",
+      "action": "read",
+      "why": "'?' is exactly one char",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "purpose_slash",
+      "agent": "classy",
+      "namespace": "ns",
+      "purpose": "rel5/notes",
+      "action": "read",
+      "why": "[0-9] then slash then star",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 2,
+      "ttl": 300
+    },
+    {
+      "policy": "purpose_slash",
+      "agent": "classy",
+      "namespace": "ns",
+      "purpose": "relx/notes",
+      "action": "read",
+      "why": "",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "purpose_slash",
+      "agent": "literal",
+      "namespace": "ns",
+      "purpose": "a/b/c",
+      "action": "read",
+      "why": "literal slashes",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 3,
+      "ttl": 300
+    },
+    {
+      "policy": "purpose_slash",
+      "agent": "literal",
+      "namespace": "ns",
+      "purpose": "a/b/c/",
+      "action": "read",
+      "why": "no trailing wildcard",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "deny_precedence",
+      "agent": "badguy",
+      "namespace": "ns",
+      "purpose": "p",
+      "action": "read",
+      "why": "deny listed first",
+      "allowed": false,
+      "reason": "Explicit deny rule matched",
+      "matched_rule_index": 0,
+      "ttl": 300
+    },
+    {
+      "policy": "deny_precedence",
+      "agent": "good",
+      "namespace": "ns",
+      "purpose": "p",
+      "action": "read",
+      "why": "allow-all, no deny",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 1,
+      "ttl": 300
+    },
+    {
+      "policy": "deny_precedence",
+      "agent": "x",
+      "namespace": "locked",
+      "purpose": "p",
+      "action": "read",
+      "why": "deny listed AFTER an allow-all still wins",
+      "allowed": false,
+      "reason": "Explicit deny rule matched",
+      "matched_rule_index": 2,
+      "ttl": 300
+    },
+    {
+      "policy": "deny_precedence",
+      "agent": "x",
+      "namespace": "open",
+      "purpose": "p",
+      "action": "read",
+      "why": "",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 1,
+      "ttl": 300
+    },
+    {
+      "policy": "deny_after_allow",
+      "agent": "mallory",
+      "namespace": "public",
+      "purpose": "p",
+      "action": "read",
+      "why": "deny beats later allow",
+      "allowed": false,
+      "reason": "Explicit deny rule matched",
+      "matched_rule_index": 1,
+      "ttl": 300
+    },
+    {
+      "policy": "deny_after_allow",
+      "agent": "alice",
+      "namespace": "public",
+      "purpose": "p",
+      "action": "read",
+      "why": "",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 0,
+      "ttl": 300
+    },
+    {
+      "policy": "last_allow_wins_for_rule",
+      "agent": "user",
+      "namespace": "n",
+      "purpose": "p",
+      "action": "read",
+      "why": "matched_rule is the LAST matching allow rule (index 1)",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 1,
+      "ttl": 300
+    },
+    {
+      "policy": "last_allow_wins_for_rule",
+      "agent": "uxyz",
+      "namespace": "n",
+      "purpose": "p",
+      "action": "read",
+      "why": "only rule 0 matches",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 0,
+      "ttl": 300
+    },
+    {
+      "policy": "case_sensitive",
+      "agent": "Alice",
+      "namespace": "Prod",
+      "purpose": "Deploy",
+      "action": "Read",
+      "why": "exact case",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 0,
+      "ttl": 300
+    },
+    {
+      "policy": "case_sensitive",
+      "agent": "alice",
+      "namespace": "Prod",
+      "purpose": "Deploy",
+      "action": "Read",
+      "why": "fnmatchcase: case-sensitive on every platform",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "case_sensitive",
+      "agent": "Alice",
+      "namespace": "prod",
+      "purpose": "Deploy",
+      "action": "Read",
+      "why": "",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "unicode",
+      "agent": "agent-日本",
+      "namespace": "café",
+      "purpose": "use 🔐 now",
+      "action": "read",
+      "why": "unicode literal + star",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 0,
+      "ttl": 300
+    },
+    {
+      "policy": "unicode",
+      "agent": "agent-日本",
+      "namespace": "café",
+      "purpose": "use 🔐 now",
+      "action": "read",
+      "why": "NFD namespace does not match NFC pattern",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "unicode",
+      "agent": "agent-x",
+      "namespace": "café",
+      "purpose": "🔐",
+      "action": "read",
+      "why": "",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "classes",
+      "agent": "bot-07",
+      "namespace": "ns1",
+      "purpose": "p",
+      "action": "write",
+      "why": "[0-9][0-9], ns? and [rw]*",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 0,
+      "ttl": 300
+    },
+    {
+      "policy": "classes",
+      "agent": "bot-7",
+      "namespace": "ns1",
+      "purpose": "p",
+      "action": "write",
+      "why": "one digit is not enough",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "classes",
+      "agent": "bot-07",
+      "namespace": "ns12",
+      "purpose": "p",
+      "action": "write",
+      "why": "ns? is exactly one char",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "classes",
+      "agent": "bot-07",
+      "namespace": "ns1",
+      "purpose": "p",
+      "action": "execute",
+      "why": "[rw]* rejects 'e'",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "classes",
+      "agent": "bot-13",
+      "namespace": "ns1",
+      "purpose": "p",
+      "action": "write",
+      "why": "explicit deny for bot-13 beats the allow",
+      "allowed": false,
+      "reason": "Explicit deny rule matched",
+      "matched_rule_index": 2,
+      "ttl": 300
+    },
+    {
+      "policy": "classes",
+      "agent": "zed",
+      "namespace": "open",
+      "purpose": "p",
+      "action": "read",
+      "why": "[!a-c]* accepts z",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 1,
+      "ttl": 300
+    },
+    {
+      "policy": "classes",
+      "agent": "alice",
+      "namespace": "open",
+      "purpose": "p",
+      "action": "read",
+      "why": "[!a-c]* rejects a",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "classes",
+      "agent": "dave",
+      "namespace": "open",
+      "purpose": "p",
+      "action": "read",
+      "why": "[!a-c]* accepts d",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 1,
+      "ttl": 300
+    },
+    {
+      "policy": "classes",
+      "agent": "x]y",
+      "namespace": "n",
+      "purpose": "p",
+      "action": "a",
+      "why": "[]] matches a literal ]",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 3,
+      "ttl": 300
+    },
+    {
+      "policy": "classes",
+      "agent": "xy",
+      "namespace": "n",
+      "purpose": "p",
+      "action": "a",
+      "why": "[]] needs a character",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "classes",
+      "agent": "br[ack",
+      "namespace": "n",
+      "purpose": "p",
+      "action": "a",
+      "why": "unterminated [ is a literal [",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 4,
+      "ttl": 300
+    },
+    {
+      "policy": "classes",
+      "agent": "bra",
+      "namespace": "n",
+      "purpose": "p",
+      "action": "a",
+      "why": "so it is not a class",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "empty_rules",
+      "agent": "a",
+      "namespace": "n",
+      "purpose": "p",
+      "action": "read",
+      "why": "no rules -> default deny",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "dict_no_rules_key",
+      "agent": "a",
+      "namespace": "n",
+      "purpose": "p",
+      "action": "read",
+      "why": "dict without 'rules' -> no rules",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "scalar_policy",
+      "agent": "a",
+      "namespace": "n",
+      "purpose": "p",
+      "action": "read",
+      "why": "scalar YAML -> no rules",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "empty_policy",
+      "agent": "a",
+      "namespace": "n",
+      "purpose": "p",
+      "action": "read",
+      "why": "empty policy -> no rules",
+      "allowed": false,
+      "reason": "No matching allow rule (default deny)",
+      "matched_rule_index": null,
+      "ttl": 300
+    },
+    {
+      "policy": "allow_all_list",
+      "agent": "a\nb",
+      "namespace": "n\n",
+      "purpose": "\n",
+      "action": "read",
+      "why": "newline characters in values",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 0,
+      "ttl": 300
+    },
+    {
+      "policy": "purpose_slash",
+      "agent": "deployer",
+      "namespace": "ns",
+      "purpose": "deploy/line1\nline2",
+      "action": "read",
+      "why": "'*' matches a newline",
+      "allowed": true,
+      "reason": "Allow rule matched",
+      "matched_rule_index": 0,
+      "ttl": 300
+    }
+  ],
+  "ttl_cases": [
+    {
+      "policy": "ttl_order",
+      "agent": "bot",
+      "action": "read",
+      "ttl": 30
+    },
+    {
+      "policy": "ttl_order",
+      "agent": "bot",
+      "action": "write",
+      "ttl": 20
+    },
+    {
+      "policy": "ttl_order",
+      "agent": "bot",
+      "action": "delete",
+      "ttl": 20
+    },
+    {
+      "policy": "ttl_order",
+      "agent": "other",
+      "action": "read",
+      "ttl": 10
+    },
+    {
+      "policy": "ttl_order",
+      "agent": "other",
+      "action": "write",
+      "ttl": 40
+    },
+    {
+      "policy": "ttl_order",
+      "agent": "other",
+      "action": "delete",
+      "ttl": 50
+    },
+    {
+      "policy": "ttl_order",
+      "agent": "floaty",
+      "action": "read",
+      "ttl": 1
+    },
+    {
+      "policy": "ttl_order",
+      "agent": "booly",
+      "action": "read",
+      "ttl": 1
+    },
+    {
+      "policy": "ttl_order",
+      "agent": "strttl",
+      "action": "read",
+      "ttl": 42
+    },
+    {
+      "policy": "ttl_order",
+      "agent": "nullttl",
+      "action": "read",
+      "ttl": 300
+    },
+    {
+      "policy": "ttl_order",
+      "agent": "negttl",
+      "action": "read",
+      "ttl": 1
+    },
+    {
+      "policy": "ttl_order",
+      "agent": "listttl",
+      "action": "read",
+      "ttl": 300
+    }
+  ],
+  "policy_shapes": [
+    {
+      "name": "list_form",
+      "yaml": "- effect: allow\n- effect: deny\n",
+      "expect": {
+        "rules_count": 2,
+        "evaluate_read": {
+          "allowed": false
+        }
+      }
+    },
+    {
+      "name": "rules_form",
+      "yaml": "rules:\n  - effect: allow\n",
+      "expect": {
+        "rules_count": 1,
+        "evaluate_read": {
+          "allowed": true
+        }
+      }
+    },
+    {
+      "name": "dict_without_rules",
+      "yaml": "a: 1\n",
+      "expect": {
+        "rules_count": 0,
+        "evaluate_read": {
+          "allowed": false
+        }
+      }
+    },
+    {
+      "name": "rules_null",
+      "yaml": "rules:\n",
+      "expect": {
+        "rules_count": null,
+        "evaluate_read": {
+          "raises": "TypeError"
+        }
+      }
+    },
+    {
+      "name": "rules_list_of_scalars",
+      "yaml": "rules:\n  - 1\n  - two\n",
+      "expect": {
+        "rules_count": 2,
+        "evaluate_read": {
+          "raises": "AttributeError"
+        }
+      }
+    },
+    {
+      "name": "list_of_scalars",
+      "yaml": "- 1\n- two\n",
+      "expect": {
+        "rules_count": 2,
+        "evaluate_read": {
+          "raises": "AttributeError"
+        }
+      }
+    },
+    {
+      "name": "empty",
+      "yaml": "",
+      "expect": {
+        "rules_count": 0,
+        "evaluate_read": {
+          "allowed": false
+        }
+      }
+    },
+    {
+      "name": "whitespace_only",
+      "yaml": "  \n\t\n",
+      "expect": {
+        "rules_count": 0,
+        "evaluate_read": {
+          "allowed": false
+        }
+      }
+    },
+    {
+      "name": "scalar",
+      "yaml": "hello\n",
+      "expect": {
+        "rules_count": 0,
+        "evaluate_read": {
+          "allowed": false
+        }
+      }
+    },
+    {
+      "name": "number",
+      "yaml": "42\n",
+      "expect": {
+        "rules_count": 0,
+        "evaluate_read": {
+          "allowed": false
+        }
+      }
+    },
+    {
+      "name": "invalid_yaml",
+      "yaml": "rules: [unclosed\n",
+      "expect": {
+        "error": "ValueError"
+      }
+    },
+    {
+      "name": "tab_indent_invalid",
+      "yaml": "rules:\n\t- effect: allow\n",
+      "expect": {
+        "error": "ValueError"
+      }
+    },
+    {
+      "name": "exactly_1MiB_comment",
+      "yaml_generate": {
+        "prefix": "# ",
+        "fill": "x",
+        "length": 1048576
+      },
+      "expect": {
+        "rules_count": 0,
+        "evaluate_read": {
+          "allowed": false
+        }
+      }
+    },
+    {
+      "name": "1MiB_plus_1",
+      "yaml_generate": {
+        "prefix": "# ",
+        "fill": "x",
+        "length": 1048577
+      },
+      "expect": {
+        "error": "ValidationError"
+      }
+    }
+  ],
+  "policy_max_bytes": 1048576
+}
