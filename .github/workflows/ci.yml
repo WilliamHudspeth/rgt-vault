@@ -70,6 +70,16 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
           cd go && govulncheck ./...
 
+  systemd-lint:
+    name: lint systemd units
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Lint script self-test
+        run: scripts/test_lint_systemd_units.sh
+      - name: Lint deploy/*.service (static sandbox check + systemd-analyze)
+        run: scripts/lint_systemd_units.sh
+
   build:
     name: build wheel
     runs-on: ubuntu-latest
