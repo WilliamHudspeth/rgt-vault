@@ -153,8 +153,17 @@ func isNotification(req rpcRequest) bool {
 }
 
 func (s *Server) handle(req rpcRequest) *rpcResponse {
-	if isNotification(req) || strings.HasPrefix(req.Method, "notifications/") {
+	if isNotification(req) {
 		return nil
+	}
+	// MCP: request ids must not be null; JSON-RPC: jsonrpc must be "2.0" and
+	// method must be present.
+	if strings.TrimSpace(string(req.ID)) == "null" || req.JSONRPC != "2.0" || req.Method == "" {
+		id := req.ID
+		if strings.TrimSpace(string(id)) == "null" {
+			id = json.RawMessage("null")
+		}
+		return &rpcResponse{JSONRPC: "2.0", ID: id, Error: &rpcError{Code: -32600, Message: "invalid request"}}
 	}
 	switch req.Method {
 	case "ping":
@@ -313,18 +322,50 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 		return str
 	}
 
+	// Every tool needs a namespace; all but list_secrets need a name, and
+	// execute_secret an action. Reject early rather than build "//" paths.
+	required := map[string][]string{
+		"list_secrets":   {"namespace"},
+		"lease_secret":   {"namespace", "name"},
+		"revoke_secret":  {"namespace", "name"},
+		"execute_secret": {"namespace", "name", "action"},
+	}
+	for _, key := range required[name] {
+		if getStr(key) == "" {
+			return "missing required string argument: " + key, true
+		}
+	}
+
 	switch name {
 	case "list_secrets":
 		ns := getStr("namespace")
 		reqURL := s.backendURL + "/v1/secrets?namespace=" + url.QueryEscape(ns)
 		resp, body, err := s.do("GET", reqURL, nil)
 		if err != nil {
-			return "backend unreachable: " + err.Error(), true
+			return s.unreachable(name, err)
 		}
-		if resp.StatusCode == http.StatusOK {
-			return string(body), false
+		if resp.StatusCode != http.StatusOK {
+			return s.backendError("list_secrets", resp, body)
 		}
-		return s.backendError("list_secrets", resp, body)
+		// Re-encode with a metadata-only shape: whatever the backend sends
+		// (the stub list route still includes "value"), plaintext never
+		// leaves through list_secrets.
+		var res struct {
+			Namespace string `json:"namespace"`
+			Secrets   []struct {
+				Name      string `json:"name"`
+				Namespace string `json:"namespace,omitempty"`
+				CreatedAt string `json:"created_at,omitempty"`
+			} `json:"secrets"`
+		}
+		if err := json.Unmarshal(body, &res); err != nil {
+			return "backend returned an invalid response", true
+		}
+		out, err := json.Marshal(res)
+		if err != nil {
+			return "encode error", true
+		}
+		return string(out), false
 
 	case "lease_secret":
 		ns := getStr("namespace")
@@ -334,7 +375,7 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 		reqURL := s.backendURL + "/v1/secrets/" + url.PathEscape(ns) + "/" + url.PathEscape(nm)
 		resp, body, err := s.do("GET", reqURL, nil)
 		if err != nil {
-			return "backend unreachable: " + err.Error(), true
+			return s.unreachable(name, err)
 		}
 		if resp.StatusCode != http.StatusOK {
 			return s.backendError("lease_secret", resp, body)
@@ -356,7 +397,7 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 		reqURL := s.backendURL + "/v1/secrets/" + url.PathEscape(ns) + "/" + url.PathEscape(nm) + "/revoke"
 		resp, body, err := s.do("POST", reqURL, nil)
 		if err != nil {
-			return "backend unreachable: " + err.Error(), true
+			return s.unreachable(name, err)
 		}
 		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent {
 			return "revoked " + ns + "/" + nm, false
@@ -389,7 +430,7 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 
 		resp, body, err := s.do("POST", reqURL, bodyBytes)
 		if err != nil {
-			return "backend unreachable: " + err.Error(), true
+			return s.unreachable(name, err)
 		}
 		if resp.StatusCode == http.StatusOK {
 			return string(body), false
@@ -403,6 +444,9 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 
 // maxLoggedErrorBody caps how much of a backend error body reaches the log.
 const maxLoggedErrorBody = 512
+
+// maxBackendBody bounds how much of any backend response is read.
+const maxBackendBody = 4 << 20
 
 // backendError turns a non-success backend response into a tool error. The
 // backend's error body may contain internal details (paths, stack context,
@@ -420,6 +464,13 @@ func (s *Server) backendError(tool string, resp *http.Response, body []byte) (st
 // SetLogger redirects backend error logging (nil disables it). Never pass a
 // logger that writes to the protocol stream (stdout).
 func (s *Server) SetLogger(l *log.Logger) { s.logger = l }
+
+// unreachable logs the transport error (it names the backend URL) and gives
+// the client a fixed message.
+func (s *Server) unreachable(tool string, err error) (string, bool) {
+	s.logf("%s backend unreachable: %v", tool, err)
+	return "backend unreachable", true
+}
 
 func (s *Server) logf(format string, args ...any) {
 	if s.logger != nil {
@@ -451,7 +502,7 @@ func (s *Server) do(method, reqURL string, body []byte) (*http.Response, []byte,
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxBackendBody))
 	if err != nil {
 		return nil, nil, err
 	}

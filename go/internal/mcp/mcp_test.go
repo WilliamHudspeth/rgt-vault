@@ -90,7 +90,7 @@ func TestHandle_NotificationsInitialized(t *testing.T) {
 	defer ts.Close()
 	s := newTestServer(ts)
 
-	resp := s.handle(makeReq(2, "notifications/initialized", nil))
+	resp := s.handle(rpcRequest{JSONRPC: "2.0", Method: "notifications/initialized"})
 	if resp != nil {
 		t.Errorf("expected nil response for notification, got %+v", resp)
 	}
@@ -173,8 +173,66 @@ func TestCallTool_ListSecrets_OK(t *testing.T) {
 	if isError {
 		t.Fatalf("expected isError=false, got true; text=%s", text)
 	}
-	if !strings.Contains(text, fakeBody) && text != fakeBody {
-		t.Errorf("response text does not contain backend body; got %q", text)
+	if text != `{"namespace":"ns1","secrets":[{"name":"k"}]}` {
+		t.Errorf("unexpected list output %q", text)
+	}
+}
+
+// list_secrets must never pass plaintext through, even if the backend's list
+// route still includes values (the current stub store does).
+func TestCallTool_ListSecrets_StripsValues(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"namespace":"ns1","secrets":[{"name":"k","value":"PLAINTEXT","namespace":"ns1","created_at":"t"}]}`)
+	}))
+	defer ts.Close()
+	s := newTestServer(ts)
+	text, isError := s.callTool("list_secrets", map[string]any{"namespace": "ns1"})
+	if isError || strings.Contains(text, "PLAINTEXT") || !strings.Contains(text, `"created_at":"t"`) {
+		t.Fatalf("got (%q, %v)", text, isError)
+	}
+	ts2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "nope") }))
+	defer ts2.Close()
+	if text, isError := newTestServer(ts2).callTool("list_secrets", map[string]any{"namespace": "ns1"}); !isError || text != "backend returned an invalid response" {
+		t.Fatalf("bad JSON: got (%q, %v)", text, isError)
+	}
+}
+
+func TestCallTool_RequiredArgs(t *testing.T) {
+	hit := false
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit = true }))
+	defer ts.Close()
+	s := newTestServer(ts)
+	for tool, args := range map[string]map[string]any{
+		"list_secrets":   {},
+		"lease_secret":   {"namespace": "ns"},
+		"revoke_secret":  {"name": "n"},
+		"execute_secret": {"namespace": "ns", "name": "n"},
+	} {
+		text, isError := s.callTool(tool, args)
+		if !isError || !strings.HasPrefix(text, "missing required string argument") {
+			t.Errorf("%s: got (%q, %v)", tool, text, isError)
+		}
+	}
+	if hit {
+		t.Error("backend was called despite missing arguments")
+	}
+}
+
+func TestHandle_InvalidRequests(t *testing.T) {
+	s := NewServer("http://127.0.0.1:1", "")
+	for _, req := range []rpcRequest{
+		{JSONRPC: "2.0", ID: json.RawMessage("null"), Method: "ping"},
+		{JSONRPC: "1.0", ID: json.RawMessage("1"), Method: "ping"},
+		{JSONRPC: "2.0", ID: json.RawMessage("1")},
+	} {
+		r := s.handle(req)
+		if r == nil || r.Error == nil || r.Error.Code != -32600 {
+			t.Errorf("%+v: want -32600, got %+v", req, r)
+		}
+	}
+	// A notifications/* method sent WITH an id is a request and gets an answer.
+	if r := s.handle(makeReq(4, "notifications/initialized", nil)); r == nil || r.Error == nil {
+		t.Errorf("request with id must be answered, got %+v", r)
 	}
 }
 
@@ -515,7 +573,7 @@ func TestCallTool_BackendErrorsSanitizedAndUnreachable(t *testing.T) {
 	dead := NewServer("http://127.0.0.1:1", "")
 	dead.SetLogger(nil)
 	for _, tool := range []string{"list_secrets", "lease_secret", "revoke_secret", "execute_secret"} {
-		if text, isErr := dead.callTool(tool, args); !isErr || !strings.HasPrefix(text, "backend unreachable") {
+		if text, isErr := dead.callTool(tool, args); !isErr || text != "backend unreachable" {
 			t.Errorf("%s unreachable: got (%q, %v)", tool, text, isErr)
 		}
 	}
@@ -524,8 +582,8 @@ func TestCallTool_BackendErrorsSanitizedAndUnreachable(t *testing.T) {
 	if _, isErr := bad.callTool("list_secrets", args); !isErr {
 		t.Error("bad URL: expected error")
 	}
-	// Non-string argument is treated as empty.
-	if _, isErr := s.callTool("list_secrets", map[string]any{"namespace": 7}); !isErr {
-		t.Error("expected backend error")
+	// Non-string argument is treated as missing.
+	if text, isErr := s.callTool("list_secrets", map[string]any{"namespace": 7}); !isErr || !strings.HasPrefix(text, "missing required") {
+		t.Errorf("non-string arg: got (%q, %v)", text, isErr)
 	}
 }

@@ -263,6 +263,9 @@ func TestSDKClient_InProcessPipes(t *testing.T) {
 
 	clientToServerR, clientToServerW := io.Pipe()
 	serverToClientR, serverToClientW := io.Pipe()
+	// Unblock the server goroutine if the test fails early.
+	defer clientToServerW.Close()
+	defer serverToClientR.Close()
 	done := make(chan error, 1)
 	go func() {
 		err := s.Serve(clientToServerR, serverToClientW)
