@@ -5,8 +5,8 @@ Scans the Multica workspace, picks tickets in scope (todo/in_progress),
 runs the multi-model review via the router, posts a synthesis comment,
 and records which tickets have been processed so the loop is idempotent.
 
-State is kept in /tmp (or a configurable path) so each invocation is
-independent — the AFK cron just calls this script repeatedly and it does
+State is kept in a per-user 0700 state dir (or a configurable path) so each
+invocation is independent — the AFK cron just calls this script repeatedly and it does
 the right thing.
 
 Routing (delegated to Router.pair_for):
@@ -27,7 +27,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
+import stat
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -37,7 +41,59 @@ from internal.llm.kanban_review import build_prompt, pick_task_type, post_commen
 from internal.llm.router import Router
 from internal.program._common import WORKSPACE_ID, get_issue, label_set, list_issues
 
-DEFAULT_STATE_PATH = Path("/tmp/rgt_kanban_loop_state.json")
+log = logging.getLogger(__name__)
+
+
+def default_state_dir() -> Path:
+    """Per-user state dir: $XDG_STATE_HOME/rgt-vault (else ~/.local/state/rgt-vault).
+
+    RGT-90: not a fixed world-writable /tmp name, which another local user
+    could pre-create or symlink. The dir is created 0700 on first save.
+    """
+    xdg = os.environ.get("XDG_STATE_HOME", "")
+    base = Path(xdg) if xdg and os.path.isabs(xdg) else Path.home() / ".local" / "state"
+    return base / "rgt-vault"
+
+
+DEFAULT_STATE_PATH = default_state_dir() / "kanban_loop_state.json"
+
+
+def _ensure_private_dir(d: Path) -> None:
+    """Create d (and parents). For our own default state dir also require that it
+    is a real directory (not a planted symlink), owned by us, and exactly 0700."""
+    default = default_state_dir()
+    if d == default and d.is_symlink():
+        raise PermissionError(f"state dir {d} is a symlink; refusing to use it")
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if d == default:
+        st = d.lstat()
+        if hasattr(os, "getuid") and st.st_uid != os.getuid():  # no uid on Windows
+            raise PermissionError(f"state dir {d} is not owned by the current user")
+        if stat.S_IMODE(st.st_mode) != 0o700:
+            d.chmod(0o700)
+
+
+def write_private_text(path: Path, text: str) -> None:
+    """Atomically write text to path with mode 0600 (temp file in the same dir + rename)."""
+    _ensure_private_dir(path.parent)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")  # created 0600
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        # Best-effort cleanup of our temp file. A failure here (other than the
+        # file already being gone) must not mask the original error, so log
+        # it at debug level and re-raise the original.
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass  # already renamed or removed: nothing to clean up
+        except OSError as cleanup_err:
+            log.debug("could not remove temp state file %s: %s", tmp, cleanup_err)
+        raise
 
 
 def load_state(path: Path) -> dict:
@@ -50,8 +106,7 @@ def load_state(path: Path) -> dict:
 
 
 def save_state(state: dict, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=2, sort_keys=True))
+    write_private_text(path, json.dumps(state, indent=2, sort_keys=True))
 
 
 def ticket_changed(ticket: dict, prev_signature: str) -> bool:
@@ -121,7 +176,7 @@ def main() -> int:
     p.add_argument("--status", default="todo,in_progress", help="comma-separated statuses to include")
     p.add_argument("--milestone", default=None, help="filter to tickets in this milestone project (e.g. v0.2.0)")
     p.add_argument(
-        "--state", default=str(DEFAULT_STATE_PATH), help="path to state file (default /tmp/rgt_kanban_loop_state.json)"
+        "--state", default=str(DEFAULT_STATE_PATH), help=f"path to state file (default {DEFAULT_STATE_PATH})"
     )
     p.add_argument(
         "--reset-state", action="store_true", help="ignore previous state and re-process all in-scope tickets"
@@ -314,7 +369,7 @@ def _process_one_ticket(issue_summary, tid, args, router, processed, state, stat
         info["last_attempt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         info["last_error"] = errs[0][1].error if errs else "all models failed"
         failures[tid] = info
-        failure_path.write_text(json.dumps(failures, indent=2, sort_keys=True))
+        write_private_text(failure_path, json.dumps(failures, indent=2, sort_keys=True))
         if not args.quiet:
             cooldown = _backoff_minutes(info["count"])
             print(
