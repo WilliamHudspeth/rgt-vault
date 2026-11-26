@@ -9,6 +9,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
+
 from rgt_vault import totp  # noqa: E402
 from rgt_vault.approval import ApprovalBroker  # noqa: E402
 from rgt_vault.server.actions import ActionRegistry, register_builtin_actions  # noqa: E402
@@ -46,10 +47,17 @@ def client_and_broker(tmp_path, master_provider):
 
 def test_set_secret_with_note_and_2fa_flag(client_and_broker):
     client, _, _ = client_and_broker
-    r = client.post("/v1/secrets", json={
-        "name": "API", "value": "sk-1", "namespace": "default",
-        "agent": "tester", "note": "prod key", "require_2fa": True,
-    })
+    r = client.post(
+        "/v1/secrets",
+        json={
+            "name": "API",
+            "value": "sk-1",
+            "namespace": "default",
+            "agent": "tester",
+            "note": "prod key",
+            "require_2fa": True,
+        },
+    )
     assert r.status_code == 200
     listed = client.get("/v1/secrets", params={"namespace": "default", "agent": "tester"})
     item = listed.json()["secrets"][0]
@@ -60,10 +68,16 @@ def test_set_secret_with_note_and_2fa_flag(client_and_broker):
 
 def test_pending_request_listed_and_approved_with_2fa(client_and_broker):
     client, broker, secret = client_and_broker
-    client.post("/v1/secrets", json={
-        "name": "API", "value": "sk-secret", "namespace": "default",
-        "agent": "tester", "require_2fa": True,
-    })
+    client.post(
+        "/v1/secrets",
+        json={
+            "name": "API",
+            "value": "sk-secret",
+            "namespace": "default",
+            "agent": "tester",
+            "require_2fa": True,
+        },
+    )
 
     # Fire an agent "use" in a background thread; it will block on approval.
     result = {}
@@ -126,20 +140,30 @@ def test_agent_token_cannot_approve_when_operator_scope_set(tmp_path, master_pro
     client = TestClient(app)
 
     # Agent token is accepted on agent endpoints but rejected on operator ones.
-    assert client.get("/v1/secrets", params={"namespace": "default", "agent": "tester"},
-                      headers={"Authorization": f"Bearer {agent_token}"}).status_code == 200
-    assert client.get("/v1/requests",
-                      headers={"Authorization": f"Bearer {agent_token}"}).status_code == 401
+    assert (
+        client.get(
+            "/v1/secrets",
+            params={"namespace": "default", "agent": "tester"},
+            headers={"Authorization": f"Bearer {agent_token}"},
+        ).status_code
+        == 200
+    )
+    assert client.get("/v1/requests", headers={"Authorization": f"Bearer {agent_token}"}).status_code == 401
     # Operator token is accepted on the operator endpoint.
-    assert client.get("/v1/requests",
-                      headers={"Authorization": f"Bearer {operator_token}"}).status_code == 200
+    assert client.get("/v1/requests", headers={"Authorization": f"Bearer {operator_token}"}).status_code == 200
 
 
 def test_deny_blocks_agent(client_and_broker):
     client, broker, _ = client_and_broker
-    client.post("/v1/secrets", json={
-        "name": "K", "value": "v", "namespace": "default", "agent": "tester",
-    })
+    client.post(
+        "/v1/secrets",
+        json={
+            "name": "K",
+            "value": "v",
+            "namespace": "default",
+            "agent": "tester",
+        },
+    )
     result = {}
 
     def agent_use():

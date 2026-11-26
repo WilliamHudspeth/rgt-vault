@@ -52,18 +52,19 @@ app = FastAPI(
     version="0.2.0" if not is_prod else "",
     description="Local HTTP surface for the rgt-vault secrets manager.",
     debug=os.getenv("RGT_VAULT_DEBUG", "0") == "1",
-    docs_url=None,       # Disabled default
-    redoc_url=None,      # Disabled default
+    docs_url=None,  # Disabled default
+    redoc_url=None,  # Disabled default
     openapi_url=None if is_prod else "/openapi.json",
 )
 
 # Explicitly register documentation routes in non-production environments
 if not is_prod:
+
     @app.get("/docs", include_in_schema=False)
     async def custom_swagger_ui_html(request: Request) -> HTMLResponse:
         swagger_js = f"https://cdn.jsdelivr.net/npm/swagger-ui-dist@{SWAGGER_UI_VERSION}/swagger-ui-bundle.js"
         swagger_css = f"https://cdn.jsdelivr.net/npm/swagger-ui-dist@{SWAGGER_UI_VERSION}/swagger-ui.css"
-        
+
         # Leverage the built-in generator to preserve all OAuth2 / settings configuration
         response = get_swagger_ui_html(
             openapi_url=app.openapi_url or "/openapi.json",
@@ -73,34 +74,31 @@ if not is_prod:
             swagger_css_url=swagger_css,
             swagger_favicon_url="https://fastapi.tiangolo.com/img/favicon.png",
         )
-        
+
         # Inject integrity attributes into the generated HTML
         html = response.body.decode("utf-8")
         html = html.replace(
-            f'href="{swagger_css}"',
-            f'href="{swagger_css}" integrity="{SWAGGER_CSS_INTEGRITY}" crossorigin="anonymous"'
+            f'href="{swagger_css}"', f'href="{swagger_css}" integrity="{SWAGGER_CSS_INTEGRITY}" crossorigin="anonymous"'
         )
         html = html.replace(
-            f'src="{swagger_js}"',
-            f'src="{swagger_js}" integrity="{SWAGGER_JS_INTEGRITY}" crossorigin="anonymous"'
+            f'src="{swagger_js}"', f'src="{swagger_js}" integrity="{SWAGGER_JS_INTEGRITY}" crossorigin="anonymous"'
         )
         return HTMLResponse(content=html, status_code=response.status_code)
 
     @app.get("/redoc", include_in_schema=False)
     async def custom_redoc_html(request: Request) -> HTMLResponse:
         redoc_js = f"https://cdn.jsdelivr.net/npm/redoc@{REDOC_VERSION}/bundles/redoc.standalone.js"
-        
+
         response = get_redoc_html(
             openapi_url=app.openapi_url or "/openapi.json",
             title=app.title + " - ReDoc",
             redoc_js_url=redoc_js,
             redoc_favicon_url="https://fastapi.tiangolo.com/img/favicon.png",
         )
-        
+
         html = response.body.decode("utf-8")
         html = html.replace(
-            f'src="{redoc_js}"',
-            f'src="{redoc_js}" integrity="{REDOC_JS_INTEGRITY}" crossorigin="anonymous"'
+            f'src="{redoc_js}"', f'src="{redoc_js}" integrity="{REDOC_JS_INTEGRITY}" crossorigin="anonymous"'
         )
         return HTMLResponse(content=html, status_code=response.status_code)
 ```
@@ -111,6 +109,7 @@ For systems deployed in isolated offline environments, rely on local files inste
 2. Serve them using FastAPI's `StaticFiles`:
    ```python
    from fastapi.staticfiles import StaticFiles
+
    app.mount("/static", StaticFiles(directory="rgt_vault/server/static"), name="static")
    ```
 3. Update the custom UI routes to point to `/static/swagger-ui-bundle.js` and `/static/swagger-ui.css` (SRI hashes are still recommended as defense-in-depth, but local hosting mitigates remote tampering risks).
@@ -242,17 +241,18 @@ We can create a test case that checks that the generated SBOM is present and con
 import os
 import json
 
+
 def test_sbom_existence_and_format():
     """Verify that the SBOM artifact has been generated and contains valid CycloneDX JSON."""
     sbom_path = "build/sbom.cyclonedx.json"
-    
+
     # Check if file exists (will be true post-CI build or local script run)
     if not os.path.exists(sbom_path):
         pytest.skip("SBOM file not generated yet. Skipping local test verification.")
-        
+
     with open(sbom_path, "r") as f:
         data = json.load(f)
-        
+
     # Assert CycloneDX structure
     assert data.get("bomFormat") == "CycloneDX"
     assert "specVersion" in data
@@ -327,20 +327,21 @@ import os
 import subprocess
 import pytest
 
+
 def test_go_binary_pie_hardening():
     """Verify that the compiled Go executable is compiled as a Position Independent Executable (PIE)."""
-    binary_path = "go/rgt-vault" # Path to compiled target
-    
+    binary_path = "go/rgt-vault"  # Path to compiled target
+
     if not os.path.exists(binary_path):
         pytest.skip(f"Compiled binary not found at {binary_path}. Build the binary before running this test.")
-    
+
     # Method A: Use 'file' utility on Linux/Unix
     try:
         res = subprocess.run(["file", binary_path], capture_output=True, text=True, check=True)
         assert "pie executable" in res.stdout.lower() or "shared object" in res.stdout.lower()
     except subprocess.SubprocessError:
         pass
-        
+
     # Method B: Parse ELF header on Linux directly (without shell tools)
     with open(binary_path, "rb") as f:
         elf_header = f.read(64)
