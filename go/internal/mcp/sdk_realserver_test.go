@@ -53,9 +53,15 @@ func TestSDKClient_RealRouter(t *testing.T) {
 	s.SetLogger(log.New(io.Discard, "", 0))
 	c2sR, c2sW := io.Pipe()
 	s2cR, s2cW := io.Pipe()
+	done := make(chan struct{})
+	defer func() { <-done }() // runs last: join the server goroutine
 	defer c2sW.Close()
 	defer s2cR.Close()
-	go func() { _ = s.Serve(c2sR, s2cW); _ = s2cW.Close() }()
+	go func() {
+		defer close(done)
+		_ = s.Serve(c2sR, s2cW)
+		_ = s2cW.Close()
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

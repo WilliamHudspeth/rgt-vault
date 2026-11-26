@@ -71,7 +71,7 @@ func newFakeVault() *fakeVault {
 func (f *fakeVault) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	c := call{Method: r.Method, Path: r.URL.Path, Auth: r.Header.Get("Authorization")}
+	c := call{Method: r.Method, Path: r.URL.RequestURI(), Auth: r.Header.Get("Authorization")}
 	if r.Body != nil {
 		raw, _ := io.ReadAll(r.Body)
 		if len(raw) > 0 {
@@ -237,11 +237,11 @@ func runLifecycle(t *testing.T, transport sdk.Transport, fv *fakeVault) {
 		t.Fatalf("backend saw %d calls, want 5: %+v", len(calls), calls)
 	}
 	wantPaths := []string{
-		"GET /v1/secrets",
+		"GET /v1/secrets?namespace=prod&name=api-key",
 		"POST /v1/secrets/prod/api-key/use",
 		"POST /v1/secrets/prod/broken/use",
 		"POST /v1/secrets/prod/api-key/revoke",
-		"GET /v1/secrets",
+		"GET /v1/secrets?namespace=prod&name=api-key",
 	}
 	for i, c := range calls {
 		if got := c.Method + " " + c.Path; got != wantPaths[i] {
