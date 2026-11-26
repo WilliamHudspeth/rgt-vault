@@ -41,3 +41,6 @@ go/server
 .idea/
 .DS_Store
 test-env/
+
+# Agent scratch notes (briefings, handoffs). Already-tracked files predate this rule.
+.agents/

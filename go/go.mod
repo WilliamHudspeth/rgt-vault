@@ -7,7 +7,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20260622092256-25656177ba8e
 	github.com/danieljoos/wincred v1.2.3
-	github.com/go-chi/chi/v5 v5.2.2
+	github.com/go-chi/chi/v5 v5.5.0
 	github.com/spf13/cobra v1.9.1
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.53.0
