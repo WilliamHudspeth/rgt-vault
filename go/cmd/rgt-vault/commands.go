@@ -138,6 +138,10 @@ func (c *cli) runSet(name, namespace, agent, purpose, valueFile string) error {
 // secret with its value (audited). Unfiltered lists and the single-secret GET
 // are metadata only. TODO(D5/G10): becomes an offline, operator-only read.
 func (c *cli) runGet(name, namespace string) error {
+	// An empty name would turn the exact-name filter into an unfiltered list.
+	if name == "" {
+		return errors.New("secret name must not be empty")
+	}
 	reqURL := c.host + "/v1/secrets?namespace=" + url.QueryEscape(namespace) + "&name=" + url.QueryEscape(name)
 	body, status, err := c.do(http.MethodGet, reqURL, nil)
 	if err != nil {

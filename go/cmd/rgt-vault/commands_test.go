@@ -85,6 +85,7 @@ func TestSubcommands(t *testing.T) {
 		noAuth     bool           // status sends no token
 		wantCode   int
 		wantStdout string // exact; "{URL}" is replaced by the server URL
+		wantErr    string // substring of stderr for failing cases
 	}{
 		{name: "set from stdin", args: []string{"set", "api-key", "--namespace", "prod", "--agent", "bot", "--purpose", "ci"},
 			stdin: "s3cr3t\n", status: 201, resp: `{"ok":true}`,
@@ -98,7 +99,7 @@ func TestSubcommands(t *testing.T) {
 		{name: "set server error", args: []string{"set", "k"}, stdin: "v", status: 500, resp: `{"error":"x"}`,
 			wantMethod: "POST", wantPath: "/v1/secrets",
 			wantBody: map[string]any{"name": "k", "namespace": "default", "value": "v", "agent": "system", "purpose": ""},
-			wantCode: 1},
+			wantCode: 1, wantErr: "set failed: HTTP 500"},
 		{name: "get", args: []string{"get", "api-key", "--namespace", "prod"}, status: 200,
 			resp:       `{"namespace":"prod","secrets":[{"name":"api-key","namespace":"prod","value":"s3cr3t"}]}`,
 			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=prod&name=api-key", wantStdout: "s3cr3t\n"},
@@ -106,18 +107,18 @@ func TestSubcommands(t *testing.T) {
 			resp:       `{"secrets":[{"name":"a b&c","value":"v"}]}`,
 			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=n%3Fs&name=a+b%26c", wantStdout: "v\n"},
 		{name: "get not found (empty list)", args: []string{"get", "nope"}, status: 200, resp: `{"namespace":"default","secrets":[]}`,
-			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=default&name=nope", wantCode: 1},
+			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=default&name=nope", wantCode: 1, wantErr: "secret \"nope\" not found in namespace \"default\""},
 		{name: "get ignores non-exact names", args: []string{"get", "k"}, status: 200, resp: `{"secrets":[{"name":"k2","value":"x"}]}`,
-			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=default&name=k", wantCode: 1},
+			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=default&name=k", wantCode: 1, wantErr: "secret \"k\" not found"},
 		{name: "get without value", args: []string{"get", "k"}, status: 200, resp: `{"secrets":[{"name":"k"}]}`,
-			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=default&name=k", wantCode: 1},
+			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=default&name=k", wantCode: 1, wantErr: "server did not return a secret value"},
 		{name: "get server error", args: []string{"get", "k"}, status: 401, resp: `{}`,
-			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=default&name=k", wantCode: 1},
+			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=default&name=k", wantCode: 1, wantErr: "get failed: HTTP 401"},
 		{name: "list prints names, never values", args: []string{"list", "--namespace", "prod"}, status: 200,
 			resp:       `{"namespace":"prod","secrets":[{"name":"a","value":"PLAINTEXT","created_at":"t1"},{"name":"b","created_at":"t2"}]}`,
 			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=prod", wantStdout: "a\tt1\nb\tt2\n"},
 		{name: "list error", args: []string{"list"}, status: 401, resp: `{}`,
-			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=default", wantCode: 1},
+			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=default", wantCode: 1, wantErr: "list failed: HTTP 401"},
 		{name: "revoke", args: []string{"revoke", "api-key", "--namespace", "prod"}, status: 200, resp: `{"ok":true}`,
 			wantMethod: "POST", wantPath: "/v1/secrets/prod/api-key/revoke", wantBody: map[string]any{},
 			wantStdout: "Secret revoked.\n"},
@@ -129,24 +130,24 @@ func TestSubcommands(t *testing.T) {
 		{name: "fingerprint", args: []string{"fingerprint", "api-key", "--namespace", "prod"}, status: 200, resp: `{"fingerprint":"ab12cd"}`,
 			wantMethod: "GET", wantPath: "/v1/secrets/prod/api-key", wantStdout: "ab12cd\n"},
 		{name: "fingerprint missing", args: []string{"fingerprint", "k"}, status: 200, resp: `{"name":"k"}`,
-			wantMethod: "GET", wantPath: "/v1/secrets/default/k", wantCode: 1},
+			wantMethod: "GET", wantPath: "/v1/secrets/default/k", wantCode: 1, wantErr: "server did not return a fingerprint"},
 		{name: "rotate", args: []string{"rotate", "--target", "dek"}, status: 200, resp: `{"ok":true}`,
 			wantMethod: "POST", wantPath: "/v1/rotate", wantBody: map[string]any{"target": "dek"},
 			wantStdout: "Rotation complete.\n"},
 		{name: "verify-audit ok", args: []string{"verify-audit"}, status: 200, resp: `{"ok":true}`,
 			wantMethod: "POST", wantPath: "/v1/audit/verify", wantBody: map[string]any{}, wantStdout: "OK\n"},
 		{name: "verify-audit tampered exits 2", args: []string{"verify-audit"}, status: 200, resp: `{"ok":false}`,
-			wantMethod: "POST", wantPath: "/v1/audit/verify", wantBody: map[string]any{}, wantCode: 2, wantStdout: "TAMPERED\n"},
+			wantMethod: "POST", wantPath: "/v1/audit/verify", wantBody: map[string]any{}, wantCode: 2, wantStdout: "TAMPERED\n", wantErr: "audit chain verification failed"},
 		{name: "verify-audit legacy valid field", args: []string{"verify-audit"}, status: 200, resp: `{"valid":true}`,
 			wantMethod: "POST", wantPath: "/v1/audit/verify", wantBody: map[string]any{}, wantStdout: "OK\n"},
 		{name: "verify-audit no verdict", args: []string{"verify-audit"}, status: 200, resp: `{}`,
-			wantMethod: "POST", wantPath: "/v1/audit/verify", wantBody: map[string]any{}, wantCode: 1},
+			wantMethod: "POST", wantPath: "/v1/audit/verify", wantBody: map[string]any{}, wantCode: 1, wantErr: "server response has no verdict"},
 		{name: "audit", args: []string{"audit", "--limit", "5"}, status: 200, resp: `{"entries":[]}`,
 			wantMethod: "GET", wantPath: "/v1/audit", wantQuery: "limit=5", wantStdout: `{"entries":[]}` + "\n"},
 		{name: "status ok", args: []string{"status"}, status: 200, resp: `{"status":"ok"}`, noAuth: true,
 			wantMethod: "GET", wantPath: "/healthz", wantStdout: "Server OK: {URL}\n"},
 		{name: "status unhealthy", args: []string{"status"}, status: 503, resp: `{}`, noAuth: true,
-			wantMethod: "GET", wantPath: "/healthz", wantCode: 1, wantStdout: "Server unreachable: {URL} (HTTP 503)\n"},
+			wantMethod: "GET", wantPath: "/healthz", wantCode: 1, wantStdout: "Server unreachable: {URL} (HTTP 503)\n", wantErr: "unexpected status: 503"},
 	}
 
 	for _, tc := range cases {
@@ -165,8 +166,13 @@ func TestSubcommands(t *testing.T) {
 			if tc.wantCode == 0 && stderr != "" {
 				t.Errorf("unexpected stderr %q", stderr)
 			}
-			if tc.wantCode != 0 && !strings.HasPrefix(stderr, "Error: ") {
-				t.Errorf("stderr = %q, want an Error: line", stderr)
+			if tc.wantCode != 0 {
+				if tc.wantErr == "" {
+					t.Fatal("failing case must set wantErr")
+				}
+				if !strings.HasPrefix(stderr, "Error: ") || !strings.Contains(stderr, tc.wantErr) {
+					t.Errorf("stderr = %q, want Error: ...%s", stderr, tc.wantErr)
+				}
 			}
 			if strings.Contains(stdout, "PLAINTEXT") {
 				t.Errorf("list leaked a value: %q", stdout)
@@ -241,6 +247,18 @@ func TestTokenResolution(t *testing.T) {
 	}
 	if got := []string{(*seen)[0].Auth, (*seen)[1].Auth}; got[0] != "Bearer from-env" || got[1] != "Bearer from-file" {
 		t.Errorf("auth headers = %v", got)
+	}
+}
+
+func TestGetRejectsEmptyName(t *testing.T) {
+	isolateEnv(t)
+	srv, seen := recordingServer(t, 200, `{"secrets":[]}`)
+	code, _, stderr := runCLI(t, "", "--host", srv.URL, "get", "")
+	if code != 1 || !strings.Contains(stderr, "secret name must not be empty") {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	if len(*seen) != 0 {
+		t.Error("empty name reached the server (would be an unfiltered list)")
 	}
 }
 
