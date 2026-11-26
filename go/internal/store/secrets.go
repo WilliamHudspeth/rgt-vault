@@ -51,6 +51,8 @@ type SetSecretParams struct {
 	Namespace  string
 	Name       string
 	Ciphertext []byte
+	// DEKVersion is stored as given; 0 means legacy (Fernet). Callers
+	// writing with the current DEK pass 1, as Python's vault does.
 	DEKVersion int64
 	// SecretID is used only for a brand-new name; an existing name keeps its
 	// secret_id. Empty means generate a UUIDv4.
@@ -66,7 +68,6 @@ type SetSecretParams struct {
 // version number.
 func (s *Store) SetSecret(ctx context.Context, p SetSecretParams) (int64, error) {
 	sum := checksum(p.Ciphertext)
-	now := audit.PyISOTime(s.now())
 	secretID := p.SecretID
 	if secretID == "" {
 		var err error
@@ -76,6 +77,8 @@ func (s *Store) SetSecret(ctx context.Context, p SetSecretParams) (int64, error)
 	}
 	var next int64
 	err := s.writeTx(ctx, func(tx *sql.Tx) error {
+		// Stamp inside the lock so versions of one name never go back in time.
+		now := audit.PyISOTime(s.now())
 		var existing string
 		err := tx.QueryRowContext(ctx,
 			"SELECT secret_id FROM secrets WHERE namespace = ? AND name = ? LIMIT 1", p.Namespace, p.Name).Scan(&existing)
@@ -422,16 +425,26 @@ func (s *Store) BulkRewriteLegacySecrets(ctx context.Context, fn RewriteFunc) (i
 }
 
 func (s *Store) bulkRewrite(ctx context.Context, where string, fn RewriteFunc) (int, error) {
+	if fn == nil {
+		return 0, newValueError("rewrite function must not be nil")
+	}
 	n := 0
 	err := s.writeTx(ctx, func(tx *sql.Tx) error {
 		// Page by id instead of holding one cursor open across the UPDATEs
 		// (Python's fetchmany): the same rows, bounded memory, and no
 		// statement is stepped while the table it reads is modified.
-		var last int64 = -1 << 63
+		var last int64
+		first := true
 		for {
+			cond := ""
+			args := []any{rewriteBatch}
+			if !first {
+				cond = " AND id > ?"
+				args = []any{last, rewriteBatch}
+			}
 			batch, err := s.querySecretRecords(ctx, tx,
 				"SELECT id, namespace, name, ciphertext, dek_version FROM secrets WHERE "+where+
-					" AND id > ? ORDER BY id LIMIT ?", last, rewriteBatch)
+					cond+" ORDER BY id LIMIT ?", args...)
 			if err != nil {
 				return err
 			}
@@ -450,7 +463,7 @@ func (s *Store) bulkRewrite(ctx context.Context, where string, fn RewriteFunc) (
 				}
 				n++
 			}
-			last = batch[len(batch)-1].ID
+			last, first = batch[len(batch)-1].ID, false
 		}
 	})
 	if err != nil {

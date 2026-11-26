@@ -98,21 +98,33 @@ func (s *Store) DEKUsage(ctx context.Context) (count, nbytes int64, err error) {
 	return s.dekUsage(ctx, s.db)
 }
 
+// dekUsage reads both counters with ONE statement, so the pair always comes
+// from a single read snapshot (no torn read against a concurrent increment
+// or reset).
 func (s *Store) dekUsage(ctx context.Context, q querier) (count, nbytes int64, err error) {
-	for _, kv := range []struct {
-		key string
-		dst *int64
-	}{{"dek_encrypt_count", &count}, {"dek_encrypt_bytes", &nbytes}} {
-		v, ok, err := s.readMeta(ctx, q, kv.key)
+	rows, err := q.QueryContext(ctx,
+		"SELECT key, value FROM metadata WHERE key IN ('dek_encrypt_count', 'dek_encrypt_bytes')")
+	if err != nil {
+		return 0, 0, fmt.Errorf("store: read DEK usage: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return 0, 0, fmt.Errorf("store: read DEK usage: %w", err)
+		}
+		n, err := parseMetaInt(k, v)
 		if err != nil {
 			return 0, 0, err
 		}
-		if !ok {
-			continue
+		if k == "dek_encrypt_count" {
+			count = n
+		} else {
+			nbytes = n
 		}
-		if *kv.dst, err = parseMetaInt(kv.key, v); err != nil {
-			return 0, 0, err
-		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, 0, fmt.Errorf("store: read DEK usage: %w", err)
 	}
 	return count, nbytes, nil
 }

@@ -76,7 +76,11 @@ func (s *Store) appendAuditInTx(ctx context.Context, tx *sql.Tx, ev AuditEvent) 
 		// Python: prev_row[0] -- a NULL entry_hash is impossible (NOT NULL).
 		prev = p.String
 	}
-	e := audit.Next(prev, s.now(), ev.Action, ev.SecretName.String, ev.Details, ev.PolicyHash)
+	name := ""
+	if ev.SecretName.Valid {
+		name = ev.SecretName.String
+	}
+	e := audit.Next(prev, s.now(), ev.Action, name, ev.Details, ev.PolicyHash)
 	if _, err := tx.ExecContext(ctx, `
             INSERT INTO audit_logs (action, secret_name, timestamp, details, prev_hash, entry_hash, policy_hash, agent_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,

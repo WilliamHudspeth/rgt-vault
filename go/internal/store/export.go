@@ -6,7 +6,9 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -67,12 +69,19 @@ type Export struct {
 // ExportData dumps the three tables (export_data). Rows are in SQLite's
 // natural order with every column, as SELECT * returns them.
 func (s *Store) ExportData(ctx context.Context) (*Export, error) {
-	// One read transaction gives a consistent snapshot of all three tables.
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	// One DEFERRED read transaction on a pinned connection gives a consistent
+	// snapshot of all three tables without taking the write lock (db.BeginTx
+	// would issue BEGIN IMMEDIATE because of _txlock=immediate), so WAL lets
+	// writers proceed while an export runs.
+	tx, err := s.db.Conn(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("store: export: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() { _ = tx.Close() }()
+	if _, err := tx.ExecContext(ctx, "BEGIN DEFERRED"); err != nil {
+		return nil, fmt.Errorf("store: export: %w", err)
+	}
+	defer func() { _, _ = tx.ExecContext(context.WithoutCancel(ctx), "ROLLBACK") }()
 	out := &Export{}
 	if out.Secrets, err = dumpTable(ctx, tx, "SELECT * FROM secrets"); err != nil {
 		return nil, err
@@ -140,7 +149,7 @@ func DecodeImportJSON(b []byte) (any, error) {
 	if err := dec.Decode(&v); err != nil {
 		return nil, err
 	}
-	if dec.More() {
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("store: trailing data after JSON document")
 	}
 	return v, nil
@@ -303,6 +312,9 @@ func bindAll(vals ...any) ([]any, error) {
 		case json.Number:
 			if n, err := x.Int64(); err == nil {
 				out[i] = n
+			} else if !strings.ContainsAny(x.String(), ".eE") {
+				// Python's sqlite3 raises OverflowError for ints beyond int64.
+				return nil, newValueError("Error binding parameter %d: Python int too large to convert to SQLite INTEGER", i+1)
 			} else if f, err := x.Float64(); err == nil {
 				out[i] = f
 			} else {

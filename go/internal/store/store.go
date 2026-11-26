@@ -66,10 +66,10 @@ const createSchemaMigrations = `
 // connParams are applied to every pooled connection. They are the PRAGMAs
 // Python's _get_conn runs on each new connection, plus _txlock=immediate so
 // that every database/sql transaction starts with BEGIN IMMEDIATE.
-const connParams = "_pragma=foreign_keys(ON)" +
+const connParams = "_pragma=busy_timeout(5000)" +
+	"&_pragma=foreign_keys(ON)" +
 	"&_pragma=journal_mode(WAL)" +
 	"&_pragma=synchronous(NORMAL)" +
-	"&_pragma=busy_timeout(5000)" +
 	"&_txlock=immediate"
 
 // DefaultDBPath returns ~/.secure-vault/vault.db (Python DEFAULT_DB_PATH).
@@ -102,6 +102,10 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if strings.ContainsRune(path, '?') {
 		// The driver splits the DSN at the first '?'.
 		return nil, fmt.Errorf("store: database path must not contain '?': %q", path)
+	}
+	if strings.HasPrefix(path, "file:") {
+		// The driver would treat the whole DSN as a SQLite URI.
+		return nil, fmt.Errorf("store: database path must not start with \"file:\": %q", path)
 	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -239,7 +243,7 @@ func (s *Store) applyMigrations(ctx context.Context) error {
 		if _, err := conn.ExecContext(ctx, m.sql); err != nil {
 			// A script that opened its own transaction (0002) may have
 			// left it open on failure; close it so the connection is clean.
-			_, _ = conn.ExecContext(ctx, "ROLLBACK")
+			_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
 			return fmt.Errorf("store: migration %s: %w", m.name, err)
 		}
 		if _, err := conn.ExecContext(ctx,
