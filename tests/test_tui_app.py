@@ -84,7 +84,14 @@ def _status(app) -> str:
 
 async def _settle(app, pilot):
     await pilot.pause()
-    await app.workers.wait_for_complete()
+    # Exclusive workers (the poll/refresh) are cancelled when a newer one starts, which
+    # makes wait_for_complete() raise WorkerCancelled on some platforms; just keep waiting.
+    for _ in range(5):
+        try:
+            await app.workers.wait_for_complete()
+            break
+        except Exception:
+            await pilot.pause()
     await pilot.pause()
 
 

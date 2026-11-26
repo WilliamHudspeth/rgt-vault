@@ -788,7 +788,7 @@ def build_app(
                 )
         return {"agent": agent, "capabilities": authorized}
 
-    app.vault = vault  # type: ignore[attr-defined]
+    setattr(app, "vault", vault)
     return app
 
 
