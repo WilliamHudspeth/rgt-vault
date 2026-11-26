@@ -116,7 +116,9 @@ class CapabilitySpec:
             raise ValidationError("capability payload must be a dict")
 
         if _is_pydantic_model(self.params_schema):
-            from pydantic import TypeAdapter, ValidationError as PydanticValidationError
+            from pydantic import TypeAdapter
+            from pydantic import ValidationError as PydanticValidationError
+
             try:
                 TypeAdapter(self.params_schema).validate_python(payload)
                 return
@@ -126,6 +128,7 @@ class CapabilitySpec:
         if isinstance(self.params_schema, dict):
             try:
                 import jsonschema
+
                 try:
                     jsonschema.validate(instance=payload, schema=self.params_schema)
                     return

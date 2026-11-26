@@ -1,4 +1,5 @@
 """RGT-493: capability registration/validation must work without pydantic."""
+
 import builtins
 
 import pytest

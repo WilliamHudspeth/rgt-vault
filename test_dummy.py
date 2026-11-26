@@ -1,5 +1,6 @@
 import os
 
+
 def test_setup():
     print("Creating symlink...")
     if not os.path.exists("rgt_vault"):

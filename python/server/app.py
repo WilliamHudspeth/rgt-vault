@@ -21,10 +21,10 @@ import uuid
 from typing import Any, Dict, Optional
 
 try:
-    from fastapi import Depends, FastAPI, Header, HTTPException, Request, status, Response
-    from fastapi.responses import JSONResponse
+    from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.middleware.trustedhost import TrustedHostMiddleware
+    from fastapi.responses import JSONResponse
     from pydantic import BaseModel, Field
 except ModuleNotFoundError as e:  # pragma: no cover - exercised only without extra
     raise ImportError(
@@ -57,6 +57,7 @@ class StrictURLNormalizationMiddleware:
     async def __call__(self, scope: Any, receive: Any, send: Any) -> Any:
         if scope["type"] == "http":
             import urllib.parse
+
             path = scope.get("path", "")
             raw_path = scope.get("raw_path", b"").decode("utf-8", errors="ignore")
             decoded_raw_path = urllib.parse.unquote(raw_path)
@@ -65,18 +66,22 @@ class StrictURLNormalizationMiddleware:
                 has_control = any(ord(c) < 32 or ord(c) == 127 for c in p)
                 if ".." in p or "\\" in p or "//" in p or has_control:
                     response_body = b'{"error":"BadRequest","detail":"Invalid URI path"}'
-                    await send({
-                        "type": "http.response.start",
-                        "status": 400,
-                        "headers": [
-                            (b"content-type", b"application/json"),
-                            (b"content-length", str(len(response_body)).encode("ascii")),
-                        ]
-                    })
-                    await send({
-                        "type": "http.response.body",
-                        "body": response_body,
-                    })
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": 400,
+                            "headers": [
+                                (b"content-type", b"application/json"),
+                                (b"content-length", str(len(response_body)).encode("ascii")),
+                            ],
+                        }
+                    )
+                    await send(
+                        {
+                            "type": "http.response.body",
+                            "body": response_body,
+                        }
+                    )
                     return
         await self.app(scope, receive, send)
 
@@ -182,10 +187,12 @@ def build_app(
     from rgt_vault.approval import ApprovalBroker as _Broker
 
     active_broker: Optional[_Broker] = broker
-    if active_broker is None and isinstance(getattr(vault, "approval_gate", None), _Broker):
-        active_broker = vault.approval_gate
+    gate = getattr(vault, "approval_gate", None)
+    if active_broker is None and isinstance(gate, _Broker):
+        active_broker = gate
 
     import os
+
     is_prod = os.getenv("APP_ENV") == "production"
 
     app = FastAPI(
@@ -199,7 +206,7 @@ def build_app(
     )
 
     if not is_prod:
-        from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
+        from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
         from fastapi.responses import HTMLResponse
 
         SWAGGER_UI_VERSION = "5.17.14"
@@ -212,7 +219,7 @@ def build_app(
         async def custom_swagger_ui_html(request: Request) -> HTMLResponse:
             swagger_js = f"https://cdn.jsdelivr.net/npm/swagger-ui-dist@{SWAGGER_UI_VERSION}/swagger-ui-bundle.js"
             swagger_css = f"https://cdn.jsdelivr.net/npm/swagger-ui-dist@{SWAGGER_UI_VERSION}/swagger-ui.css"
-            
+
             response = get_swagger_ui_html(
                 openapi_url=app.openapi_url or "/openapi.json",
                 title=app.title + " - Swagger UI",
@@ -221,36 +228,33 @@ def build_app(
                 swagger_css_url=swagger_css,
                 swagger_favicon_url="https://fastapi.tiangolo.com/img/favicon.png",
             )
-            
-            html = response.body.decode("utf-8")
+
+            html = bytes(response.body).decode("utf-8")
             html = html.replace(
                 f'href="{swagger_css}"',
-                f'href="{swagger_css}" integrity="{SWAGGER_CSS_INTEGRITY}" crossorigin="anonymous"'
+                f'href="{swagger_css}" integrity="{SWAGGER_CSS_INTEGRITY}" crossorigin="anonymous"',
             )
             html = html.replace(
-                f'src="{swagger_js}"',
-                f'src="{swagger_js}" integrity="{SWAGGER_JS_INTEGRITY}" crossorigin="anonymous"'
+                f'src="{swagger_js}"', f'src="{swagger_js}" integrity="{SWAGGER_JS_INTEGRITY}" crossorigin="anonymous"'
             )
             return HTMLResponse(content=html, status_code=response.status_code)
 
         @app.get("/redoc", include_in_schema=False)
         async def custom_redoc_html(request: Request) -> HTMLResponse:
             redoc_js = f"https://cdn.jsdelivr.net/npm/redoc@{REDOC_VERSION}/bundles/redoc.standalone.js"
-            
+
             response = get_redoc_html(
                 openapi_url=app.openapi_url or "/openapi.json",
                 title=app.title + " - ReDoc",
                 redoc_js_url=redoc_js,
                 redoc_favicon_url="https://fastapi.tiangolo.com/img/favicon.png",
             )
-            
-            html = response.body.decode("utf-8")
+
+            html = bytes(response.body).decode("utf-8")
             html = html.replace(
-                f'src="{redoc_js}"',
-                f'src="{redoc_js}" integrity="{REDOC_JS_INTEGRITY}" crossorigin="anonymous"'
+                f'src="{redoc_js}"', f'src="{redoc_js}" integrity="{REDOC_JS_INTEGRITY}" crossorigin="anonymous"'
             )
             return HTMLResponse(content=html, status_code=response.status_code)
-
 
     # 1. RGT-436 / RGT-119: DNS Rebinding Protection
     # Rejects requests with suspicious Host headers. Default to loopback.
@@ -281,6 +285,7 @@ def build_app(
             new_csrf_token = None
             if not csrf_cookie:
                 import secrets
+
                 new_csrf_token = secrets.token_urlsafe(32)
 
             response = await call_next(request)
@@ -318,6 +323,7 @@ def build_app(
         csrf_header = request.headers.get("x-csrf-token") or request.headers.get("x-xsrf-token")
 
         import hmac
+
         if not csrf_cookie or not csrf_header or not hmac.compare_digest(csrf_cookie, csrf_header):
             return JSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -334,17 +340,17 @@ def build_app(
         if accept_header and not any(mime in accept_header for mime in ("application/json", "*/*", "application/*")):
             return JSONResponse(
                 status_code=status.HTTP_406_NOT_ACCEPTABLE,
-                content={"error": "NotAcceptable", "detail": "Server only supports application/json responses"}
+                content={"error": "NotAcceptable", "detail": "Server only supports application/json responses"},
             )
 
         # A. Enforce Content-Type for POST, PUT, PATCH on API endpoints (RGT-453)
         if request.method in ("POST", "PUT", "PATCH") and request.url.path.startswith("/v1/"):
             content_type = request.headers.get("content-type", "")
-            
+
             content_length = request.headers.get("content-length")
             is_chunked = request.headers.get("transfer-encoding", "").lower() == "chunked"
             has_body = (content_length and int(content_length) > 0) or is_chunked
-            
+
             if has_body or content_type:
                 if "application/json" not in content_type:
                     return JSONResponse(
@@ -450,7 +456,10 @@ def build_app(
             incident_id = _make_incident_id()
             logger.warning(
                 "incident=%s status=%s error=%s path=%s",
-                incident_id, status_code, exc_type.__name__, request.url.path,
+                incident_id,
+                status_code,
+                exc_type.__name__,
+                request.url.path,
             )
             return JSONResponse(
                 status_code=status_code,
@@ -499,16 +508,16 @@ def build_app(
         empty_policy = (
             '<?xml version="1.0"?>\n'
             '<!DOCTYPE cross-domain-policy SYSTEM "http://www.adobe.com/xml/dtds/cross-domain-policy.dtd">\n'
-            '<cross-domain-policy>\n'
+            "<cross-domain-policy>\n"
             '  <site-control permitted-cross-domain-policies="none"/>\n'
-            '</cross-domain-policy>'
+            "</cross-domain-policy>"
         )
         headers = {
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
             "X-Content-Type-Options": "nosniff",
-            "Content-Type": "application/xml"
+            "Content-Type": "application/xml",
         }
         return Response(content=empty_policy, status_code=404, headers=headers)
 
@@ -754,12 +763,10 @@ def build_app(
                 for s in specs
             ]
         }
+
     @app.get("/v1/capabilities/list")
     def list_authorized_capabilities(
-        agent: str,
-        namespace: str = "*",
-        purpose: str = "*",
-        token_id: str = Depends(require_token)
+        agent: str, namespace: str = "*", purpose: str = "*", token_id: str = Depends(require_token)
     ) -> Dict[str, Any]:
         """Discovery API for agents to see what capabilities they are authorized for.
 
@@ -781,7 +788,7 @@ def build_app(
                 )
         return {"agent": agent, "capabilities": authorized}
 
-    app.vault = vault
+    app.vault = vault  # type: ignore[attr-defined]
     return app
 
 

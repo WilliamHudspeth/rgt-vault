@@ -75,10 +75,10 @@ def main():
         created = t.get("created_at")
         updated = t.get("updated_at")
         try:
-            created_dt = datetime.fromisoformat(created.replace("Z", "+00:00")) if created else None
+            created_dt = datetime.fromisoformat(created.replace("Z", "+00:00")) if created else None  # noqa: F841 (parsed to validate format)
             updated_dt = datetime.fromisoformat(updated.replace("Z", "+00:00")) if updated else None
         except Exception:
-            created_dt = updated_dt = None
+            updated_dt = None
 
         # Per-engineer (only count human-assigned; agents don't have WIP limits)
         if is_active(t) and assignee_type == "member" and assignee_id:

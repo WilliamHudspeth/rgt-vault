@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hashlib
 import time
-from datetime import timezone
 from pathlib import Path
 
 import pytest
@@ -23,7 +22,6 @@ from rgt_vault.email_verification import (
     verify_token,
 )
 from rgt_vault.storage.sqlite import StorageBackend
-
 
 # ---------------------------------------------------------------------------
 # RGT-392  Email verification tokens
@@ -56,7 +54,7 @@ class TestEmailVerification:
     def test_verify_non_string_raises(self):
         token, expires_at = generate_token()
         with pytest.raises(EmailVerificationError):
-            verify_token(b"bytes", token, expires_at)  # type: ignore[arg-type]
+            verify_token(b"bytes", token, expires_at)
 
     def test_generate_requires_positive_ttl(self):
         with pytest.raises(ValueError):
@@ -74,27 +72,33 @@ class TestEmailVerification:
 
 
 class TestEmailSyntax:
-    @pytest.mark.parametrize("addr", [
-        "user@example.com",
-        "will+tag@homelab.local",
-        "a.b.c@sub.domain.org",
-    ])
+    @pytest.mark.parametrize(
+        "addr",
+        [
+            "user@example.com",
+            "will+tag@homelab.local",
+            "a.b.c@sub.domain.org",
+        ],
+    )
     def test_valid_addresses(self, addr):
         assert is_valid_email_syntax(addr)
 
-    @pytest.mark.parametrize("addr", [
-        "notanemail",
-        "@domain.com",
-        "user@",
-        "",
-        "a" * 255 + "@x.com",
-    ])
+    @pytest.mark.parametrize(
+        "addr",
+        [
+            "notanemail",
+            "@domain.com",
+            "user@",
+            "",
+            "a" * 255 + "@x.com",
+        ],
+    )
     def test_invalid_addresses(self, addr):
         assert not is_valid_email_syntax(addr)
 
     def test_non_string_returns_false(self):
-        assert not is_valid_email_syntax(None)  # type: ignore[arg-type]
-        assert not is_valid_email_syntax(123)   # type: ignore[arg-type]
+        assert not is_valid_email_syntax(None)
+        assert not is_valid_email_syntax(123)
 
 
 # ---------------------------------------------------------------------------
@@ -144,19 +148,25 @@ class TestUTCTimestamps:
         entry = backend.get_audit_log(limit=1)[0]
         ts = entry["timestamp"]
         from datetime import datetime
+
         parsed = datetime.fromisoformat(ts)
         assert parsed.tzinfo is not None, "timestamp has no timezone info"
-        utc_offset = parsed.utcoffset().total_seconds()
+        offset = parsed.utcoffset()
+        assert offset is not None
+        utc_offset = offset.total_seconds()
         assert utc_offset == 0, f"timestamp not in UTC: offset={utc_offset}s"
 
     def test_multiple_entries_all_utc(self, backend: StorageBackend):
         for i in range(5):
             backend.log_audit(f"ACTION_{i}", None, "")
         from datetime import datetime
+
         for entry in backend.get_audit_log(limit=5):
             parsed = datetime.fromisoformat(entry["timestamp"])
             assert parsed.tzinfo is not None
-            assert parsed.utcoffset().total_seconds() == 0
+            offset = parsed.utcoffset()
+            assert offset is not None
+            assert offset.total_seconds() == 0
 
 
 class TestConstantTimeAuditChain:
@@ -169,6 +179,7 @@ class TestConstantTimeAuditChain:
         entries = list(reversed(backend.get_audit_log(limit=3)))
         # Recompute hashes and verify constant-time path never early-exits
         import hmac as _hmac
+
         prev_hash = ""
         for entry in entries:
             raw = (
@@ -181,8 +192,9 @@ class TestConstantTimeAuditChain:
             prev_hash = entry["entry_hash"]
 
     def test_tampered_entry_detected(self, backend: StorageBackend):
-        import sqlite3
         import hmac as _hmac
+        import sqlite3
+
         db_path = backend.db_path
         backend.log_audit("REAL", "s", "legit")
         with sqlite3.connect(db_path) as conn:

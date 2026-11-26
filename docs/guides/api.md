@@ -24,7 +24,7 @@ vault.rotate_dek()
 `KeyringProvider` supports automated rotation. DPAPI/TPM providers require re-sealing the master secret out-of-band.
 
 ```python
-blob = vault.export_vault()          # base64 JSON; secret values stay encrypted
+blob = vault.export_vault()  # base64 JSON; secret values stay encrypted
 # ... store `blob` somewhere durable ...
 
 # Restore MUST target the same vault: same vault_id and the original

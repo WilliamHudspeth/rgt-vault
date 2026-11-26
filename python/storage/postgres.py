@@ -1,15 +1,17 @@
 import hashlib
 from typing import Optional, Tuple
-import psycopg2
+
 from psycopg2.pool import ThreadedConnectionPool
 
 from rgt_vault.exceptions import ChecksumError
+
 
 class PostgresStorageBackendPoC:
     """
     Read-only Proof of Concept for a Postgres storage backend.
     Demonstrates connection pooling and a basic get_secret flow.
     """
+
     def __init__(self, dsn: str):
         # 1. Connection Pooling
         # In a multi-process/multi-thread environment, a connection pool is required.
@@ -24,24 +26,24 @@ class PostgresStorageBackendPoC:
         try:
             with conn.cursor() as cursor:
                 # 2. Transaction Semantics (Read)
-                # In Postgres, we don't need BEGIN IMMEDIATE. 
+                # In Postgres, we don't need BEGIN IMMEDIATE.
                 # If we were writing/auditing here (like SQLite does), we would use SELECT ... FOR UPDATE on the audit log.
-                
+
                 if version is not None:
                     cursor.execute(
-                        \"\"\"
+                        """
                         SELECT ciphertext, checksum, dek_version FROM secrets
                         WHERE namespace = %s AND name = %s AND version = %s
-                        \"\"\",
+                        """,
                         (namespace, name, version),
                     )
                 else:
                     cursor.execute(
-                        \"\"\"
+                        """
                         SELECT ciphertext, checksum, dek_version FROM secrets
                         WHERE namespace = %s AND name = %s AND status = 'ACTIVE'
                         ORDER BY version DESC LIMIT 1
-                        \"\"\",
+                        """,
                         (namespace, name),
                     )
 
@@ -49,7 +51,7 @@ class PostgresStorageBackendPoC:
 
                 if row:
                     ciphertext, checksum, dek_version = row
-                    
+
                     # Convert psycopg2 memoryview/bytes to raw bytes
                     if isinstance(ciphertext, memoryview):
                         ciphertext = ciphertext.tobytes()

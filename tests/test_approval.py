@@ -6,6 +6,7 @@ import threading
 import time
 
 import pytest
+
 from rgt_vault import totp
 from rgt_vault.approval import (
     ApprovalBroker,
@@ -161,8 +162,9 @@ def test_require_2fa_flag_survives_export_import():
 def test_note_and_2fa_flag_persist_and_list():
     with tempfile.TemporaryDirectory() as tmp:
         v = _vault(tmp)
-        v.set_secret("API", "sk-1", namespace="ns", agent="admin",
-                     note="prod OpenAI key, billing team", require_2fa=True)
+        v.set_secret(
+            "API", "sk-1", namespace="ns", agent="admin", note="prod OpenAI key, billing team", require_2fa=True
+        )
         listed = v.list_secrets("ns", agent="admin")
         assert len(listed) == 1
         assert listed[0]["name"] == "API"

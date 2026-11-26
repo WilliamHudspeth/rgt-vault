@@ -17,10 +17,9 @@ import re
 import signal
 import sys
 import unicodedata
-from typing import Any, Container, Optional
+from typing import Any, Literal, Optional
 
 from rgt_vault.exceptions import ValidationError
-
 
 # ---------------------------------------------------------------------------
 # RGT-383: Allowlist-based positive validation
@@ -53,10 +52,7 @@ def validate_name(value: str) -> str:
     if len(value) > 256:
         raise ValidationError("'name' exceeds the maximum allowed length of 256 characters.")
     if not _NAME_ALLOWLIST_RE.match(value):
-        raise ValidationError(
-            "'name' contains characters not permitted by the allowlist "
-            "(allowed: a-z A-Z 0-9 _ . -)."
-        )
+        raise ValidationError("'name' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -).")
     return value
 
 
@@ -70,8 +66,7 @@ def validate_namespace(value: str) -> str:
         raise ValidationError("'namespace' exceeds the maximum allowed length of 128 characters.")
     if not _NAMESPACE_ALLOWLIST_RE.match(value):
         raise ValidationError(
-            "'namespace' contains characters not permitted by the allowlist "
-            "(allowed: a-z A-Z 0-9 _ . -)."
+            "'namespace' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . -)."
         )
     return value
 
@@ -86,8 +81,7 @@ def validate_agent(value: str) -> str:
         raise ValidationError("'agent' exceeds the maximum allowed length of 128 characters.")
     if not _AGENT_ALLOWLIST_RE.match(value):
         raise ValidationError(
-            "'agent' contains characters not permitted by the allowlist "
-            "(allowed: a-z A-Z 0-9 _ . - @)."
+            "'agent' contains characters not permitted by the allowlist (allowed: a-z A-Z 0-9 _ . - @)."
         )
     return value
 
@@ -95,6 +89,7 @@ def validate_agent(value: str) -> str:
 # ---------------------------------------------------------------------------
 # RGT-376 / RGT-382: Integer bound validation
 # ---------------------------------------------------------------------------
+
 
 def validate_int_bound(
     param_name: str,
@@ -114,17 +109,11 @@ def validate_int_bound(
     inputs can still be semantically out-of-range (e.g. a negative limit).
     """
     if isinstance(value, bool) or not isinstance(value, int):
-        raise ValidationError(
-            f"'{param_name}' must be an integer; got {type(value).__name__}."
-        )
+        raise ValidationError(f"'{param_name}' must be an integer; got {type(value).__name__}.")
     if min_val is not None and value < min_val:
-        raise ValidationError(
-            f"'{param_name}' must be >= {min_val}; got {value}."
-        )
+        raise ValidationError(f"'{param_name}' must be >= {min_val}; got {value}.")
     if max_val is not None and value > max_val:
-        raise ValidationError(
-            f"'{param_name}' must be <= {max_val}; got {value}."
-        )
+        raise ValidationError(f"'{param_name}' must be <= {max_val}; got {value}.")
     return value
 
 
@@ -161,7 +150,7 @@ _SAFE_UNICODE_CATEGORIES = frozenset(
 )
 
 
-def normalize_unicode(text: str, form: str = "NFC") -> str:
+def normalize_unicode(text: str, form: Literal["NFC", "NFD", "NFKC", "NFKD"] = "NFC") -> str:
     """Return *text* after Unicode normalization to *form* (default: NFC).
 
     NFC normalization prevents homograph attacks where visually identical
@@ -178,8 +167,7 @@ def normalize_unicode(text: str, form: str = "NFC") -> str:
         cat = unicodedata.category(ch)
         if cat not in _SAFE_UNICODE_CATEGORIES:
             raise ValidationError(
-                f"Character at position {i} (U+{ord(ch):04X}, category {cat!r}) "
-                f"is not permitted in this field."
+                f"Character at position {i} (U+{ord(ch):04X}, category {cat!r}) is not permitted in this field."
             )
     return normalized
 
@@ -197,15 +185,14 @@ def validate_free_text(value: str, max_len: int = 512) -> str:
         raise ValidationError(f"Expected str; got {type(value).__name__}.")
     normalized = normalize_unicode(value)
     if len(normalized) > max_len:
-        raise ValidationError(
-            f"Field exceeds maximum length of {max_len} characters after normalization."
-        )
+        raise ValidationError(f"Field exceeds maximum length of {max_len} characters after normalization.")
     return normalized
 
 
 # ---------------------------------------------------------------------------
 # RGT-385: ReDoS-resistant regex execution
 # ---------------------------------------------------------------------------
+
 
 class _TimeoutError(Exception):
     """Raised when a regex match times out."""
