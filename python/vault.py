@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 import keyring
 from cryptography.fernet import Fernet, InvalidToken
+
 from rgt_vault.auth import ABACPolicyEngine
 from rgt_vault.capabilities import (
     CapabilityContext,
@@ -84,7 +85,7 @@ class RateLimiter:
 # both hard bounds so rotation is a routine, low-stakes event rather than a
 # last-second scramble.
 DEK_MAX_ENCRYPTIONS = 100_000_000
-DEK_MAX_BYTES = 512 * 1024 ** 3  # 512 GiB
+DEK_MAX_BYTES = 512 * 1024**3  # 512 GiB
 
 
 class VaultManager:
@@ -265,7 +266,9 @@ class VaultManager:
     def audit(self, event: str, secret_name: Optional[str], details: str, agent_id: Optional[str] = None) -> None:
         self._log_audit(event, secret_name, details, agent_id=agent_id)
 
-    def _log_audit(self, action: str, secret_name: Optional[str] = None, details: str = "", agent_id: Optional[str] = None) -> None:
+    def _log_audit(
+        self, action: str, secret_name: Optional[str] = None, details: str = "", agent_id: Optional[str] = None
+    ) -> None:
         self.storage.log_audit(action, secret_name, details, self.policy_hash, agent_id=agent_id)
 
     def _validate_string_param(self, param_name: str, value: Any, max_len: int, allow_empty: bool = False):
@@ -278,11 +281,12 @@ class VaultManager:
             raise ValidationError(f"'{param_name}' exceeds the maximum allowed length of {max_len} characters.")
 
         from rgt_vault.input_validation import (
-            validate_name,
-            validate_namespace,
             validate_agent,
             validate_free_text,
+            validate_name,
+            validate_namespace,
         )
+
         if param_name == "name":
             validate_name(value)
         elif param_name == "namespace":
@@ -987,7 +991,9 @@ class VaultManager:
         with self.lease_secret(secret_name, agent, namespace, purpose) as secret_buffer:
             return callback(secret_buffer)
 
-    def list_secrets(self, namespace: str, agent: str, purpose: str = "", limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    def list_secrets(
+        self, namespace: str, agent: str, purpose: str = "", limit: int = 100, offset: int = 0
+    ) -> List[Dict[str, Any]]:
         self._validate_string_param("namespace", namespace, max_len=128)
         self._validate_string_param("agent", agent, max_len=128)
         if purpose:

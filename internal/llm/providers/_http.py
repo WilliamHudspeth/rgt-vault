@@ -67,14 +67,14 @@ def post_json(
                 if retry_after is not None:
                     sleep_for = min(retry_after, backoff_cap)
                 else:
-                    sleep_for = min(backoff_base * (2 ** attempt), backoff_cap)
+                    sleep_for = min(backoff_base * (2**attempt), backoff_cap)
                 time.sleep(sleep_for)
                 attempt += 1
                 continue
             raise HTTPStatusError(e.code, err_body, retry_after=retry_after) from e
         except urllib.error.URLError as e:
             if attempt < retries:
-                sleep_for = min(backoff_base * (2 ** attempt), backoff_cap)
+                sleep_for = min(backoff_base * (2**attempt), backoff_cap)
                 time.sleep(sleep_for)
                 attempt += 1
                 continue

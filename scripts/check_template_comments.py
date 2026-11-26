@@ -11,6 +11,7 @@ SENSITIVE_PATTERNS = [
 HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
 JS_COMMENT_RE = re.compile(r"\/\/.*|\/\*[\s\S]*?\*\/")
 
+
 def check_file(path: Path) -> bool:
     content = path.read_text(errors="ignore")
     has_leak = False
@@ -29,6 +30,7 @@ def check_file(path: Path) -> bool:
                 has_leak = True
     return has_leak
 
+
 def main():
     has_errors = False
     for p in Path(".").rglob("*"):
@@ -38,6 +40,7 @@ def main():
     if has_errors:
         sys.exit(1)
     print("All template comment scans passed.")
+
 
 if __name__ == "__main__":
     main()

@@ -9,6 +9,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
+
 from rgt_vault import totp  # noqa: E402
 from rgt_vault.approval import ApprovalBroker  # noqa: E402
 from rgt_vault.server.actions import ActionRegistry, register_builtin_actions  # noqa: E402
@@ -65,9 +66,9 @@ def test_approve_flow_via_client(client):
 
     def agent():
         from rgt_vault.approval import ApprovalRequest
+
         decision["d"] = broker.consult(
-            ApprovalRequest(agent="tester", namespace="default", secret_name="API",
-                            purpose="p", require_2fa=True)
+            ApprovalRequest(agent="tester", namespace="default", secret_name="API", purpose="p", require_2fa=True)
         )
 
     t = threading.Thread(target=agent)
@@ -95,6 +96,7 @@ def test_deny_via_client(client):
 
     def agent():
         from rgt_vault.approval import ApprovalRequest
+
         decision["d"] = broker.consult(
             ApprovalRequest(agent="tester", namespace="default", secret_name="K", purpose="p")
         )

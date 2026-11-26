@@ -74,8 +74,9 @@ def part_a_static_policy(tmp: str) -> list:
         master_provider=_InMemoryProvider(),
     )
 
-    vault.set_secret("OPENAI_KEY", "sk-live-demo", namespace="openai", agent="admin",
-                     note="prod OpenAI key, embeddings team")
+    vault.set_secret(
+        "OPENAI_KEY", "sk-live-demo", namespace="openai", agent="admin", note="prod OpenAI key, embeddings team"
+    )
     print(f"{PASS} Secret stored (encrypted at rest; plaintext discarded)")
     results.append(True)
 
@@ -117,8 +118,14 @@ def part_b_live_approval(tmp: str) -> list:
         master_provider=_InMemoryProvider(),
         approval_gate=broker,
     )
-    vault.set_secret("OPENAI_KEY", "sk-live-demo", namespace="openai", agent="research_agent",
-                     note="needs human sign-off", require_2fa=True)
+    vault.set_secret(
+        "OPENAI_KEY",
+        "sk-live-demo",
+        namespace="openai",
+        agent="research_agent",
+        note="needs human sign-off",
+        require_2fa=True,
+    )
 
     def simulated_operator(action: str):
         # Stand in for a human at the TUI: wait for the request, then act.
