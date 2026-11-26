@@ -14,12 +14,12 @@ from cryptography.exceptions import InvalidTag
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-pytestmark = pytest.mark.fuzz
-
 from rgt_vault.crypto import decrypt, encrypt
 from rgt_vault.exceptions import DecryptionError, ValidationError
 from rgt_vault.keychain import AES256GCMWrapper
 from rgt_vault.vault import VaultManager
+
+pytestmark = pytest.mark.fuzz
 
 # --- AES-256-GCM (crypto.encrypt/decrypt) ----------------------------------
 

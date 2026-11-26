@@ -25,18 +25,20 @@ rules:
 vault = VaultManager(
     db_path="./.secure-vault/vault.db",
     policy_yaml=policy,
-    master_provider=KeyringProvider(),   # dev convenience
+    master_provider=KeyringProvider(),  # dev convenience
 )
 
 # Store a secret (admin is allowed to write any namespace)
 vault.set_secret("OPENAI_API_KEY", "sk-...", namespace="openai", agent="admin")
 
+
 # Use it without the plaintext leaking to the caller.
 # The callback receives a *bytearray* that is wiped when it returns.
 def call_api(key_buf: bytearray):
-    api_key = key_buf.decode("utf-8")   # your copy — your responsibility
-    ...                                 # use api_key
+    api_key = key_buf.decode("utf-8")  # your copy — your responsibility
+    ...  # use api_key
     return "done"
+
 
 result = vault.execute(
     agent="research_agent",

@@ -119,14 +119,15 @@ def test_same_vault_roundtrip_import_ok(temp_vault_dir):
 def test_go_binary_pie_hardening():
     """Verify that the compiled Go executable is compiled as a Position Independent Executable (PIE) (RGT-449)."""
     import subprocess
+
     binary_path = "go/rgt-vault"
-    
+
     if not os.path.exists(binary_path):
         pytest.skip(f"Compiled binary not found at {binary_path}. Run go build first.")
-        
+
     with open(binary_path, "rb") as f:
         elf_header = f.read(64)
-        
+
     # Check ELF Magic (bytes 0-3: \x7f ELF)
     if elf_header[:4] == b"\x7fELF":
         # ELF Type is at byte offset 16 (2 bytes)
@@ -138,7 +139,10 @@ def test_go_binary_pie_hardening():
         # If running on macOS or Windows, skip or verify using standard system tools
         try:
             res = subprocess.run(["file", binary_path], capture_output=True, text=True, check=True)
-            assert "pie" in res.stdout.lower() or "shared object" in res.stdout.lower() or "dynamically linked" in res.stdout.lower()
+            assert (
+                "pie" in res.stdout.lower()
+                or "shared object" in res.stdout.lower()
+                or "dynamically linked" in res.stdout.lower()
+            )
         except Exception:
             pytest.skip("Not an ELF binary and 'file' utility not available or failed.")
-
