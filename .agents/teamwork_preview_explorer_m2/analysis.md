@@ -111,6 +111,7 @@ This report provides a concrete analysis and implementation strategy for the sec
    HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
    JS_COMMENT_RE = re.compile(r"\/\/.*|\/\*[\s\S]*?\*\/")
 
+
    def check_file(path: Path) -> bool:
        content = path.read_text(errors="ignore")
        has_leak = False
@@ -129,6 +130,7 @@ This report provides a concrete analysis and implementation strategy for the sec
                    has_leak = True
        return has_leak
 
+
    def main():
        has_errors = False
        for p in Path(".").rglob("*"):
@@ -138,6 +140,7 @@ This report provides a concrete analysis and implementation strategy for the sec
        if has_errors:
            sys.exit(1)
        print("All template comment scans passed.")
+
 
    if __name__ == "__main__":
        main()
@@ -163,6 +166,7 @@ Add explicit route handlers inside `python/server/app.py`:
 ```python
 from fastapi.responses import Response
 
+
 @app.get("/crossdomain.xml", response_class=Response)
 @app.get("/clientaccesspolicy.xml", response_class=Response)
 def serve_restrictive_xml_policy():
@@ -170,16 +174,16 @@ def serve_restrictive_xml_policy():
     empty_policy = (
         '<?xml version="1.0"?>\n'
         '<!DOCTYPE cross-domain-policy SYSTEM "http://www.adobe.com/xml/dtds/cross-domain-policy.dtd">\n'
-        '<cross-domain-policy>\n'
+        "<cross-domain-policy>\n"
         '  <site-control permitted-cross-domain-policies="none"/>\n'
-        '</cross-domain-policy>'
+        "</cross-domain-policy>"
     )
     headers = {
         "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
         "Pragma": "no-cache",
         "Expires": "0",
         "X-Content-Type-Options": "nosniff",
-        "Content-Type": "application/xml"
+        "Content-Type": "application/xml",
     }
     return Response(content=empty_policy, status_code=404, headers=headers)
 ```

@@ -145,8 +145,9 @@ if _TEXTUAL_AVAILABLE:
             table.clear()
             self._req_index = {}
             for r in requests:
-                table.add_row(r.agent, r.secret_name, r.namespace, r.purpose,
-                              "yes" if r.require_2fa else "no", key=r.request_id)
+                table.add_row(
+                    r.agent, r.secret_name, r.namespace, r.purpose, "yes" if r.require_2fa else "no", key=r.request_id
+                )
                 self._req_index[r.request_id] = r
             self._set_status(f"{len(requests)} pending request(s)")
 
@@ -155,6 +156,8 @@ if _TEXTUAL_AVAILABLE:
             if not table.row_count:
                 return None
             row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+            if row_key.value is None:
+                return None
             return self._req_index.get(row_key.value)
 
         @on(Button.Pressed, "#approve")
@@ -214,8 +217,12 @@ if _TEXTUAL_AVAILABLE:
         def _store_worker(self, title: str, secret: str, note: str, require_2fa: bool) -> None:
             try:
                 self._client.set_secret(
-                    title, secret, namespace=self._namespace, agent="operator",
-                    note=note, require_2fa=require_2fa,
+                    title,
+                    secret,
+                    namespace=self._namespace,
+                    agent="operator",
+                    note=note,
+                    require_2fa=require_2fa,
                 )
                 msg = f"Stored '{title}'." + (" (2FA required to use)" if require_2fa else "")
             except Exception as e:
@@ -232,10 +239,7 @@ if _TEXTUAL_AVAILABLE:
 def run_tui(base_url: str, token: str, *, namespace: str = "default") -> int:
     """Entry point used by ``rgt-vault tui``."""
     if not _TEXTUAL_AVAILABLE:
-        raise RuntimeError(
-            "The TUI requires the 'tui' extra. Install it with:\n"
-            "    pip install 'rgt-vault[tui]'"
-        )
+        raise RuntimeError("The TUI requires the 'tui' extra. Install it with:\n    pip install 'rgt-vault[tui]'")
     client = VaultHTTPClient(base_url, token)
     try:
         VaultTUI(client, namespace=namespace).run()
