@@ -128,7 +128,9 @@ def test_set_and_execute_secret(vault):
 
 
 def test_rate_limiter_concurrency(vault):
-    vault.rate_limiter = RateLimiter(max_requests=50, window_seconds=10)
+    # Long window: on slow CI runners (Windows) a short window lets early requests
+    # expire mid-test, which made this test flaky (51-54 successes instead of 50).
+    vault.rate_limiter = RateLimiter(max_requests=50, window_seconds=3600)
     vault.set_secret("conc_key", "val", namespace="test_ns", agent="test_agent")
 
     success_count = 0
