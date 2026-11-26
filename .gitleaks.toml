@@ -13,4 +13,6 @@ paths = [
   '''go/testdata/pyvault/.*''',
   '''go/internal/[a-z0-9_/]*/testdata/.*''',
   '''tests/compat/.*''',
+  # Go unit tests use literal throw-away secrets as inputs (e.g. provider tests).
+  '''go/.*_test\.go''',
 ]
