@@ -115,12 +115,21 @@ func TestSearchFilter(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
 
 	// Wait for the filter to render: db-pass visible, api-key gone.
+	// The output stream is cumulative and the renderer may flush an
+	// intermediate frame ("/" with the unfiltered list) before the "/db"
+	// frame, so only inspect what follows the last "/db" prompt; checking
+	// the whole stream for the absence of "api-key" was flaky.
 	teatest.WaitFor(
 		t,
 		tm.Output(),
 		func(bts []byte) bool {
 			out := string(bts)
-			return strings.Contains(out, "db-pass") && !strings.Contains(out, "api-key")
+			idx := strings.LastIndex(out, "/db")
+			if idx < 0 {
+				return false
+			}
+			frame := out[idx:]
+			return strings.Contains(frame, "db-pass") && !strings.Contains(frame, "api-key")
 		},
 		teatest.WithDuration(3*time.Second),
 		teatest.WithCheckInterval(50*time.Millisecond),

@@ -136,10 +136,40 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
+  go:
+    name: go (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: go vet
+        run: go vet ./...
+      - name: go test (race)
+        run: go test -race -count=1 -coverprofile=cover.out ./...
+      - name: Upload coverage profile
+        if: always() && matrix.os == 'ubuntu-24.04'
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-coverage
+          path: go/cover.out
+          if-no-files-found: ignore
+
   required-status:
     name: required-status-checks
     runs-on: ubuntu-latest
-    needs: [lint, typecheck, test, coverage, bandit, pip-audit, gitleaks]
+    needs: [lint, typecheck, test, coverage, bandit, pip-audit, gitleaks, go]
     if: always()
     steps:
       - name: Verify all gates green
