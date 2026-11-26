@@ -2,19 +2,62 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// exitError carries a specific process exit code (default for errors is 1).
+type exitError struct {
+	code int
+	msg  string
+}
+
+func (e *exitError) Error() string { return e.msg }
+
+// exitCode maps a command error to the process exit code.
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var ee *exitError
+	if errors.As(err, &ee) {
+		return ee.code
+	}
+	return 1
+}
+
+// cli is the per-invocation environment shared by the HTTP subcommands.
+type cli struct {
+	host   string
+	token  string
+	stdin  io.Reader
+	stdout io.Writer
+	client *http.Client
+}
+
+func newHTTPClient() *http.Client { return &http.Client{Timeout: 30 * time.Second} }
+
+// secretURL builds /v1/secrets/{ns}/{name}[/suffix] with path escaping.
+func (c *cli) secretURL(namespace, name, suffix string) string {
+	u := c.host + "/v1/secrets/" + url.PathEscape(namespace) + "/" + url.PathEscape(name)
+	if suffix != "" {
+		u += "/" + suffix
+	}
+	return u
+}
 
 // ---------------------------------------------------------------------------
 // Shared HTTP helper
 // ---------------------------------------------------------------------------
 
-func makeRequest(method, url, token string, body any) ([]byte, int, error) {
+func (c *cli) do(method, reqURL string, body any) ([]byte, int, error) {
 	var bodyReader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -24,24 +67,24 @@ func makeRequest(method, url, token string, body any) ([]byte, int, error) {
 		bodyReader = strings.NewReader(string(b))
 	}
 
-	req, err := http.NewRequest(method, url, bodyReader)
+	req, err := http.NewRequest(method, reqURL, bodyReader)
 	if err != nil {
 		return nil, 0, err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
@@ -52,20 +95,23 @@ func makeRequest(method, url, token string, body any) ([]byte, int, error) {
 // Command implementations
 // ---------------------------------------------------------------------------
 
-func runSet(host, token, name, namespace, agent, purpose, valueFile string) error {
-	var value string
+func (c *cli) runSet(name, namespace, agent, purpose, valueFile string) error {
+	var data []byte
+	var err error
 	if valueFile != "" {
-		data, err := os.ReadFile(valueFile)
+		data, err = os.ReadFile(valueFile)
 		if err != nil {
 			return fmt.Errorf("reading value file: %w", err)
 		}
-		value = strings.TrimRight(string(data), "\r\n")
 	} else {
-		data, err := io.ReadAll(os.Stdin)
+		data, err = io.ReadAll(c.stdin)
 		if err != nil {
 			return fmt.Errorf("reading stdin: %w", err)
 		}
-		value = strings.TrimRight(string(data), "\r\n")
+	}
+	value := strings.TrimRight(string(data), "\r\n")
+	if value == "" {
+		return errors.New("refusing to store an empty secret value")
 	}
 
 	reqBody := struct {
@@ -76,52 +122,54 @@ func runSet(host, token, name, namespace, agent, purpose, valueFile string) erro
 		Purpose   string `json:"purpose"`
 	}{Name: name, Namespace: namespace, Value: value, Agent: agent, Purpose: purpose}
 
-	_, status, err := makeRequest("POST", host+"/v1/secrets", token, reqBody)
+	_, status, err := c.do(http.MethodPost, c.host+"/v1/secrets", reqBody)
 	if err != nil {
 		return err
 	}
 	if status != http.StatusOK && status != http.StatusCreated {
 		return fmt.Errorf("set failed: HTTP %d", status)
 	}
-	fmt.Println("Secret stored.")
+	fmt.Fprintln(c.stdout, "Secret stored.")
 	return nil
 }
 
-// listResponse matches {"namespace":"...","secrets":[...]} from GET /v1/secrets
-type listResponse struct {
-	Namespace string `json:"namespace"`
-	Secrets   []struct {
-		Name      string `json:"name"`
-		Value     string `json:"value"`
-		CreatedAt string `json:"created_at"`
-	} `json:"secrets"`
-}
-
-func runGet(host, token, name, namespace, agent, purpose string) error {
-	url := fmt.Sprintf("%s/v1/secrets?namespace=%s&name=%s", host, namespace, name)
-	body, status, err := makeRequest("GET", url, token, nil)
+// runGet reads the single-secret route. The list route is metadata only and
+// is never used as a plaintext source.
+func (c *cli) runGet(name, namespace string) error {
+	body, status, err := c.do(http.MethodGet, c.secretURL(namespace, name, ""), nil)
 	if err != nil {
 		return err
+	}
+	if status == http.StatusNotFound {
+		return fmt.Errorf("secret %q not found in namespace %q", name, namespace)
 	}
 	if status != http.StatusOK {
 		return fmt.Errorf("get failed: HTTP %d", status)
 	}
-	var resp listResponse
+	var resp struct {
+		Value *string `json:"value"`
+	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return fmt.Errorf("parsing response: %w", err)
 	}
-	for _, s := range resp.Secrets {
-		if s.Name == name {
-			fmt.Println(s.Value)
-			return nil
-		}
+	if resp.Value == nil {
+		return errors.New("server did not return a secret value")
 	}
-	return fmt.Errorf("secret %q not found in namespace %q", name, namespace)
+	fmt.Fprintln(c.stdout, *resp.Value)
+	return nil
 }
 
-func runList(host, token, namespace, agent string) error {
-	url := fmt.Sprintf("%s/v1/secrets?namespace=%s", host, namespace)
-	body, status, err := makeRequest("GET", url, token, nil)
+// listResponse matches {"namespace":"...","secrets":[...]} from GET /v1/secrets.
+type listResponse struct {
+	Namespace string `json:"namespace"`
+	Secrets   []struct {
+		Name      string `json:"name"`
+		CreatedAt string `json:"created_at"`
+	} `json:"secrets"`
+}
+
+func (c *cli) runList(namespace string) error {
+	body, status, err := c.do(http.MethodGet, c.host+"/v1/secrets?namespace="+url.QueryEscape(namespace), nil)
 	if err != nil {
 		return err
 	}
@@ -133,25 +181,24 @@ func runList(host, token, namespace, agent string) error {
 		return fmt.Errorf("parsing response: %w", err)
 	}
 	for _, s := range resp.Secrets {
-		fmt.Printf("%s\t%s\n", s.Name, s.CreatedAt)
+		fmt.Fprintf(c.stdout, "%s\t%s\n", s.Name, s.CreatedAt)
 	}
 	return nil
 }
 
-func runRevoke(host, token, name, namespace string) error {
-	url := fmt.Sprintf("%s/v1/secrets/%s/%s/revoke", host, namespace, name)
-	_, status, err := makeRequest("POST", url, token, struct{}{})
+func (c *cli) runRevoke(name, namespace string) error {
+	_, status, err := c.do(http.MethodPost, c.secretURL(namespace, name, "revoke"), struct{}{})
 	if err != nil {
 		return err
 	}
 	if status != http.StatusOK && status != http.StatusNoContent {
 		return fmt.Errorf("revoke failed: HTTP %d", status)
 	}
-	fmt.Println("Secret revoked.")
+	fmt.Fprintln(c.stdout, "Secret revoked.")
 	return nil
 }
 
-func runSimulate(host, token, agent, namespace, purpose, action string) error {
+func (c *cli) runSimulate(agent, namespace, purpose, action string) error {
 	reqBody := struct {
 		Agent     string `json:"agent"`
 		Namespace string `json:"namespace"`
@@ -159,20 +206,19 @@ func runSimulate(host, token, agent, namespace, purpose, action string) error {
 		Action    string `json:"action"`
 	}{Agent: agent, Namespace: namespace, Purpose: purpose, Action: action}
 
-	body, status, err := makeRequest("POST", host+"/v1/policy/simulate", token, reqBody)
+	body, status, err := c.do(http.MethodPost, c.host+"/v1/policy/simulate", reqBody)
 	if err != nil {
 		return err
 	}
 	if status != http.StatusOK {
 		return fmt.Errorf("simulate failed: HTTP %d", status)
 	}
-	fmt.Println(string(body))
+	fmt.Fprintln(c.stdout, strings.TrimSpace(string(body)))
 	return nil
 }
 
-func runFingerprint(host, token, name, namespace string) error {
-	url := fmt.Sprintf("%s/v1/secrets/%s/%s", host, namespace, name)
-	body, status, err := makeRequest("GET", url, token, nil)
+func (c *cli) runFingerprint(name, namespace string) error {
+	body, status, err := c.do(http.MethodGet, c.secretURL(namespace, name, ""), nil)
 	if err != nil {
 		return err
 	}
@@ -185,28 +231,33 @@ func runFingerprint(host, token, name, namespace string) error {
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return fmt.Errorf("parsing response: %w", err)
 	}
-	fmt.Println(resp.Fingerprint)
+	if resp.Fingerprint == "" {
+		return errors.New("server did not return a fingerprint")
+	}
+	fmt.Fprintln(c.stdout, resp.Fingerprint)
 	return nil
 }
 
-func runRotate(host, token, target string) error {
+func (c *cli) runRotate(target string) error {
 	reqBody := struct {
 		Target string `json:"target"`
 	}{Target: target}
 
-	_, status, err := makeRequest("POST", host+"/v1/rotate", token, reqBody)
+	_, status, err := c.do(http.MethodPost, c.host+"/v1/rotate", reqBody)
 	if err != nil {
 		return err
 	}
 	if status != http.StatusOK && status != http.StatusNoContent {
 		return fmt.Errorf("rotate failed: HTTP %d", status)
 	}
-	fmt.Println("Rotation complete.")
+	fmt.Fprintln(c.stdout, "Rotation complete.")
 	return nil
 }
 
-func runVerifyAudit(host, token string) error {
-	body, status, err := makeRequest("POST", host+"/v1/audit/verify", token, struct{}{})
+// runVerifyAudit prints OK / TAMPERED and exits 2 on a broken chain, like the
+// Python CLI. The server reports {"ok": bool}; "valid" is accepted as well.
+func (c *cli) runVerifyAudit() error {
+	body, status, err := c.do(http.MethodPost, c.host+"/v1/audit/verify", struct{}{})
 	if err != nil {
 		return err
 	}
@@ -214,28 +265,35 @@ func runVerifyAudit(host, token string) error {
 		return fmt.Errorf("verify-audit failed: HTTP %d", status)
 	}
 	var resp struct {
-		Valid bool `json:"valid"`
+		OK    *bool `json:"ok"`
+		Valid *bool `json:"valid"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return fmt.Errorf("parsing response: %w", err)
 	}
-	if resp.Valid {
-		fmt.Println("Chain OK")
-	} else {
-		fmt.Println("Chain INVALID")
+	verdict := resp.OK
+	if verdict == nil {
+		verdict = resp.Valid
 	}
-	return nil
+	if verdict == nil {
+		return errors.New("server response has no verdict")
+	}
+	if *verdict {
+		fmt.Fprintln(c.stdout, "OK")
+		return nil
+	}
+	fmt.Fprintln(c.stdout, "TAMPERED")
+	return &exitError{code: 2, msg: "audit chain verification failed"}
 }
 
-func runAudit(host, token string, limit int) error {
-	url := fmt.Sprintf("%s/v1/audit?limit=%s", host, strconv.Itoa(limit))
-	body, status, err := makeRequest("GET", url, token, nil)
+func (c *cli) runAudit(limit int) error {
+	body, status, err := c.do(http.MethodGet, c.host+"/v1/audit?limit="+strconv.Itoa(limit), nil)
 	if err != nil {
 		return err
 	}
 	if status != http.StatusOK {
 		return fmt.Errorf("audit failed: HTTP %d", status)
 	}
-	fmt.Println(string(body))
+	fmt.Fprintln(c.stdout, strings.TrimSpace(string(body)))
 	return nil
 }
