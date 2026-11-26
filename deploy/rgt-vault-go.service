@@ -1,0 +1,65 @@
+[Unit]
+Description=rgt-vault Go server (secrets daemon, bearer-token API)
+Documentation=https://github.com/WilliamHudspeth/rgt-vault
+After=network.target
+
+[Service]
+Type=simple
+
+# --- the trust boundary ------------------------------------------------ #
+# Same model as deploy/rgt-vault.service: the daemon runs as its own
+# unprivileged account (created by deploy/setup-daemon.sh). Agents never
+# share this user, so they cannot read the token file or process memory.
+User=rgtvault
+Group=rgtvault
+
+# State (the 0600 bearer-token file) lives in /var/lib/rgt-vault, mode 0700,
+# created and owned by the service user via StateDirectory=.
+StateDirectory=rgt-vault
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/rgt-vault
+UMask=0077
+
+# Loopback only (the Go server's default; stated explicitly on purpose).
+# Put a TLS reverse proxy in front if you must expose it. The bearer token is
+# never logged: the journal shows only the token file path and a short id.
+Environment=RGT_VAULT_TOKEN_FILE=/var/lib/rgt-vault/server.token
+# CORS is denied unless exact origins are listed, for example:
+# Environment=CORS_ALLOWED_ORIGINS=https://dashboard.example
+ExecStart=/opt/rgt-vault/bin/rgt-vault-server --host 127.0.0.1 --port 8080
+
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+
+# --- defense in depth -------------------------------------------------- #
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectProc=invisible
+ProcSubset=pid
+ProtectClock=true
+ProtectHostname=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+# Only the vault's own state dir is writable.
+ReadWritePaths=/var/lib/rgt-vault
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
