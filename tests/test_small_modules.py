@@ -89,9 +89,9 @@ def test_llm_guide_contains_docstring_and_instructions():
 @pytest.fixture
 def postgres_backend(monkeypatch):
     fake_pool_mod = types.ModuleType("psycopg2.pool")
-    fake_pool_mod.ThreadedConnectionPool = mock.MagicMock()  # type: ignore[attr-defined]
+    fake_pool_mod.ThreadedConnectionPool = mock.MagicMock()
     fake_pg = types.ModuleType("psycopg2")
-    fake_pg.pool = fake_pool_mod  # type: ignore[attr-defined]
+    fake_pg.pool = fake_pool_mod
     monkeypatch.setitem(sys.modules, "psycopg2", fake_pg)
     monkeypatch.setitem(sys.modules, "psycopg2.pool", fake_pool_mod)
     monkeypatch.delitem(sys.modules, "rgt_vault.storage.postgres", raising=False)
@@ -168,7 +168,7 @@ def test_audit_hook_is_abstract():
     from rgt_vault.hooks import AuditHook
 
     with pytest.raises(TypeError):
-        AuditHook()  # type: ignore[abstract]
+        AuditHook()
 
 
 @needs_py310
@@ -271,8 +271,8 @@ def mcp_module(monkeypatch):
             raise AssertionError
 
     fake = types.ModuleType("fastmcp")
-    fake.Context = _Ctx  # type: ignore[attr-defined]
-    fake.FastMCP = _FastMCP  # type: ignore[attr-defined]
+    fake.Context = _Ctx
+    fake.FastMCP = _FastMCP
     monkeypatch.setitem(sys.modules, "fastmcp", fake)
     monkeypatch.delitem(sys.modules, "rgt_vault.server.mcp_server", raising=False)
     mod = importlib.import_module("rgt_vault.server.mcp_server")

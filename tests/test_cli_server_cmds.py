@@ -94,7 +94,7 @@ def test_load_totp_verifier(tmp_path):
 
 def _fake_tui_module(monkeypatch, run):
     mod = types.ModuleType("rgt_vault.tui")
-    mod.run_tui = run  # type: ignore[attr-defined]
+    mod.run_tui = run
     monkeypatch.setitem(sys.modules, "rgt_vault.tui", mod)
 
 
