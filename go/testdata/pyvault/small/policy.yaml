@@ -1,0 +1,9 @@
+rules:
+  - effect: allow
+    agent: "*"
+    namespace: "*"
+    purpose: "*"
+    action: "*"
+  - effect: deny
+    agent: intruder
+    action: read

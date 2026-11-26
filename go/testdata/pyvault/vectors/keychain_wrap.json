@@ -1,0 +1,69 @@
+{
+  "description": "Real HardenedDEKManager.initialize_dek with os.urandom (dek, salt) and the clock pinned. wrapped_dek in keychain_json = AES-256-GCM(kek, nonce, dek, aad) = ciphertext||tag WITHOUT the nonce (the nonce is the KDF output nonce_hex and is NOT stored). kek = HKDF chain: argon2id(master, salt, 32) -> HKDF-SHA512(info=binding, 64) -> kek=first 32, nonce=HKDF-SHA256(last 32, info='nonce expansion', 12). Masters/DEKs are FIXED TEST VALUES.",
+  "cases": [
+    {
+      "name": "small_epoch1",
+      "vault_id": "5a11c0de-0000-4000-8000-000000000001",
+      "epoch": 1,
+      "memory_cost": 4096,
+      "time_cost": 2,
+      "parallelism": 2,
+      "master_hex": "e965dcff488f2822dd63314cb1062c892b505a2c4585ce804c31a7202fbabed8",
+      "dek_hex": "437992fbc67fcb46fd129da5c41be43f3c7bd47d802e7f474b7d7356589235b3",
+      "salt_hex": "35fa6fa4bd9ead0d4dc0ac342df1c9ef1fb1e46870b9950ddd824addc2361d40",
+      "kek_hex": "051961b4c738f83c3d8508bba7cc93edf5ea6d52a25936827780ef37232be537",
+      "nonce_hex": "32b10b5008e4d31a10aa1901",
+      "aad": "5a11c0de-0000-4000-8000-000000000001:1",
+      "binding_context": "rgt-vault:5a11c0de-0000-4000-8000-000000000001",
+      "keychain_json": "{\n  \"version\": 1,\n  \"kdf\": \"argon2id\",\n  \"argon2_salt\": \"NfpvpL2erQ1NwKw0LfHJ7x+x5GhwuZUN3YJK3cI2HUA=\",\n  \"argon2_memory_cost\": 4096,\n  \"argon2_time_cost\": 2,\n  \"argon2_parallelism\": 2,\n  \"wrapped_dek\": \"W5ETIZim9idxqf4b4k4twkuqg/mpt1tkxIqDrrplTAPXewoVAp5UuWPPLp/w9/ah\",\n  \"created_at\": \"2026-01-15T10:20:30.123456+00:00\",\n  \"key_epoch\": 1\n}"
+    },
+    {
+      "name": "small_epoch7",
+      "vault_id": "5a11c0de-0000-4000-8000-000000000003",
+      "epoch": 7,
+      "memory_cost": 1024,
+      "time_cost": 1,
+      "parallelism": 1,
+      "master_hex": "946a2330dffaceb102b9c2c799a83fef8ca3c2714c39ab069ea7f93b6cfe71ca",
+      "dek_hex": "796d56e030f77324cd29323a5c9e33c7bd402ccda8346769a4b2935d6cfa6a6f",
+      "salt_hex": "36fc88828e7df7b1180984d76af5749bc36665bce5e60be76fe52cbada661c44",
+      "kek_hex": "f89977ee103d886ffb961309f21a24b8a9cc11e4a041b79406d57d0a4814c239",
+      "nonce_hex": "648fdc9aea9077880c21aa39",
+      "aad": "5a11c0de-0000-4000-8000-000000000003:7",
+      "binding_context": "rgt-vault:5a11c0de-0000-4000-8000-000000000003",
+      "keychain_json": "{\n  \"version\": 1,\n  \"kdf\": \"argon2id\",\n  \"argon2_salt\": \"NvyIgo5997EYCYTXavV0m8NmZbzl5gvnb+UsutpmHEQ=\",\n  \"argon2_memory_cost\": 1024,\n  \"argon2_time_cost\": 1,\n  \"argon2_parallelism\": 1,\n  \"wrapped_dek\": \"7TyDjo/AyOxodeLTs01xCoNnU+nC2OxQqVPtzu/p59LYDeS4z1mbtdUtZM/BBN0K\",\n  \"created_at\": \"2026-01-15T10:20:30.123456+00:00\",\n  \"key_epoch\": 7\n}"
+    },
+    {
+      "name": "small_p3",
+      "vault_id": "11111111-2222-4333-8444-555555555555",
+      "epoch": 2,
+      "memory_cost": 2048,
+      "time_cost": 3,
+      "parallelism": 3,
+      "master_hex": "384d2b7ee3fd0bf9a2492f6233fe26cef4ea4672ac98c8920415eb9e60cdced4",
+      "dek_hex": "1cb86dd1fac0434c4df1220ff54b089827d5cd139120d50b79e4476fadba6cd9",
+      "salt_hex": "c3a87be475fff2f7df5fba926be1f701988f9785e3c157280ca0a2a118327724",
+      "kek_hex": "3397f5573dfee5da772af59877ec22400575e5c71d4b7067efc5f41a1a218c92",
+      "nonce_hex": "e1700c6b375a6c25b645e3b8",
+      "aad": "11111111-2222-4333-8444-555555555555:2",
+      "binding_context": "rgt-vault:11111111-2222-4333-8444-555555555555",
+      "keychain_json": "{\n  \"version\": 1,\n  \"kdf\": \"argon2id\",\n  \"argon2_salt\": \"w6h75HX/8vffX7qSa+H3AZiPl4XjwVcoDKCioRgydyQ=\",\n  \"argon2_memory_cost\": 2048,\n  \"argon2_time_cost\": 3,\n  \"argon2_parallelism\": 3,\n  \"wrapped_dek\": \"SvNQIRZhSmYoJr6SD5fjd5vTd2StFTaQpmf1FdbqzvGWkZ7wh8OjcMS5n+MA98GE\",\n  \"created_at\": \"2026-01-15T10:20:30.123456+00:00\",\n  \"key_epoch\": 2\n}"
+    },
+    {
+      "name": "default_params",
+      "vault_id": "5a11c0de-0000-4000-8000-000000000002",
+      "epoch": 2,
+      "memory_cost": 262144,
+      "time_cost": 4,
+      "parallelism": 4,
+      "master_hex": "7688bb854805493070495ca4e13ca56c9648466c84e84c703209b129a1612c67",
+      "dek_hex": "68ae48cb742d345a6a3ebc4b6ef78b84e158881cb56875704ea2c278bac7b9d2",
+      "salt_hex": "4bb97dfdcc1e02cbb89529c1c724a534d2b494131d9d71454af4900f3d75a847",
+      "kek_hex": "d6397437939d3b9c801529bb4bef8a769d4c934aa5bc7420614c89b8eb6a5448",
+      "nonce_hex": "573fe39e7eb58d076f62d68c",
+      "aad": "5a11c0de-0000-4000-8000-000000000002:2",
+      "binding_context": "rgt-vault:5a11c0de-0000-4000-8000-000000000002",
+      "keychain_json": "{\n  \"version\": 1,\n  \"kdf\": \"argon2id\",\n  \"argon2_salt\": \"S7l9/cweAsu4lSnBxySlNNK0lBMdnXFFSvSQDz11qEc=\",\n  \"argon2_memory_cost\": 262144,\n  \"argon2_time_cost\": 4,\n  \"argon2_parallelism\": 4,\n  \"wrapped_dek\": \"REEX1kh7MdBn/pfzXx/zBxq3ESMmycCiGQ96HFnvHEnxeSXmkeDSLM2tdJISZo+i\",\n  \"created_at\": \"2026-01-15T10:20:30.123456+00:00\",\n  \"key_epoch\": 2\n}"
+    }
+  ]
+}

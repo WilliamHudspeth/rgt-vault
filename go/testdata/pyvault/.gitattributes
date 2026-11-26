@@ -1,0 +1,4 @@
+# Byte-exact fixtures: never convert line endings or treat as text (policy.yaml is hashed; vault.db/master.bin are binary).
+* -text
+*.db binary
+*.bin binary

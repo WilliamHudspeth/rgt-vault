@@ -1,0 +1,291 @@
+{
+  "description": "Real StorageBackend.log_audit output for a chain of rows with an injected clock. entry_hash = sha256_hex('prev|timestamp|sanitized_action|secret_name or ''|sanitized_details|policy_hash'); the first prev is ''. sanitize replaces \\r \\n \\t (in that order) by the two-character escapes; nothing else is touched. agent_id is stored but not hashed.",
+  "chain": [
+    {
+      "input": {
+        "action": "SET_SECRET",
+        "secret_name": "db_pass",
+        "details": "Version 1 created in prod",
+        "policy_hash": "0123456789abcdef",
+        "agent_id": "deploy-bot",
+        "timestamp": "2026-01-15T10:20:30.123456+00:00"
+      },
+      "stored": {
+        "action": "SET_SECRET",
+        "secret_name": "db_pass",
+        "timestamp": "2026-01-15T10:20:30.123456+00:00",
+        "details": "Version 1 created in prod",
+        "prev_hash": "",
+        "entry_hash": "96f8312b884da24d207bbcff69f48f6b4b45905d1029d7dc2b17254016f2ac23",
+        "policy_hash": "0123456789abcdef",
+        "agent_id": "deploy-bot"
+      }
+    },
+    {
+      "input": {
+        "action": "LIST_SECRETS",
+        "secret_name": null,
+        "details": "Listed 3 secrets in prod",
+        "policy_hash": "",
+        "agent_id": null,
+        "timestamp": "2026-01-15T10:20:31+00:00"
+      },
+      "stored": {
+        "action": "LIST_SECRETS",
+        "secret_name": null,
+        "timestamp": "2026-01-15T10:20:31+00:00",
+        "details": "Listed 3 secrets in prod",
+        "prev_hash": "96f8312b884da24d207bbcff69f48f6b4b45905d1029d7dc2b17254016f2ac23",
+        "entry_hash": "67769fff098d62c03343eb3920a376a9aa307ad5e2062f240987da67ac2e0ad8",
+        "policy_hash": "",
+        "agent_id": null
+      }
+    },
+    {
+      "input": {
+        "action": "POLICY_DENIED",
+        "secret_name": "x",
+        "details": "Action: read, Agent: a\r\nb, Namespace: n\tm, Reason: r",
+        "policy_hash": "0123456789abcdef",
+        "agent_id": null,
+        "timestamp": "2026-01-15T10:20:32.000001+00:00"
+      },
+      "stored": {
+        "action": "POLICY_DENIED",
+        "secret_name": "x",
+        "timestamp": "2026-01-15T10:20:32.000001+00:00",
+        "details": "Action: read, Agent: a\\r\\nb, Namespace: n\\tm, Reason: r",
+        "prev_hash": "67769fff098d62c03343eb3920a376a9aa307ad5e2062f240987da67ac2e0ad8",
+        "entry_hash": "f96d0ab3135f0f84f718ce08266d66c7ddecc865b68234a5bb136d5518a53350",
+        "policy_hash": "0123456789abcdef",
+        "agent_id": null
+      }
+    },
+    {
+      "input": {
+        "action": "ACT\nION\r\t",
+        "secret_name": "weird",
+        "details": "action name is sanitized too",
+        "policy_hash": "0123456789abcdef",
+        "agent_id": null,
+        "timestamp": "2026-01-15T10:20:33.100000+00:00"
+      },
+      "stored": {
+        "action": "ACT\\nION\\r\\t",
+        "secret_name": "weird",
+        "timestamp": "2026-01-15T10:20:33.100000+00:00",
+        "details": "action name is sanitized too",
+        "prev_hash": "f96d0ab3135f0f84f718ce08266d66c7ddecc865b68234a5bb136d5518a53350",
+        "entry_hash": "3079012b3e2e9eb71d9c144b5ff487fa9ad984098b8f262856e8d4a31b297003",
+        "policy_hash": "0123456789abcdef",
+        "agent_id": null
+      }
+    },
+    {
+      "input": {
+        "action": "GET_SECRET",
+        "secret_name": "naïve-名前",
+        "details": "Version 2 créé — 日本語 🔐",
+        "policy_hash": "0123456789abcdef",
+        "agent_id": "ci-bot",
+        "timestamp": "2026-12-31T23:59:59.999999+00:00"
+      },
+      "stored": {
+        "action": "GET_SECRET",
+        "secret_name": "naïve-名前",
+        "timestamp": "2026-12-31T23:59:59.999999+00:00",
+        "details": "Version 2 créé — 日本語 🔐",
+        "prev_hash": "3079012b3e2e9eb71d9c144b5ff487fa9ad984098b8f262856e8d4a31b297003",
+        "entry_hash": "f8fb42e9445f6ab2764d7bce2be4e906e7081bd52b63279deaf46d3b9386d0a2",
+        "policy_hash": "0123456789abcdef",
+        "agent_id": "ci-bot"
+      }
+    },
+    {
+      "input": {
+        "action": "ROTATE",
+        "secret_name": "MASTER_KEY",
+        "details": "",
+        "policy_hash": "",
+        "agent_id": null,
+        "timestamp": "2027-02-28T00:00:00+00:00"
+      },
+      "stored": {
+        "action": "ROTATE",
+        "secret_name": "MASTER_KEY",
+        "timestamp": "2027-02-28T00:00:00+00:00",
+        "details": "",
+        "prev_hash": "f8fb42e9445f6ab2764d7bce2be4e906e7081bd52b63279deaf46d3b9386d0a2",
+        "entry_hash": "6d64c09c14732c794c3cf902ca2243692125349496bad87220671c28847e115c",
+        "policy_hash": "",
+        "agent_id": null
+      }
+    },
+    {
+      "input": {
+        "action": "LEASE_GRANTED",
+        "secret_name": "db_pass",
+        "details": "Agent: x y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y",
+        "policy_hash": "fedcba9876543210",
+        "agent_id": "x",
+        "timestamp": "2027-02-28T00:00:00.500000+00:00"
+      },
+      "stored": {
+        "action": "LEASE_GRANTED",
+        "secret_name": "db_pass",
+        "timestamp": "2027-02-28T00:00:00.500000+00:00",
+        "details": "Agent: x y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y",
+        "prev_hash": "6d64c09c14732c794c3cf902ca2243692125349496bad87220671c28847e115c",
+        "entry_hash": "52603e932f2f632ef5b806b61f9ffd1347e0c6e780eaf3cd6e8064849c0b7f7d",
+        "policy_hash": "fedcba9876543210",
+        "agent_id": "x"
+      }
+    },
+    {
+      "input": {
+        "action": "LEASE_RETURNED",
+        "secret_name": "db_pass",
+        "details": "already \\n escaped stays \\r literal \u000b\u001b control kept",
+        "policy_hash": "fedcba9876543210",
+        "agent_id": "x",
+        "timestamp": "2028-02-29T12:00:00+00:00"
+      },
+      "stored": {
+        "action": "LEASE_RETURNED",
+        "secret_name": "db_pass",
+        "timestamp": "2028-02-29T12:00:00+00:00",
+        "details": "already \\n escaped stays \\r literal \u000b\u001b control kept",
+        "prev_hash": "52603e932f2f632ef5b806b61f9ffd1347e0c6e780eaf3cd6e8064849c0b7f7d",
+        "entry_hash": "f1e6220c23ee187df4e2727020de1068fb6bbeb6a81b426d5f54fb48942b1362",
+        "policy_hash": "fedcba9876543210",
+        "agent_id": "x"
+      }
+    },
+    {
+      "input": {
+        "action": "A",
+        "secret_name": null,
+        "details": "",
+        "policy_hash": "",
+        "agent_id": null,
+        "timestamp": "2026-01-15T10:20:30.123456+00:00"
+      },
+      "stored": {
+        "action": "A",
+        "secret_name": null,
+        "timestamp": "2026-01-15T10:20:30.123456+00:00",
+        "details": "",
+        "prev_hash": "f1e6220c23ee187df4e2727020de1068fb6bbeb6a81b426d5f54fb48942b1362",
+        "entry_hash": "ac1e26a270cd19cab2f22557cffb2eb079a5f5d15994192fd1a7af70ef0fd09b",
+        "policy_hash": "",
+        "agent_id": null
+      }
+    },
+    {
+      "input": {
+        "action": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        "secret_name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "details": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "policy_hash": "pppppppppppppppp",
+        "agent_id": "agent",
+        "timestamp": "2026-01-15T10:20:31+00:00"
+      },
+      "stored": {
+        "action": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        "secret_name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "timestamp": "2026-01-15T10:20:31+00:00",
+        "details": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "prev_hash": "ac1e26a270cd19cab2f22557cffb2eb079a5f5d15994192fd1a7af70ef0fd09b",
+        "entry_hash": "f6a84c8a16db60c12bb48f5f73e6a4c6330198edf8800820dc87d2aa64518db9",
+        "policy_hash": "pppppppppppppppp",
+        "agent_id": "agent"
+      }
+    },
+    {
+      "input": {
+        "action": "CRLF\r\nINJECT",
+        "secret_name": "s\r\nname",
+        "details": "line1\r\nline2\r\n\r\n\ttab\t\ttab2",
+        "policy_hash": "0123456789abcdef",
+        "agent_id": null,
+        "timestamp": "2026-01-15T10:20:32.000001+00:00"
+      },
+      "stored": {
+        "action": "CRLF\\r\\nINJECT",
+        "secret_name": "s\r\nname",
+        "timestamp": "2026-01-15T10:20:32.000001+00:00",
+        "details": "line1\\r\\nline2\\r\\n\\r\\n\\ttab\\t\\ttab2",
+        "prev_hash": "f6a84c8a16db60c12bb48f5f73e6a4c6330198edf8800820dc87d2aa64518db9",
+        "entry_hash": "ce9ff1170af9dba6e45b60c4a8802e028ab85eee5082a96355bcc0ad42444621",
+        "policy_hash": "0123456789abcdef",
+        "agent_id": null
+      }
+    },
+    {
+      "input": {
+        "action": "UNI",
+        "secret_name": "é日",
+        "details": "🔐 — \u0001ctl",
+        "policy_hash": "0123456789abcdef",
+        "agent_id": null,
+        "timestamp": "2026-01-15T10:20:33.100000+00:00"
+      },
+      "stored": {
+        "action": "UNI",
+        "secret_name": "é日",
+        "timestamp": "2026-01-15T10:20:33.100000+00:00",
+        "details": "🔐 — \u0001ctl",
+        "prev_hash": "ce9ff1170af9dba6e45b60c4a8802e028ab85eee5082a96355bcc0ad42444621",
+        "entry_hash": "f61902d78d3045433011d3ab7a814ad2365206b24a2c3ab87906af6fdb2b5f88",
+        "policy_hash": "0123456789abcdef",
+        "agent_id": null
+      }
+    }
+  ],
+  "sanitize": [
+    {
+      "input": "",
+      "output": ""
+    },
+    {
+      "input": "plain",
+      "output": "plain"
+    },
+    {
+      "input": "a\nb",
+      "output": "a\\nb"
+    },
+    {
+      "input": "a\r\nb",
+      "output": "a\\r\\nb"
+    },
+    {
+      "input": "a\tb",
+      "output": "a\\tb"
+    },
+    {
+      "input": "\r\n\t",
+      "output": "\\r\\n\\t"
+    },
+    {
+      "input": "\\n literal backslash-n",
+      "output": "\\n literal backslash-n"
+    },
+    {
+      "input": "\u0000\u000b\u001b",
+      "output": "\u0000\u000b\u001b"
+    },
+    {
+      "input": "  ",
+      "output": "  "
+    },
+    {
+      "input": "é日🔐",
+      "output": "é日🔐"
+    },
+    {
+      "input": "mixed\r\nline\tbreaks\n",
+      "output": "mixed\\r\\nline\\tbreaks\\n"
+    }
+  ]
+}

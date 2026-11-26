@@ -1,0 +1,378 @@
+{
+  "description": "v1 (legacy, namespace/operation) tokens consulted through the real TwoFactorHook. Payload keys: a=agent n=namespace c=sorted capabilities i=issued_at x=expires_at t=token_id; signature = HMAC-SHA256(shared_secret, payload). Key is a FIXED TEST KEY. Go must match 'decision'; 'reason' is Python's wording (the Python self-check pins it verbatim, a Go port need not). Each case runs on a fresh hook.",
+  "key_hex": "35b1722216eec57d2968bf3a7ddb9851546eb228d40a976bf57aa430aafad8d8",
+  "cases": [
+    {
+      "name": "allow",
+      "why": "",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "read",
+          "agent": "agent-a",
+          "namespace": "prod",
+          "token": "eyJhIjoiYWdlbnQtYSIsImMiOlsicmVhZCIsIndyaXRlIl0sImkiOjE4OTk5OTk5OTAsIm4iOiJwcm9kIiwidCI6InQtb2siLCJ4IjoxOTAwMDAwMDUwfQ.0z6plimKm6YDt4rmiV83UL_1Xc-T7Kr7rvff5rdQCUY"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "allow",
+          "reason": "v1 token valid"
+        }
+      ]
+    },
+    {
+      "name": "allow_write_op",
+      "why": "",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "write",
+          "agent": "agent-a",
+          "namespace": "prod",
+          "token": "eyJhIjoiYWdlbnQtYSIsImMiOlsicmVhZCIsIndyaXRlIl0sImkiOjE4OTk5OTk5OTAsIm4iOiJwcm9kIiwidCI6InQtb2siLCJ4IjoxOTAwMDAwMDUwfQ.0z6plimKm6YDt4rmiV83UL_1Xc-T7Kr7rvff5rdQCUY"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "allow",
+          "reason": "v1 token valid"
+        }
+      ]
+    },
+    {
+      "name": "op_not_covered",
+      "why": "",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "revoke",
+          "agent": "agent-a",
+          "namespace": "prod",
+          "token": "eyJhIjoiYWdlbnQtYSIsImMiOlsicmVhZCIsIndyaXRlIl0sImkiOjE4OTk5OTk5OTAsIm4iOiJwcm9kIiwidCI6InQtb2siLCJ4IjoxOTAwMDAwMDUwfQ.0z6plimKm6YDt4rmiV83UL_1Xc-T7Kr7rvff5rdQCUY"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "deny",
+          "reason": "capability_token does not cover revoke on prod"
+        }
+      ]
+    },
+    {
+      "name": "namespace_mismatch",
+      "why": "",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "read",
+          "agent": "agent-a",
+          "namespace": "dev",
+          "token": "eyJhIjoiYWdlbnQtYSIsImMiOlsicmVhZCIsIndyaXRlIl0sImkiOjE4OTk5OTk5OTAsIm4iOiJwcm9kIiwidCI6InQtb2siLCJ4IjoxOTAwMDAwMDUwfQ.0z6plimKm6YDt4rmiV83UL_1Xc-T7Kr7rvff5rdQCUY"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "deny",
+          "reason": "capability_token does not cover read on dev"
+        }
+      ]
+    },
+    {
+      "name": "agent_mismatch",
+      "why": "",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "read",
+          "agent": "agent-b",
+          "namespace": "prod",
+          "token": "eyJhIjoiYWdlbnQtYSIsImMiOlsicmVhZCIsIndyaXRlIl0sImkiOjE4OTk5OTk5OTAsIm4iOiJwcm9kIiwidCI6InQtb2siLCJ4IjoxOTAwMDAwMDUwfQ.0z6plimKm6YDt4rmiV83UL_1Xc-T7Kr7rvff5rdQCUY"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "deny",
+          "reason": "capability_token bound to agent 'agent-a', caller claimed 'agent-b'"
+        }
+      ]
+    },
+    {
+      "name": "wildcard_namespace",
+      "why": "token namespace '*' covers every namespace",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "read",
+          "agent": "agent-a",
+          "namespace": "anything",
+          "token": "eyJhIjoiYWdlbnQtYSIsImMiOlsicmVhZCJdLCJpIjoxODk5OTk5OTkwLCJuIjoiKiIsInQiOiJ0LXN0YXItbnMiLCJ4IjoxOTAwMDAwMDUwfQ.D8f4f1CtvZaObqVvZhe8Na0OQq-zExLI6A1RFupYS9c"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "allow",
+          "reason": "v1 token valid"
+        }
+      ]
+    },
+    {
+      "name": "wildcard_operation",
+      "why": "capabilities ['*'] covers every operation",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "rotate",
+          "agent": "agent-a",
+          "namespace": "prod",
+          "token": "eyJhIjoiYWdlbnQtYSIsImMiOlsiKiJdLCJpIjoxODk5OTk5OTkwLCJuIjoicHJvZCIsInQiOiJ0LXN0YXItb3AiLCJ4IjoxOTAwMDAwMDUwfQ.Hnq4n14KwFpAmok3kIYZjebYTU7WR3b3WMt58JOrUbk"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "allow",
+          "reason": "v1 token valid"
+        }
+      ]
+    },
+    {
+      "name": "not_yet_valid",
+      "why": "issued_at > now",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "read",
+          "agent": "agent-a",
+          "namespace": "prod",
+          "token": "eyJhIjoiYWdlbnQtYSIsImMiOlsicmVhZCJdLCJpIjoxOTAwMDAwMTAwLCJuIjoicHJvZCIsInQiOiJ0LWZ1dHVyZSIsIngiOjE5MDAwMDAyMDB9.w4blBv5lLoI1t8Wnl3QXOSBfP3n2D57D4FFgkb2NX6Y"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "deny",
+          "reason": "capability_token does not cover read on prod"
+        }
+      ]
+    },
+    {
+      "name": "expired",
+      "why": "",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "read",
+          "agent": "agent-a",
+          "namespace": "prod",
+          "token": "eyJhIjoiYWdlbnQtYSIsImMiOlsicmVhZCJdLCJpIjoxODk5OTk5ODAwLCJuIjoicHJvZCIsInQiOiJ0LWV4cGlyZWQiLCJ4IjoxODk5OTk5OTAwfQ.0MrQshMv-QwXTAqSfDCUMYRcw1fgFrXlF9ybnsj_ADU"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "deny",
+          "reason": "capability_token does not cover read on prod"
+        }
+      ]
+    },
+    {
+      "name": "boundary_issued_equals_now",
+      "why": "issued_at <= now <= expires_at is inclusive",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "read",
+          "agent": "agent-a",
+          "namespace": "prod",
+          "token": "eyJhIjoiYWdlbnQtYSIsImMiOlsicmVhZCJdLCJpIjoxOTAwMDAwMDAwLCJuIjoicHJvZCIsInQiOiJ0LWVkZ2Utc3RhcnQiLCJ4IjoxOTAwMDAwMDA1fQ.eAXia9fnsHU8fLq_aSxxBvhDg6wIazkvvSv1NjJ4V7E"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "allow",
+          "reason": "v1 token valid"
+        }
+      ]
+    },
+    {
+      "name": "boundary_expires_equals_now",
+      "why": "inclusive",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "read",
+          "agent": "agent-a",
+          "namespace": "prod",
+          "token": "eyJhIjoiYWdlbnQtYSIsImMiOlsicmVhZCJdLCJpIjoxODk5OTk5OTk1LCJuIjoicHJvZCIsInQiOiJ0LWVkZ2UtZW5kIiwieCI6MTkwMDAwMDAwMH0.1xMw49mYX2PcV6j52ompz-q0IHWMYrOtWBvGWNTVbQE"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "allow",
+          "reason": "v1 token valid"
+        }
+      ]
+    },
+    {
+      "name": "replay_second_use_denied",
+      "why": "second consult of the same token_id on one hook instance",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "read",
+          "agent": "agent-a",
+          "namespace": "prod",
+          "token": "eyJhIjoiYWdlbnQtYSIsImMiOlsicmVhZCIsIndyaXRlIl0sImkiOjE4OTk5OTk5OTAsIm4iOiJwcm9kIiwidCI6InQtb2siLCJ4IjoxOTAwMDAwMDUwfQ.0z6plimKm6YDt4rmiV83UL_1Xc-T7Kr7rvff5rdQCUY"
+        },
+        {
+          "operation": "read",
+          "agent": "agent-a",
+          "namespace": "prod",
+          "token": "eyJhIjoiYWdlbnQtYSIsImMiOlsicmVhZCIsIndyaXRlIl0sImkiOjE4OTk5OTk5OTAsIm4iOiJwcm9kIiwidCI6InQtb2siLCJ4IjoxOTAwMDAwMDUwfQ.0z6plimKm6YDt4rmiV83UL_1Xc-T7Kr7rvff5rdQCUY"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "allow",
+          "reason": "v1 token valid"
+        },
+        {
+          "decision": "deny",
+          "reason": "capability_token replay detected"
+        }
+      ]
+    },
+    {
+      "name": "tampered_payload",
+      "why": "",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "read",
+          "agent": "agent-a",
+          "namespace": "prod",
+          "token": "AyJhIjoiYWdlbnQtYSIsImMiOlsicmVhZCIsIndyaXRlIl0sImkiOjE4OTk5OTk5OTAsIm4iOiJwcm9kIiwidCI6InQtb2siLCJ4IjoxOTAwMDAwMDUwfQ.0z6plimKm6YDt4rmiV83UL_1Xc-T7Kr7rvff5rdQCUY"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "deny",
+          "reason": "capability_token signature invalid"
+        }
+      ]
+    },
+    {
+      "name": "tampered_signature",
+      "why": "",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "read",
+          "agent": "agent-a",
+          "namespace": "prod",
+          "token": "eyJhIjoiYWdlbnQtYSIsImMiOlsicmVhZCIsIndyaXRlIl0sImkiOjE4OTk5OTk5OTAsIm4iOiJwcm9kIiwidCI6InQtb2siLCJ4IjoxOTAwMDAwMDUwfQ.Az6plimKm6YDt4rmiV83UL_1Xc-T7Kr7rvff5rdQCUY"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "deny",
+          "reason": "capability_token signature invalid"
+        }
+      ]
+    },
+    {
+      "name": "no_dot",
+      "why": "",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "read",
+          "agent": "agent-a",
+          "namespace": "prod",
+          "token": "eyJhIjoiYWdlbnQtYSIsImMiOlsicmVhZCIsIndyaXRlIl0sImkiOjE4OTk5OTk5OTAsIm4iOiJwcm9kIiwidCI6InQtb2siLCJ4IjoxOTAwMDAwMDUwfQ0z6plimKm6YDt4rmiV83UL_1Xc-T7Kr7rvff5rdQCUY"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "deny",
+          "reason": "malformed capability_token"
+        }
+      ]
+    },
+    {
+      "name": "bad_base64",
+      "why": "",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "read",
+          "agent": "agent-a",
+          "namespace": "prod",
+          "token": "!!!.0z6plimKm6YDt4rmiV83UL_1Xc-T7Kr7rvff5rdQCUY"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "deny",
+          "reason": "capability_token signature invalid"
+        }
+      ]
+    },
+    {
+      "name": "empty_token",
+      "why": "",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "read",
+          "agent": "agent-a",
+          "namespace": "prod",
+          "token": ""
+        }
+      ],
+      "expect": [
+        {
+          "decision": "deny",
+          "reason": "no capability_token presented"
+        }
+      ]
+    },
+    {
+      "name": "unicode_agent_ns",
+      "why": "",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "read",
+          "agent": "agént-日",
+          "namespace": "pröd",
+          "token": "eyJhIjoiYWdcdTAwZTludC1cdTY1ZTUiLCJjIjpbInJlYWQiXSwiaSI6MTg5OTk5OTk5MCwibiI6InByXHUwMGY2ZCIsInQiOiJ0LXVuaWNvZGUiLCJ4IjoxOTAwMDAwMDUwfQ.Yk92_BV1fSgEFOgzCQ1c-azZs--7GKBX_N7MesAXqdQ"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "allow",
+          "reason": "v1 token valid"
+        }
+      ]
+    },
+    {
+      "name": "issue_to_compact_is_signed_with_empty_key",
+      "why": "PYTHON BUG pinned as-is: CapabilityToken.to_compact() signs with b'' (placeholder), so tokens minted by TwoFactorHook.issue().to_compact() can never verify under the hook's shared secret",
+      "now": 1900000000,
+      "requests": [
+        {
+          "operation": "read",
+          "agent": "agent-a",
+          "namespace": "prod",
+          "token": "eyJhIjoiYWdlbnQtYSIsImMiOlsicmVhZCJdLCJpIjoxODk5OTk5OTkwLCJuIjoicHJvZCIsInQiOiJ0LWlzc3VlIiwieCI6MTkwMDAwMDA1MH0.aUdIr6XDWkMRnZS-4WRLUkey3TtXf4M9eyFjldXj7Y8"
+        }
+      ],
+      "expect": [
+        {
+          "decision": "deny",
+          "reason": "capability_token signature invalid"
+        }
+      ]
+    }
+  ],
+  "issue_to_compact_token": "eyJhIjoiYWdlbnQtYSIsImMiOlsicmVhZCJdLCJpIjoxODk5OTk5OTkwLCJuIjoicHJvZCIsInQiOiJ0LWlzc3VlIiwieCI6MTkwMDAwMDA1MH0.aUdIr6XDWkMRnZS-4WRLUkey3TtXf4M9eyFjldXj7Y8"
+}
