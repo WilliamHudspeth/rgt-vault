@@ -1,0 +1,1450 @@
+{
+  "description": "v2 capability tokens (rgt_vault.token). HMAC-SHA256 key is a FIXED TEST KEY, not a real secret. Wire: b64url(payload).b64url(hmac) without padding; payload = json.dumps(sort_keys, (',',':')) with ensure_ascii. token_id = sha256_hex(payload)[:16]. 'now' is the clock to inject for verify.",
+  "key_hex": "8caf46fc16783d0da2e20c6114e68218496cbe91b2460c87c5fb1f3c455e3efa",
+  "far_future_exp": 4102444800,
+  "verify": [
+    {
+      "name": "basic",
+      "why": "",
+      "payload_json": "{\"agent_id\":\"research-agent\",\"capability\":\"github.read_repo\",\"capability_version\":1,\"context_bindings\":{\"repo\":\"org/research\"},\"exp\":4102444800,\"v\":2}",
+      "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "research-agent",
+          "capability": "github.read_repo",
+          "capability_version": 1,
+          "context_bindings": {
+            "repo": "org/research"
+          },
+          "expires_at": 4102444800,
+          "token_id": "4d1f52fe88fd01cb"
+        }
+      }
+    },
+    {
+      "name": "no_bindings",
+      "why": "",
+      "payload_json": "{\"agent_id\":\"agent-2\",\"capability\":\"secrets.echo\",\"capability_version\":1,\"context_bindings\":{},\"exp\":4102444800,\"v\":2}",
+      "token": "eyJhZ2VudF9pZCI6ImFnZW50LTIiLCJjYXBhYmlsaXR5Ijoic2VjcmV0cy5lY2hvIiwiY2FwYWJpbGl0eV92ZXJzaW9uIjoxLCJjb250ZXh0X2JpbmRpbmdzIjp7fSwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.THAcIFTjVClEkuJS-wOpfhS5k2uH2xhJvANrSVe6RWY",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "agent-2",
+          "capability": "secrets.echo",
+          "capability_version": 1,
+          "context_bindings": {},
+          "expires_at": 4102444800,
+          "token_id": "1dd60ecb88352d66"
+        }
+      }
+    },
+    {
+      "name": "keys_sorted_nested",
+      "why": "sort_keys at every level; true/null spelled as JSON",
+      "payload_json": "{\"agent_id\":\"agent-3\",\"capability\":\"cap.nested\",\"capability_version\":3,\"context_bindings\":{\"alpha\":\"a\",\"flag\":true,\"mid\":[1,2,{\"x\":null}],\"nested\":{\"a\":2,\"b\":1},\"zeta\":1},\"exp\":4102444800,\"v\":2}",
+      "token": "eyJhZ2VudF9pZCI6ImFnZW50LTMiLCJjYXBhYmlsaXR5IjoiY2FwLm5lc3RlZCIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MywiY29udGV4dF9iaW5kaW5ncyI6eyJhbHBoYSI6ImEiLCJmbGFnIjp0cnVlLCJtaWQiOlsxLDIseyJ4IjpudWxsfV0sIm5lc3RlZCI6eyJhIjoyLCJiIjoxfSwiemV0YSI6MX0sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.OeOGbgtOnfCdcaJk0mcdUQQJXeJ50JK3QWSxBmQtZEc",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "agent-3",
+          "capability": "cap.nested",
+          "capability_version": 3,
+          "context_bindings": {
+            "alpha": "a",
+            "flag": true,
+            "mid": [
+              1,
+              2,
+              {
+                "x": null
+              }
+            ],
+            "nested": {
+              "a": 2,
+              "b": 1
+            },
+            "zeta": 1
+          },
+          "expires_at": 4102444800,
+          "token_id": "bdd6676fd0c36b50"
+        }
+      }
+    },
+    {
+      "name": "unicode_ensure_ascii",
+      "why": "Python ensure_ascii: \\u00e9, astral char as surrogate pair \\ud83d\\udd10. Go json.Marshal would NOT escape these",
+      "payload_json": "{\"agent_id\":\"ag\\u00e9nt-\\u65e5\\u672c\",\"capability\":\"cap.\\u00fcn\\u00ef\",\"capability_version\":1,\"context_bindings\":{\"nom\":\"Jos\\u00e9 \\ud83d\\udd10\"},\"exp\":4102444800,\"v\":2}",
+      "token": "eyJhZ2VudF9pZCI6ImFnXHUwMGU5bnQtXHU2NWU1XHU2NzJjIiwiY2FwYWJpbGl0eSI6ImNhcC5cdTAwZmNuXHUwMGVmIiwiY2FwYWJpbGl0eV92ZXJzaW9uIjoxLCJjb250ZXh0X2JpbmRpbmdzIjp7Im5vbSI6Ikpvc1x1MDBlOSBcdWQ4M2RcdWRkMTAifSwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.48QHVPKUl-7LlgMh_vEkcxS9wwZTgOEcrWhPHFQxym8",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "agént-日本",
+          "capability": "cap.ünï",
+          "capability_version": 1,
+          "context_bindings": {
+            "nom": "José 🔐"
+          },
+          "expires_at": 4102444800,
+          "token_id": "435b948c4347ff9d"
+        }
+      }
+    },
+    {
+      "name": "html_chars_unescaped",
+      "why": "Python leaves < > & raw; Go json.Marshal would emit \\u003c \\u003e \\u0026",
+      "payload_json": "{\"agent_id\":\"agent-4\",\"capability\":\"cap.html\",\"capability_version\":1,\"context_bindings\":{\"q\":\"<script>&'\\\"</script>\"},\"exp\":4102444800,\"v\":2}",
+      "token": "eyJhZ2VudF9pZCI6ImFnZW50LTQiLCJjYXBhYmlsaXR5IjoiY2FwLmh0bWwiLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicSI6IjxzY3JpcHQ-JidcIjwvc2NyaXB0PiJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.X3IV3kIF7v3pYYvisgiUaQP6YZQ68WJ2rm7dcSHKK7s",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "agent-4",
+          "capability": "cap.html",
+          "capability_version": 1,
+          "context_bindings": {
+            "q": "<script>&'\"</script>"
+          },
+          "expires_at": 4102444800,
+          "token_id": "971bb35ed9042f17"
+        }
+      }
+    },
+    {
+      "name": "control_chars",
+      "why": "DEL (0x7f) IS escaped (\\u007f) by Python ensure_ascii; '/' is not escaped",
+      "payload_json": "{\"agent_id\":\"agent-5\",\"capability\":\"cap.ctl\",\"capability_version\":1,\"context_bindings\":{\"s\":\"a\\u0000b\\u007fc\\u2028d\\n\\t\\\"\\\\/\"},\"exp\":4102444800,\"v\":2}",
+      "token": "eyJhZ2VudF9pZCI6ImFnZW50LTUiLCJjYXBhYmlsaXR5IjoiY2FwLmN0bCIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6eyJzIjoiYVx1MDAwMGJcdTAwN2ZjXHUyMDI4ZFxuXHRcIlxcLyJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.InRhzLQ4jLLiEbXnpCUyzLN4Kerjs6MtsLrZen9Y-nw",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "agent-5",
+          "capability": "cap.ctl",
+          "capability_version": 1,
+          "context_bindings": {
+            "s": "a\u0000bc d\n\t\"\\/"
+          },
+          "expires_at": 4102444800,
+          "token_id": "629656fbb354111b"
+        }
+      }
+    },
+    {
+      "name": "float_binding",
+      "why": "",
+      "payload_json": "{\"agent_id\":\"agent-6\",\"capability\":\"cap.float\",\"capability_version\":1,\"context_bindings\":{\"f\":1.5,\"i\":7},\"exp\":4102444800,\"v\":2}",
+      "token": "eyJhZ2VudF9pZCI6ImFnZW50LTYiLCJjYXBhYmlsaXR5IjoiY2FwLmZsb2F0IiwiY2FwYWJpbGl0eV92ZXJzaW9uIjoxLCJjb250ZXh0X2JpbmRpbmdzIjp7ImYiOjEuNSwiaSI6N30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.gfE1SI-FHjj7iuygHb7i_SP1lv0ZmTcn-6W2yXfZPc0",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "agent-6",
+          "capability": "cap.float",
+          "capability_version": 1,
+          "context_bindings": {
+            "f": 1.5,
+            "i": 7
+          },
+          "expires_at": 4102444800,
+          "token_id": "7d6f2022f7b7faf5"
+        }
+      }
+    },
+    {
+      "name": "big_int_binding",
+      "why": "above 2^53: a Go decoder into float64/any loses precision; use json.Number to re-sign byte-identically",
+      "payload_json": "{\"agent_id\":\"agent-7\",\"capability\":\"cap.bigint\",\"capability_version\":1,\"context_bindings\":{\"big\":9007199254740993},\"exp\":4102444800,\"v\":2}",
+      "token": "eyJhZ2VudF9pZCI6ImFnZW50LTciLCJjYXBhYmlsaXR5IjoiY2FwLmJpZ2ludCIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6eyJiaWciOjkwMDcxOTkyNTQ3NDA5OTN9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.2FSLAt0UxxtlWQOZYUwkUOgvokvp9jeHUOVKFBP3128",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "agent-7",
+          "capability": "cap.bigint",
+          "capability_version": 1,
+          "context_bindings": {
+            "big": 9007199254740993
+          },
+          "expires_at": 4102444800,
+          "token_id": "ea204b19f60b9bc6"
+        }
+      }
+    },
+    {
+      "name": "version_7",
+      "why": "",
+      "payload_json": "{\"agent_id\":\"agent-8\",\"capability\":\"cap.v\",\"capability_version\":7,\"context_bindings\":{},\"exp\":4102444800,\"v\":2}",
+      "token": "eyJhZ2VudF9pZCI6ImFnZW50LTgiLCJjYXBhYmlsaXR5IjoiY2FwLnYiLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjcsImNvbnRleHRfYmluZGluZ3MiOnt9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.QbiTzmYDHCyKwiHprH7cVWPDITNtLRmfbBWMk2dR9BY",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "agent-8",
+          "capability": "cap.v",
+          "capability_version": 7,
+          "context_bindings": {},
+          "expires_at": 4102444800,
+          "token_id": "67ad6a6d2f43a34e"
+        }
+      }
+    },
+    {
+      "name": "exp_zero_never_expires",
+      "why": "is_expired is False when exp <= 0",
+      "payload_json": "{\"agent_id\":\"agent-9\",\"capability\":\"cap.exp0\",\"capability_version\":1,\"context_bindings\":{},\"exp\":0,\"v\":2}",
+      "token": "eyJhZ2VudF9pZCI6ImFnZW50LTkiLCJjYXBhYmlsaXR5IjoiY2FwLmV4cDAiLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnt9LCJleHAiOjAsInYiOjJ9.Dk90qu9ewU0rVNFqYAbG9Ug_aWRPjtxp-FpzdCXTbGc",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "agent-9",
+          "capability": "cap.exp0",
+          "capability_version": 1,
+          "context_bindings": {},
+          "expires_at": 0,
+          "token_id": "3da37259c1d4a655"
+        }
+      }
+    },
+    {
+      "name": "exp_negative_never_expires",
+      "why": "exp <= 0 never expires",
+      "payload_json": "{\"agent_id\":\"agent-9\",\"capability\":\"cap.expneg\",\"capability_version\":1,\"context_bindings\":{},\"exp\":-5,\"v\":2}",
+      "token": "eyJhZ2VudF9pZCI6ImFnZW50LTkiLCJjYXBhYmlsaXR5IjoiY2FwLmV4cG5lZyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6LTUsInYiOjJ9.YFrFkmBCTgVapMGVtoSYInHIboNDEqyBXkaWQJrhCUs",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "agent-9",
+          "capability": "cap.expneg",
+          "capability_version": 1,
+          "context_bindings": {},
+          "expires_at": -5,
+          "token_id": "e2c8f77aea408ffe"
+        }
+      }
+    },
+    {
+      "name": "exp_small_expired",
+      "why": "verified at now=1001 below",
+      "payload_json": "{\"agent_id\":\"agent-9\",\"capability\":\"cap.expired\",\"capability_version\":1,\"context_bindings\":{},\"exp\":1000,\"v\":2}",
+      "token": "eyJhZ2VudF9pZCI6ImFnZW50LTkiLCJjYXBhYmlsaXR5IjoiY2FwLmV4cGlyZWQiLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnt9LCJleHAiOjEwMDAsInYiOjJ9.eixfzUQD_XTHkvWGqPFEkJF8A4CqXggPSNcOZ_2TWFY",
+      "now": 1001,
+      "expect": {
+        "ok": false,
+        "error": "TokenExpiredError",
+        "message": "token for 'cap.expired' expired at 1000"
+      }
+    },
+    {
+      "name": "exp_boundary_now_equals_exp",
+      "why": "expired only when now > exp",
+      "payload_json": "{\"agent_id\":\"agent-9\",\"capability\":\"cap.expired\",\"capability_version\":1,\"context_bindings\":{},\"exp\":1000,\"v\":2}",
+      "token": "eyJhZ2VudF9pZCI6ImFnZW50LTkiLCJjYXBhYmlsaXR5IjoiY2FwLmV4cGlyZWQiLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnt9LCJleHAiOjEwMDAsInYiOjJ9.eixfzUQD_XTHkvWGqPFEkJF8A4CqXggPSNcOZ_2TWFY",
+      "now": 1000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "agent-9",
+          "capability": "cap.expired",
+          "capability_version": 1,
+          "context_bindings": {},
+          "expires_at": 1000,
+          "token_id": "8b83caf061c75839"
+        }
+      }
+    },
+    {
+      "name": "tampered_payload_char",
+      "why": "",
+      "token": "AyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenSignatureError",
+        "message": "token signature did not verify"
+      }
+    },
+    {
+      "name": "tampered_signature_char",
+      "why": "",
+      "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.Aog0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenSignatureError",
+        "message": "token signature did not verify"
+      }
+    },
+    {
+      "name": "truncated_signature",
+      "why": "",
+      "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwW",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenSignatureError",
+        "message": "token signature did not verify"
+      }
+    },
+    {
+      "name": "wrong_key",
+      "why": "valid HMAC under a different key",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.9UXlvG4bkNhpXJ3-XyN_wSIj88wKexo7D5ejbGlQtbM",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenSignatureError",
+        "message": "token signature did not verify"
+      }
+    },
+    {
+      "name": "no_dot",
+      "why": "",
+      "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ97og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenMalformedError",
+        "message": "token must be 'payload.signature'"
+      }
+    },
+    {
+      "name": "three_parts",
+      "why": "",
+      "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug.extra",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenMalformedError",
+        "message": "token must be 'payload.signature'"
+      }
+    },
+    {
+      "name": "empty_string",
+      "why": "",
+      "token": "",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenMalformedError",
+        "message": "token must be 'payload.signature'"
+      }
+    },
+    {
+      "name": "empty_payload_part",
+      "why": "",
+      "token": ".7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenMalformedError",
+        "message": "token payload or signature empty"
+      }
+    },
+    {
+      "name": "empty_signature_part",
+      "why": "",
+      "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenMalformedError",
+        "message": "token payload or signature empty"
+      }
+    },
+    {
+      "name": "bad_base64_payload",
+      "why": "",
+      "token": "!!!!.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenMalformedError",
+        "message": "token payload or signature empty"
+      }
+    },
+    {
+      "name": "padded_base64_accepted",
+      "why": "'=' padding is accepted (lenient)",
+      "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug=",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "research-agent",
+          "capability": "github.read_repo",
+          "capability_version": 1,
+          "context_bindings": {
+            "repo": "org/research"
+          },
+          "expires_at": 4102444800,
+          "token_id": "4d1f52fe88fd01cb"
+        }
+      }
+    },
+    {
+      "name": "embedded_newline_accepted",
+      "why": "non-alphabet chars are discarded by Python's non-strict b64decode",
+      "token": "eyJhZ2VudF\n9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "research-agent",
+          "capability": "github.read_repo",
+          "capability_version": 1,
+          "context_bindings": {
+            "repo": "org/research"
+          },
+          "expires_at": 4102444800,
+          "token_id": "4d1f52fe88fd01cb"
+        }
+      }
+    },
+    {
+      "name": "standard_alphabet_accepted",
+      "why": "'+' and '/' decode like '-' and '_' (lenient)",
+      "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K+MOs4ifLYX+VvztIGhgudl1EJwWdyug",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "research-agent",
+          "capability": "github.read_repo",
+          "capability_version": 1,
+          "context_bindings": {
+            "repo": "org/research"
+          },
+          "expires_at": 4102444800,
+          "token_id": "4d1f52fe88fd01cb"
+        }
+      }
+    },
+    {
+      "name": "version_3",
+      "why": "validly signed, unsupported format version",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6M30.Ut0V2vREHydTbIcTZFEj4WP8WXINP55yDCtOAxiLP0U",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenVersionError",
+        "message": "token format version 3 not supported; this verifier only handles v2"
+      }
+    },
+    {
+      "name": "version_missing",
+      "why": "no v key -> version 0",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiZXhwIjo0MTAyNDQ0ODAwfQ.ihEXh7RqZrwNcaemM4Qat-P-TkR4a8Ld6XcV5dJV8ms",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenVersionError",
+        "message": "token format version 0 not supported; this verifier only handles v2"
+      }
+    },
+    {
+      "name": "version_string_2_accepted",
+      "why": "int('2') == 2",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6IjIifQ.lYt6Tg8K_eQ_wwen4PEbSa0e-Zfz6M3cPBe0hZpvzgI",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "a",
+          "capability": "c",
+          "capability_version": 1,
+          "context_bindings": {},
+          "expires_at": 4102444800,
+          "token_id": "13e24cea19389d64"
+        }
+      }
+    },
+    {
+      "name": "version_float_2_accepted",
+      "why": "int(2.0) == 2",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mi4wfQ._p5bpjrYUOniaZ0JiiEC4a2w9m8PUpjua2d0hNIQiqI",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "a",
+          "capability": "c",
+          "capability_version": 1,
+          "context_bindings": {},
+          "expires_at": 4102444800,
+          "token_id": "50f509e71b121555"
+        }
+      }
+    },
+    {
+      "name": "version_null_leaks_typeerror",
+      "why": "int(None) raises TypeError, NOT a TokenError (uncaught in Python)",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6bnVsbH0.-j6MCweRNz18gv8DOZ8KQ15r71ro9rTuf4k602OR2Ys",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TypeError",
+        "message": "int() argument must be a string, a bytes-like object or a real number, not 'NoneType'"
+      }
+    },
+    {
+      "name": "version_garbage_leaks_valueerror",
+      "why": "int('abc') raises ValueError, NOT a TokenError",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6ImFiYyJ9.KvN4e8IOrrSSGe_m58tBUTeY7piu7zpC2ow4-5OtStc",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "ValueError",
+        "message": "invalid literal for int() with base 10: 'abc'"
+      }
+    },
+    {
+      "name": "missing_exp",
+      "why": "KeyError -> TokenMalformedError",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sInYiOjJ9.7pEekipt1xRYDCQf_0IbqjJc3AwOOHsT4QS1LUQKCTs",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenMalformedError",
+        "message": "token payload missing field: 'exp'"
+      }
+    },
+    {
+      "name": "missing_agent_id",
+      "why": "",
+      "token": "eyJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.xRqiVBcyEDGj__v3paq5sP66GkEKFvmk2YsjU1VdLZM",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenMalformedError",
+        "message": "token payload missing field: 'agent_id'"
+      }
+    },
+    {
+      "name": "payload_is_list",
+      "why": "",
+      "token": "WzEsMl0.gm8mx2WJqcHRiezelCuObcFanHQFn1iSxdkEI2Pu_JM",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenMalformedError",
+        "message": "token payload must be a JSON object"
+      }
+    },
+    {
+      "name": "payload_is_string",
+      "why": "",
+      "token": "InN0ciI.JZHBW0Sd7nJT8mH2YQ0pYJm8V4OJ5Tg_aXdN_h2qpgo",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenMalformedError",
+        "message": "token payload must be a JSON object"
+      }
+    },
+    {
+      "name": "payload_not_json",
+      "why": "",
+      "token": "bm90IGpzb24gYXQgYWxs.fdJylbHSc4pZpI-BiRjEjRIM2gLM1RTaOgA2CZoTDlU",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenMalformedError",
+        "message": "token payload not valid JSON: Expecting value: line 1 column 1 (char 0)"
+      }
+    },
+    {
+      "name": "payload_invalid_utf8",
+      "why": "",
+      "token": "__57.cVtQCEFHaNM60qngqyk42o7UTrfGra3yUXRezC_X53c",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenMalformedError",
+        "message": "token payload not valid JSON: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte"
+      }
+    },
+    {
+      "name": "payload_raw_utf8_not_escaped",
+      "why": "verify works on raw bytes; non-ascii payload is fine",
+      "token": "eyJhZ2VudF9pZCI6IsOpIiwiY2FwYWJpbGl0eSI6ImMiLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnt9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.3PFC7ymwdxfQCblVIv4cnu8Kxpm99r20ISA7fmOjGxg",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "é",
+          "capability": "c",
+          "capability_version": 1,
+          "context_bindings": {},
+          "expires_at": 4102444800,
+          "token_id": "324703d08dfb97c9"
+        }
+      }
+    },
+    {
+      "name": "payload_not_canonical_whitespace",
+      "why": "verify does not require canonical form; token_id hashes the received bytes",
+      "token": "eyAidiI6IDIsICJhZ2VudF9pZCI6ICJhIiwgImNhcGFiaWxpdHkiOiAiYyIsICJjYXBhYmlsaXR5X3ZlcnNpb24iOiAxLCAiZXhwIjogNDEwMjQ0NDgwMCB9.ErRAd3lgjMoOXH0ZWbJrKx5C85V51U41Vk2n2hV-RaM",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "a",
+          "capability": "c",
+          "capability_version": 1,
+          "context_bindings": {},
+          "expires_at": 4102444800,
+          "token_id": "39ebb99281921fae"
+        }
+      }
+    },
+    {
+      "name": "agent_id_int_coerced",
+      "why": "str(123) == '123'",
+      "token": "eyJhZ2VudF9pZCI6MTIzLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.8vAhhv_-OKKFoMtDf1EUdlSnJnJNNCIx5X3yu2QYESI",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "123",
+          "capability": "c",
+          "capability_version": 1,
+          "context_bindings": {},
+          "expires_at": 4102444800,
+          "token_id": "0d010e81f13d1557"
+        }
+      }
+    },
+    {
+      "name": "agent_id_null_coerced",
+      "why": "str(None) == 'None'",
+      "token": "eyJhZ2VudF9pZCI6bnVsbCwiY2FwYWJpbGl0eSI6ImMiLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnt9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.1TYQh0xrBLKrSn6QayJlNER1FE_uPX3zVl-6z4i-IzU",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "None",
+          "capability": "c",
+          "capability_version": 1,
+          "context_bindings": {},
+          "expires_at": 4102444800,
+          "token_id": "d46774aafc044a42"
+        }
+      }
+    },
+    {
+      "name": "capability_version_string",
+      "why": "int('2')",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6IjIiLCJjb250ZXh0X2JpbmRpbmdzIjp7fSwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.eZUTma7laQIwvXpldYtrRD12CnwKZUydfw74qGNDcN8",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "a",
+          "capability": "c",
+          "capability_version": 2,
+          "context_bindings": {},
+          "expires_at": 4102444800,
+          "token_id": "5752676890a4006a"
+        }
+      }
+    },
+    {
+      "name": "capability_version_float",
+      "why": "int(2.9) == 2",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6Mi45LCJjb250ZXh0X2JpbmRpbmdzIjp7fSwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.8UXvXGK3vyRLOosqsasp4Q1NBQWHK2-RuC6rcbLqu8c",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "a",
+          "capability": "c",
+          "capability_version": 2,
+          "context_bindings": {},
+          "expires_at": 4102444800,
+          "token_id": "374a208d8103a834"
+        }
+      }
+    },
+    {
+      "name": "capability_version_true",
+      "why": "int(True) == 1",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6dHJ1ZSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.GcJrRUHokau6hQXmSa34WJawjn8vKScZgbR4HniEJoM",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "a",
+          "capability": "c",
+          "capability_version": 1,
+          "context_bindings": {},
+          "expires_at": 4102444800,
+          "token_id": "931b1582f929ec55"
+        }
+      }
+    },
+    {
+      "name": "capability_version_null",
+      "why": "int(None) -> TypeError -> TokenMalformedError",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6bnVsbCwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.NbAJqc3g1kK-ntIX05VNf4JbczCHUHOq5TrkvexIRMk",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenMalformedError",
+        "message": "token payload missing field: int() argument must be a string, a bytes-like object or a real number, not 'NoneType'"
+      }
+    },
+    {
+      "name": "capability_version_garbage",
+      "why": "ValueError -> TokenMalformedError",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6IngiLCJjb250ZXh0X2JpbmRpbmdzIjp7fSwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.a3seUjEXLwbFKBZuizvPsVJLrnYqOdEm46P75sPQVhA",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenMalformedError",
+        "message": "token payload missing field: invalid literal for int() with base 10: 'x'"
+      }
+    },
+    {
+      "name": "exp_string_coerced",
+      "why": "int('4102444800')",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6IjQxMDI0NDQ4MDAiLCJ2IjoyfQ.DNE4jCLmPudMph9vWSTxgBznBaejjiTVVdfipIqZLZI",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "a",
+          "capability": "c",
+          "capability_version": 1,
+          "context_bindings": {},
+          "expires_at": 4102444800,
+          "token_id": "837899c2ef45200f"
+        }
+      }
+    },
+    {
+      "name": "exp_float_coerced",
+      "why": "int() truncates",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6NDEwMjQ0NDgwMC43LCJ2IjoyfQ._9AS5CPFxEwo4GKQY92IFrKGyw1zvQfcRmrwqR2pSoQ",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "a",
+          "capability": "c",
+          "capability_version": 1,
+          "context_bindings": {},
+          "expires_at": 4102444800,
+          "token_id": "d4f6770435b54a59"
+        }
+      }
+    },
+    {
+      "name": "bindings_null_is_empty",
+      "why": "`or {}`",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6bnVsbCwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.domhx4P5q9FQXL1PXFdQaitKUCyqb_IZ6qWDAkY1z-M",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "a",
+          "capability": "c",
+          "capability_version": 1,
+          "context_bindings": {},
+          "expires_at": 4102444800,
+          "token_id": "30535b8c85d2994f"
+        }
+      }
+    },
+    {
+      "name": "bindings_empty_list_is_empty",
+      "why": "falsy -> {}",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6W10sImV4cCI6NDEwMjQ0NDgwMCwidiI6Mn0.wRkWdhODKu5vnPFigHH13UNsXV_wQSz7b61b-hJyp14",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "a",
+          "capability": "c",
+          "capability_version": 1,
+          "context_bindings": {},
+          "expires_at": 4102444800,
+          "token_id": "0f94fb4e525ce362"
+        }
+      }
+    },
+    {
+      "name": "bindings_zero_is_empty",
+      "why": "falsy -> {}",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6MCwiZXhwIjo0MTAyNDQ0ODAwLCJ2IjoyfQ.PlBhM0K7OdgkDEnRSLXlnJAlgeYPiHDPtEnA3FUeh6w",
+      "now": 1900000000,
+      "expect": {
+        "ok": true,
+        "claims": {
+          "agent_id": "a",
+          "capability": "c",
+          "capability_version": 1,
+          "context_bindings": {},
+          "expires_at": 4102444800,
+          "token_id": "bd6fb9112c133958"
+        }
+      }
+    },
+    {
+      "name": "bindings_nonempty_list",
+      "why": "truthy non-dict -> TokenMalformedError",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6WzFdLCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.6QWyE5rMP0WfxXiaebKjo5H_VT7-vFNuLE9jH_rZ52Q",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenMalformedError",
+        "message": "context_bindings must be a JSON object"
+      }
+    },
+    {
+      "name": "bindings_string",
+      "why": "truthy non-dict -> TokenMalformedError",
+      "token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6IngiLCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.6c85nhxEXw_oyUQHpBphtghtRUNXVdMcRsZvdkZzJGs",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenMalformedError",
+        "message": "context_bindings must be a JSON object"
+      }
+    },
+    {
+      "name": "valid_token_checked_with_other_key",
+      "why": "signature check uses the configured key",
+      "key_hex": "5f3fc3c0eefc816cb4484a26afa020f4fc1a78e2dde97f4e7b089a215171b07d",
+      "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug",
+      "now": 1900000000,
+      "expect": {
+        "ok": false,
+        "error": "TokenSignatureError",
+        "message": "token signature did not verify"
+      }
+    }
+  ],
+  "sign": [
+    {
+      "agent_id": "research-agent",
+      "capability": "github.read_repo",
+      "capability_version": 1,
+      "context_bindings": {
+        "repo": "org/research"
+      },
+      "ttl_seconds": 60,
+      "now": 4000000000,
+      "expected_payload_json": "{\"agent_id\":\"research-agent\",\"capability\":\"github.read_repo\",\"capability_version\":1,\"context_bindings\":{\"repo\":\"org/research\"},\"exp\":4000000060,\"v\":2}",
+      "expected_token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQwMDAwMDAwNjAsInYiOjJ9.Bf9-FbiyJYMgdWGKdPGBfql_Bn7fkBmhuQkUIbSgWC0"
+    },
+    {
+      "agent_id": "a",
+      "capability": "c",
+      "capability_version": 1,
+      "context_bindings": {},
+      "ttl_seconds": 1,
+      "now": 1700000000,
+      "expected_payload_json": "{\"agent_id\":\"a\",\"capability\":\"c\",\"capability_version\":1,\"context_bindings\":{},\"exp\":1700000001,\"v\":2}",
+      "expected_token": "eyJhZ2VudF9pZCI6ImEiLCJjYXBhYmlsaXR5IjoiYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MSwiY29udGV4dF9iaW5kaW5ncyI6e30sImV4cCI6MTcwMDAwMDAwMSwidiI6Mn0.NOvnRlBVwemSrDrlFZ2017RgujaQ1EIxaI5Z7Dx5png"
+    },
+    {
+      "agent_id": "agént",
+      "capability": "cap.日本",
+      "capability_version": 2,
+      "context_bindings": {
+        "k": "🔐<&>",
+        "a": [
+          3,
+          2,
+          1
+        ]
+      },
+      "ttl_seconds": 3600,
+      "now": 1800000000,
+      "expected_payload_json": "{\"agent_id\":\"ag\\u00e9nt\",\"capability\":\"cap.\\u65e5\\u672c\",\"capability_version\":2,\"context_bindings\":{\"a\":[3,2,1],\"k\":\"\\ud83d\\udd10<&>\"},\"exp\":1800003600,\"v\":2}",
+      "expected_token": "eyJhZ2VudF9pZCI6ImFnXHUwMGU5bnQiLCJjYXBhYmlsaXR5IjoiY2FwLlx1NjVlNVx1NjcyYyIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MiwiY29udGV4dF9iaW5kaW5ncyI6eyJhIjpbMywyLDFdLCJrIjoiXHVkODNkXHVkZDEwPCY-In0sImV4cCI6MTgwMDAwMzYwMCwidiI6Mn0.7v5caQuq-Y82SDK8E6ke97ISFe1uBlhJtiz-71KnUjU"
+    },
+    {
+      "agent_id": "agent",
+      "capability": "cap",
+      "capability_version": 9,
+      "context_bindings": {
+        "z": null,
+        "y": false,
+        "x": 1.25
+      },
+      "ttl_seconds": 86400,
+      "now": 1700000001,
+      "expected_payload_json": "{\"agent_id\":\"agent\",\"capability\":\"cap\",\"capability_version\":9,\"context_bindings\":{\"x\":1.25,\"y\":false,\"z\":null},\"exp\":1700086401,\"v\":2}",
+      "expected_token": "eyJhZ2VudF9pZCI6ImFnZW50IiwiY2FwYWJpbGl0eSI6ImNhcCIsImNhcGFiaWxpdHlfdmVyc2lvbiI6OSwiY29udGV4dF9iaW5kaW5ncyI6eyJ4IjoxLjI1LCJ5IjpmYWxzZSwieiI6bnVsbH0sImV4cCI6MTcwMDA4NjQwMSwidiI6Mn0.GeO9J6AKr7tW_hrLswue_2pP3fuZ5CFmbIk2FPwuLQg"
+    }
+  ],
+  "sign_errors": [
+    {
+      "agent_id": "a",
+      "capability": "c",
+      "capability_version": 1,
+      "context_bindings": {},
+      "ttl_seconds": 0,
+      "now": 1,
+      "error": "ValidationError"
+    },
+    {
+      "agent_id": "",
+      "capability": "c",
+      "capability_version": 1,
+      "context_bindings": {},
+      "ttl_seconds": 5,
+      "now": 1,
+      "error": "ValidationError"
+    },
+    {
+      "agent_id": "a",
+      "capability": "",
+      "capability_version": 1,
+      "context_bindings": {},
+      "ttl_seconds": 5,
+      "now": 1,
+      "error": "ValidationError"
+    },
+    {
+      "agent_id": "a",
+      "capability": "c",
+      "capability_version": 0,
+      "context_bindings": {},
+      "ttl_seconds": 5,
+      "now": 1,
+      "error": "ValidationError"
+    }
+  ],
+  "check_context": [
+    {
+      "name": "equal",
+      "why": "",
+      "bindings": {
+        "repo": "a"
+      },
+      "context": {
+        "repo": "a"
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "name": "extra_context_keys_ok",
+      "why": "",
+      "bindings": {
+        "repo": "a"
+      },
+      "context": {
+        "repo": "a",
+        "x": 1
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "name": "missing_key",
+      "why": "",
+      "bindings": {
+        "repo": "a"
+      },
+      "context": {},
+      "expect": {
+        "ok": false,
+        "error": "TokenBindingError"
+      }
+    },
+    {
+      "name": "mismatch",
+      "why": "",
+      "bindings": {
+        "repo": "a"
+      },
+      "context": {
+        "repo": "b"
+      },
+      "expect": {
+        "ok": false,
+        "error": "TokenBindingError"
+      }
+    },
+    {
+      "name": "no_bindings_anything_ok",
+      "why": "",
+      "bindings": {},
+      "context": {
+        "anything": 1
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "name": "int_vs_float_equal",
+      "why": "Python 1 == 1.0",
+      "bindings": {
+        "n": 1
+      },
+      "context": {
+        "n": 1.0
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "name": "true_vs_one_equal",
+      "why": "Python True == 1 (Go: bool != float64)",
+      "bindings": {
+        "flag": true
+      },
+      "context": {
+        "flag": 1
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "name": "string_vs_int",
+      "why": "",
+      "bindings": {
+        "n": "1"
+      },
+      "context": {
+        "n": 1
+      },
+      "expect": {
+        "ok": false,
+        "error": "TokenBindingError"
+      }
+    },
+    {
+      "name": "null_binding_key_present",
+      "why": "",
+      "bindings": {
+        "k": null
+      },
+      "context": {
+        "k": null
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "name": "null_binding_key_absent",
+      "why": "key must be PRESENT even for null",
+      "bindings": {
+        "k": null
+      },
+      "context": {},
+      "expect": {
+        "ok": false,
+        "error": "TokenBindingError"
+      }
+    },
+    {
+      "name": "nested_dict_equal",
+      "why": "",
+      "bindings": {
+        "d": {
+          "a": 1,
+          "b": [
+            1,
+            2
+          ]
+        }
+      },
+      "context": {
+        "d": {
+          "b": [
+            1,
+            2
+          ],
+          "a": 1
+        }
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "name": "list_order_matters",
+      "why": "",
+      "bindings": {
+        "l": [
+          1,
+          2
+        ]
+      },
+      "context": {
+        "l": [
+          2,
+          1
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "error": "TokenBindingError"
+      }
+    },
+    {
+      "name": "nfc_vs_nfd_differ",
+      "why": "no normalisation",
+      "bindings": {
+        "s": "café"
+      },
+      "context": {
+        "s": "café"
+      },
+      "expect": {
+        "ok": false,
+        "error": "TokenBindingError"
+      }
+    },
+    {
+      "name": "multiple_bindings_one_fails",
+      "why": "",
+      "bindings": {
+        "a": 1,
+        "b": 2
+      },
+      "context": {
+        "a": 1,
+        "b": 3
+      },
+      "expect": {
+        "ok": false,
+        "error": "TokenBindingError"
+      }
+    }
+  ],
+  "is_expired": [
+    {
+      "exp": 1000,
+      "now": 999,
+      "expired": false
+    },
+    {
+      "exp": 1000,
+      "now": 1000,
+      "expired": false
+    },
+    {
+      "exp": 1000,
+      "now": 1001,
+      "expired": true
+    },
+    {
+      "exp": 0,
+      "now": 1000000000000,
+      "expired": false
+    },
+    {
+      "exp": -1,
+      "now": 1000000000000,
+      "expired": false
+    },
+    {
+      "exp": 4102444800,
+      "now": 4102444800,
+      "expired": false
+    },
+    {
+      "exp": 4102444800,
+      "now": 4102444801,
+      "expired": true
+    }
+  ],
+  "hook_v2": {
+    "key_hex": "8caf46fc16783d0da2e20c6114e68218496cbe91b2460c87c5fb1f3c455e3efa",
+    "cases": [
+      {
+        "name": "allow",
+        "why": "",
+        "now": 1900000000,
+        "requests": [
+          {
+            "operation": "capability",
+            "agent": "research-agent",
+            "namespace": "",
+            "capability": "github.read_repo",
+            "capability_version": 1,
+            "payload": {
+              "repo": "org/research"
+            },
+            "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug"
+          }
+        ],
+        "expect": [
+          {
+            "decision": "allow",
+            "reason": "v2 token valid"
+          }
+        ]
+      },
+      {
+        "name": "replay_second_use_denied",
+        "why": "second consult of the same token_id in one hook instance is a replay",
+        "now": 1900000000,
+        "requests": [
+          {
+            "operation": "capability",
+            "agent": "research-agent",
+            "namespace": "",
+            "capability": "github.read_repo",
+            "capability_version": 1,
+            "payload": {
+              "repo": "org/research"
+            },
+            "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug"
+          },
+          {
+            "operation": "capability",
+            "agent": "research-agent",
+            "namespace": "",
+            "capability": "github.read_repo",
+            "capability_version": 1,
+            "payload": {
+              "repo": "org/research"
+            },
+            "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug"
+          }
+        ],
+        "expect": [
+          {
+            "decision": "allow",
+            "reason": "v2 token valid"
+          },
+          {
+            "decision": "deny",
+            "reason": "capability_token replay detected"
+          }
+        ]
+      },
+      {
+        "name": "agent_mismatch",
+        "why": "",
+        "now": 1900000000,
+        "requests": [
+          {
+            "operation": "capability",
+            "agent": "other",
+            "namespace": "",
+            "capability": "github.read_repo",
+            "capability_version": 1,
+            "payload": {
+              "repo": "org/research"
+            },
+            "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug"
+          }
+        ],
+        "expect": [
+          {
+            "decision": "deny",
+            "reason": "v2 token bound to agent 'research-agent', caller claimed 'other'"
+          }
+        ]
+      },
+      {
+        "name": "capability_mismatch",
+        "why": "",
+        "now": 1900000000,
+        "requests": [
+          {
+            "operation": "capability",
+            "agent": "research-agent",
+            "namespace": "",
+            "capability": "github.write",
+            "capability_version": 1,
+            "payload": {
+              "repo": "org/research"
+            },
+            "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug"
+          }
+        ],
+        "expect": [
+          {
+            "decision": "deny",
+            "reason": "v2 token authorizes 'github.read_repo', request asked for 'github.write'"
+          }
+        ]
+      },
+      {
+        "name": "version_mismatch",
+        "why": "",
+        "now": 1900000000,
+        "requests": [
+          {
+            "operation": "capability",
+            "agent": "research-agent",
+            "namespace": "",
+            "capability": "github.read_repo",
+            "capability_version": 2,
+            "payload": {
+              "repo": "org/research"
+            },
+            "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug"
+          }
+        ],
+        "expect": [
+          {
+            "decision": "deny",
+            "reason": "v2 token capability_version=1, request asked for 2"
+          }
+        ]
+      },
+      {
+        "name": "context_binding_violation",
+        "why": "",
+        "now": 1900000000,
+        "requests": [
+          {
+            "operation": "capability",
+            "agent": "research-agent",
+            "namespace": "",
+            "capability": "github.read_repo",
+            "capability_version": 1,
+            "payload": {
+              "repo": "evil/repo"
+            },
+            "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug"
+          }
+        ],
+        "expect": [
+          {
+            "decision": "deny",
+            "reason": "v2 token context binding failed: capability 'github.read_repo' context binding failed for 'repo': expected 'org/research', got 'evil/repo'"
+          }
+        ]
+      },
+      {
+        "name": "context_missing",
+        "why": "",
+        "now": 1900000000,
+        "requests": [
+          {
+            "operation": "capability",
+            "agent": "research-agent",
+            "namespace": "",
+            "capability": "github.read_repo",
+            "capability_version": 1,
+            "payload": {},
+            "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug"
+          }
+        ],
+        "expect": [
+          {
+            "decision": "deny",
+            "reason": "v2 token context binding failed: capability 'github.read_repo' requires context key 'repo' in the request"
+          }
+        ]
+      },
+      {
+        "name": "v2_token_on_legacy_op",
+        "why": "v2 tokens only authorize capability execution",
+        "now": 1900000000,
+        "requests": [
+          {
+            "operation": "read",
+            "agent": "research-agent",
+            "namespace": "",
+            "capability": null,
+            "capability_version": 0,
+            "payload": {
+              "repo": "org/research"
+            },
+            "token": "eyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug"
+          }
+        ],
+        "expect": [
+          {
+            "decision": "deny",
+            "reason": "v2 capability_token presented on a non-capability op; v2 tokens only authorize capability execution"
+          }
+        ]
+      },
+      {
+        "name": "tampered",
+        "why": "",
+        "now": 1900000000,
+        "requests": [
+          {
+            "operation": "capability",
+            "agent": "research-agent",
+            "namespace": "",
+            "capability": "github.read_repo",
+            "capability_version": 1,
+            "payload": {
+              "repo": "org/research"
+            },
+            "token": "AyJhZ2VudF9pZCI6InJlc2VhcmNoLWFnZW50IiwiY2FwYWJpbGl0eSI6ImdpdGh1Yi5yZWFkX3JlcG8iLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnsicmVwbyI6Im9yZy9yZXNlYXJjaCJ9LCJleHAiOjQxMDI0NDQ4MDAsInYiOjJ9.7og0odc76Q8K-MOs4ifLYX-VvztIGhgudl1EJwWdyug"
+          }
+        ],
+        "expect": [
+          {
+            "decision": "deny",
+            "reason": "capability_token signature invalid"
+          }
+        ]
+      },
+      {
+        "name": "expired",
+        "why": "now=1001 vs exp 1000",
+        "now": 1001,
+        "requests": [
+          {
+            "operation": "capability",
+            "agent": "agent-9",
+            "namespace": "",
+            "capability": "cap.expired",
+            "capability_version": 1,
+            "payload": {},
+            "token": "eyJhZ2VudF9pZCI6ImFnZW50LTkiLCJjYXBhYmlsaXR5IjoiY2FwLmV4cGlyZWQiLCJjYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNvbnRleHRfYmluZGluZ3MiOnt9LCJleHAiOjEwMDAsInYiOjJ9.eixfzUQD_XTHkvWGqPFEkJF8A4CqXggPSNcOZ_2TWFY"
+          }
+        ],
+        "expect": [
+          {
+            "decision": "deny",
+            "reason": "v2 token expired"
+          }
+        ]
+      },
+      {
+        "name": "no_token",
+        "why": "",
+        "now": 1900000000,
+        "requests": [
+          {
+            "operation": "capability",
+            "agent": "research-agent",
+            "namespace": "",
+            "capability": "github.read_repo",
+            "capability_version": 1,
+            "payload": {
+              "repo": "org/research"
+            },
+            "token": ""
+          }
+        ],
+        "expect": [
+          {
+            "decision": "deny",
+            "reason": "no capability_token presented"
+          }
+        ]
+      }
+    ]
+  }
+}
