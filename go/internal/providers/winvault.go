@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"errors"
 	"fmt"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -56,7 +55,7 @@ func winVaultGet(s credStore, service, user string) (string, error) {
 		if v == "" && len(res.Blob) > 0 {
 			// An entry exists but cannot be decoded: fail closed rather than
 			// report "missing" (which would let InitializeIfMissing overwrite it).
-			return "", errors.New("credential blob is neither UTF-16 nor UTF-8")
+			return "", fmt.Errorf("%w: credential blob is neither UTF-16 nor UTF-8", ErrMasterSecretUnavailable)
 		}
 		return v, nil
 	}
@@ -85,7 +84,27 @@ func winVaultSet(s credStore, service, user, value string) error {
 			return fmt.Errorf("preserve existing credential: %w", err)
 		}
 	}
-	return s.Write(service, user, encodeWinBlob(value))
+	if err := s.Write(service, user, encodeWinBlob(value)); err != nil {
+		return err
+	}
+	// Refresh aliases of this entry that already exist (Python's "<user>@<service>"
+	// and go-keyring's "<service>:<user>"), so a rotation leaves no stale copy
+	// of the old secret that winVaultGet could later fall back to.
+	if c, err := s.Read(winCompoundName(user, service)); err != nil {
+		return err
+	} else if c != nil && c.UserName == user {
+		if err := s.Write(winCompoundName(user, service), user, encodeWinBlob(value)); err != nil {
+			return err
+		}
+	}
+	if c, err := s.Read(service + ":" + user); err != nil {
+		return err
+	} else if c != nil {
+		if err := s.Write(service+":"+user, user, []byte(value)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // encodeWinBlob is str.encode("utf-16-le"): Python keyring's blob format.

@@ -529,3 +529,67 @@ func TestZeroAndRemove(t *testing.T) {
 	}
 	zeroAndRemove(p) // missing file is fine
 }
+
+func TestBackupFileUniqueAndRestorable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "blob")
+	if bak, err := backupFile(path); err != nil || bak != "" {
+		t.Fatalf("missing file: %q %v", bak, err)
+	}
+	_ = os.WriteFile(path, []byte("v1"), 0o600)
+	b1, err1 := backupFile(path)
+	b2, err2 := backupFile(path)
+	if err1 != nil || err2 != nil || b1 == b2 || b1 == "" {
+		t.Fatalf("backups must be unique: %q %q %v %v", b1, b2, err1, err2)
+	}
+	// The live file stays in place (hard link), and the backup holds its content.
+	if b, _ := os.ReadFile(path); string(b) != "v1" {
+		t.Fatal("live file disturbed")
+	}
+	if b, _ := os.ReadFile(b1); string(b) != "v1" {
+		t.Fatal("backup content")
+	}
+}
+
+func TestBackupFileCopyFallback(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "blob")
+	_ = os.WriteFile(path, []byte("v1"), 0o600)
+	// A directory cannot be hard-linked or read: backup must fail cleanly.
+	sub := filepath.Join(dir, "sub")
+	_ = os.Mkdir(sub, 0o700)
+	if _, err := backupFile(sub); err == nil {
+		t.Fatal("backing up a directory must fail")
+	}
+}
+
+func TestInstallAllKeepsOldFileInPlaceUntilReplaced(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "dst")
+	src := filepath.Join(dir, "src")
+	_ = os.WriteFile(dst, []byte("old"), 0o600)
+	_ = os.WriteFile(src, []byte("new"), 0o600)
+	if err := installAll([]installFile{{src, dst, false}}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(dst); string(b) != "new" {
+		t.Fatalf("dst %q", b)
+	}
+	if left := dirNames(t, dir); !reflect.DeepEqual(left, []string{"dst"}) {
+		t.Fatalf("leftovers (backups must be removed): %v", left)
+	}
+}
+
+func TestInstallAllFailedRenameDoesNotDeleteForeignFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	_ = os.WriteFile(src, []byte("new"), 0o600)
+	// dst's parent does not exist: Lstat says "not exist", Rename fails.
+	dst := filepath.Join(dir, "nodir", "dst")
+	if err := installAll([]installFile{{src, dst, false}}); err == nil {
+		t.Fatal("expected failure")
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatal("source must be untouched on failure")
+	}
+}

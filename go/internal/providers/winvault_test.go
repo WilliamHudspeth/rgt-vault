@@ -134,6 +134,62 @@ func TestWinVaultGetFallbackAndMissing(t *testing.T) {
 	}
 }
 
+func TestWinVaultRotationRefreshesAliases(t *testing.T) {
+	s := newFakeCredStore()
+	s.m["svc"] = fakeCred{"u", encodeWinBlob("old")}
+	s.m["u@svc"] = fakeCred{"u", encodeWinBlob("old")}       // written by Python keyring
+	s.m["svc:u"] = fakeCred{"u", []byte("old")}              // written by go-keyring
+	s.m["u2@svc"] = fakeCred{"someone-else", []byte("keep")} // different user: untouched
+	if err := winVaultSet(s, "svc", "u", "new"); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"svc", "u@svc"} {
+		if got := decodeWinBlob(s.m[target].blob); got != "new" {
+			t.Errorf("%s still holds %q", target, got)
+		}
+	}
+	if string(s.m["svc:u"].blob) != "new" {
+		t.Errorf("go-keyring alias still holds %q", s.m["svc:u"].blob)
+	}
+	if string(s.m["u2@svc"].blob) != "keep" {
+		t.Error("unrelated entry modified")
+	}
+	// Alias read / write failures surface.
+	boom := errors.New("boom")
+	f3 := &failNth{fakeCredStore: newFakeCredStore(), at: 2, err: boom}
+	if err := winVaultSet(f3, "svc", "u", "x"); !errors.Is(err, boom) {
+		t.Fatalf("compound read: %v", err)
+	}
+	f4 := &failNth{fakeCredStore: newFakeCredStore(), at: 3, err: boom}
+	if err := winVaultSet(f4, "svc", "u", "x"); !errors.Is(err, boom) {
+		t.Fatalf("go-keyring alias read: %v", err)
+	}
+	w := &failWriteN{fakeCredStore: newFakeCredStore(), at: 2, err: boom}
+	w.m["u@svc"] = fakeCred{"u", encodeWinBlob("old")}
+	if err := winVaultSet(w, "svc", "u", "x"); !errors.Is(err, boom) {
+		t.Fatalf("compound refresh write: %v", err)
+	}
+	w2 := &failWriteN{fakeCredStore: newFakeCredStore(), at: 2, err: boom}
+	w2.m["svc:u"] = fakeCred{"u", []byte("old")}
+	if err := winVaultSet(w2, "svc", "u", "x"); !errors.Is(err, boom) {
+		t.Fatalf("alias refresh write: %v", err)
+	}
+}
+
+type failWriteN struct {
+	*fakeCredStore
+	at, calls int
+	err       error
+}
+
+func (f *failWriteN) Write(target, user string, blob []byte) error {
+	f.calls++
+	if f.calls == f.at {
+		return f.err
+	}
+	return f.fakeCredStore.Write(target, user, blob)
+}
+
 func TestWinVaultUndecodableFailsClosed(t *testing.T) {
 	s := newFakeCredStore()
 	s.m["svc"] = fakeCred{"u", []byte{0x00, 0xD8}} // lone surrogate, invalid UTF-8

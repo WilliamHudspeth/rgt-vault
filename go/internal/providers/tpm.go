@@ -162,7 +162,10 @@ func (p *TPMProvider) GetMasterSecret() ([]byte, error) {
 	sessionPath := filepath.Join(scratch, "session.ctx")
 
 	defer func() {
-		// Flush first (the tools read the saved context files), then remove.
+		// Drop the plaintext first: nothing below needs it, and a stalled
+		// flush must not extend its lifetime on disk.
+		zeroAndRemove(outPath)
+		// Flush before removing the context files (the tools read them).
 		// Python removed the files first, which made its flush calls fail.
 		for _, h := range []string{ctxPath, primaryCtx, sessionPath} {
 			if _, err := os.Stat(h); err == nil {
@@ -170,7 +173,6 @@ func (p *TPMProvider) GetMasterSecret() ([]byte, error) {
 				_ = tpmRun(ctx, p.run, "tpm2_flushcontext", h)
 			}
 		}
-		zeroAndRemove(outPath)
 		_ = os.RemoveAll(scratch)
 	}()
 
@@ -226,8 +228,8 @@ func zeroAndRemove(path string) {
 
 // RotateMasterSecret seals a fresh 32-byte secret with the same PCR policy
 // into a scratch directory and installs the new blobs over the existing ones.
-// Unlike Python, the previous blobs are kept as "<name>.rgt-old" until every
-// file is installed, and restored if any step fails, so a failure part-way
+// Unlike Python, the previous blobs are backed up until every file is
+// installed, and restored if any step fails, so a failure part-way
 // (for example a public blob on another filesystem) cannot leave a private
 // blob that no longer matches its public blob.
 func (p *TPMProvider) RotateMasterSecret() ([]byte, error) {
@@ -259,55 +261,96 @@ func (p *TPMProvider) RotateMasterSecret() ([]byte, error) {
 	return secret, nil
 }
 
-// installAll renames each src over dst, backing up an existing dst first and
-// rolling everything back if any step fails.
 type installFile struct {
 	src, dst string
 	optional bool // skipped when src does not exist (the .pcrs file)
 }
 
+// installAll renames each src over dst. Before replacing an existing dst it
+// takes a backup under a unique name (a hard link, so dst never disappears;
+// a copy where links are unsupported) and restores it if any later step
+// fails. Sources are fsynced first so a power loss cannot leave empty blobs
+// after the backups are deleted.
 func installAll(files []installFile) error {
 	type undo struct{ dst, bak string }
 	var done []undo
 	rollback := func() {
 		for i := len(done) - 1; i >= 0; i-- {
-			u := done[i]
-			if u.bak != "" {
+			if u := done[i]; u.bak != "" {
 				_ = os.Rename(u.bak, u.dst)
 			} else {
 				_ = os.Remove(u.dst)
 			}
 		}
 	}
+	cleanup := func(bak string) {
+		if bak != "" {
+			_ = os.Remove(bak)
+		}
+	}
 	for _, f := range files {
-		if _, err := os.Stat(f.src); err != nil {
+		if err := syncFile(f.src); err != nil {
 			if errors.Is(err, fs.ErrNotExist) && f.optional {
-				continue // the PCR list file is optional
+				continue
 			}
 			rollback()
 			return err
 		}
-		bak := ""
-		if _, err := os.Lstat(f.dst); err == nil {
-			bak = f.dst + ".rgt-old"
-			if err := os.Rename(f.dst, bak); err != nil {
-				rollback()
-				return err
-			}
+		bak, err := backupFile(f.dst)
+		if err != nil {
+			rollback()
+			return err
 		}
 		if err := os.Rename(f.src, f.dst); err != nil {
-			done = append(done, undo{f.dst, bak})
+			cleanup(bak) // dst was not touched
 			rollback()
 			return err
 		}
 		done = append(done, undo{f.dst, bak})
 	}
 	for _, u := range done {
-		if u.bak != "" {
-			_ = os.Remove(u.bak)
-		}
+		cleanup(u.bak)
 	}
 	return nil
+}
+
+// backupFile preserves path under a unique ".rgt-old-*" name and returns that
+// name, or "" when path does not exist.
+func backupFile(path string) (string, error) {
+	if _, err := os.Lstat(path); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil
+		}
+		return "", err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".rgt-old-*")
+	if err != nil {
+		return "", err
+	}
+	bak := tmp.Name()
+	_ = tmp.Close()
+	_ = os.Remove(bak)
+	if err := os.Link(path, bak); err == nil {
+		return bak, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(bak, data, 0o600); err != nil {
+		return "", err
+	}
+	return bak, nil
+}
+
+// syncFile fsyncs path.
+func syncFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
 }
 
 // SealTPM seals masterSecret to the PCR policy (default [0 7] in bank sha256

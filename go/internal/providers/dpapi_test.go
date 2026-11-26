@@ -105,6 +105,21 @@ func TestDPAPIEntropyAndFailures(t *testing.T) {
 	}
 }
 
+func TestDPAPIEmptyUnsealRejected(t *testing.T) {
+	useFakeDPAPI(t)
+	dpapiUnprotect = func(_, _ []byte) ([]byte, error) { return []byte{}, nil }
+	path := filepath.Join(t.TempDir(), "b.bin")
+	_ = os.WriteFile(path, []byte("QQ=="), 0o600)
+	p, _ := NewDPAPIProvider(path, nil)
+	if _, err := p.GetMasterSecret(); !errors.Is(err, ErrMasterSecretUnavailable) {
+		t.Fatalf("empty secret: %v", err)
+	}
+	_ = os.Remove(path)
+	if _, err := p.GetMasterSecret(); !errors.Is(err, ErrMasterSecretUnavailable) {
+		t.Fatalf("vanished blob must also be 'unavailable': %v", err)
+	}
+}
+
 func TestSealDPAPIRejectsEmptySecret(t *testing.T) {
 	useFakeDPAPI(t)
 	if err := SealDPAPI(nil, filepath.Join(t.TempDir(), "b"), nil); err == nil {

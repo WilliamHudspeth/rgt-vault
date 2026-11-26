@@ -69,10 +69,11 @@ func securityFind(ctx context.Context, run Runner, service, account string) (str
 		if errors.As(err, &ee) && ee.Code == securityItemNotFound {
 			return "", errKeyNotFound
 		}
+		Wipe(out)
 		return "", err
 	}
+	defer Wipe(out)
 	secret := strings.TrimSpace(string(out))
-	Wipe(out)
 	return secret, nil
 }
 

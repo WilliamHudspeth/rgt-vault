@@ -41,7 +41,7 @@ func NewDPAPIProvider(blobPath string, entropy []byte) (*DPAPIProvider, error) {
 func (p *DPAPIProvider) GetMasterSecret() ([]byte, error) {
 	text, err := os.ReadFile(p.BlobPath)
 	if err != nil {
-		return nil, fmt.Errorf("read DPAPI blob: %w", err)
+		return nil, fmt.Errorf("%w: read DPAPI blob: %w", ErrMasterSecretUnavailable, err)
 	}
 	blob, err := decodeStdBase64(string(text))
 	if err != nil {
@@ -50,6 +50,9 @@ func (p *DPAPIProvider) GetMasterSecret() ([]byte, error) {
 	secret, err := dpapiUnprotect(blob, p.Entropy)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrMasterSecretUnavailable, err)
+	}
+	if len(secret) == 0 {
+		return nil, fmt.Errorf("%w: DPAPI blob holds an empty secret", ErrMasterSecretUnavailable)
 	}
 	return secret, nil
 }
