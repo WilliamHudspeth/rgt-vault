@@ -61,7 +61,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -426,34 +425,49 @@ func checkEpoch(raw *json.RawMessage, expected int64) error {
 }
 
 func paramsFromFile(in fileIn) (kdf.Params, error) {
-	mem, err := uintField(in.Argon2MemoryCost, "argon2_memory_cost", math.MaxUint32)
+	mem, err := uint32Field(in.Argon2MemoryCost, "argon2_memory_cost")
 	if err != nil {
 		return kdf.Params{}, err
 	}
-	tc, err := uintField(in.Argon2TimeCost, "argon2_time_cost", math.MaxUint32)
+	tc, err := uint32Field(in.Argon2TimeCost, "argon2_time_cost")
 	if err != nil {
 		return kdf.Params{}, err
 	}
-	par, err := uintField(in.Argon2Parallelism, "argon2_parallelism", math.MaxUint8)
+	par, err := uint8Field(in.Argon2Parallelism, "argon2_parallelism")
 	if err != nil {
 		return kdf.Params{}, err
 	}
-	p := kdf.Params{MemoryCost: uint32(mem), TimeCost: uint32(tc), Parallelism: uint8(par)}
+	p := kdf.Params{MemoryCost: mem, TimeCost: tc, Parallelism: par}
 	if err := validateParams(p); err != nil {
 		return kdf.Params{}, err
 	}
 	return p, nil
 }
 
-func uintField(n *json.Number, name string, max uint64) (uint64, error) {
+// uint32Field and uint8Field parse a non-negative JSON integer with the
+// target bit size, so strconv rejects (ErrRange) anything that would not
+// fit and the conversion below cannot truncate. The bit size is a literal
+// at each ParseUint call so static analysis can see the bound.
+func uint32Field(n *json.Number, name string) (uint32, error) {
 	if n == nil {
 		return 0, fmt.Errorf("%w: missing %s", ErrInvalidKeychain, name)
 	}
-	v, err := strconv.ParseUint(n.String(), 10, 64)
-	if err != nil || v > max {
+	v, err := strconv.ParseUint(n.String(), 10, 32)
+	if err != nil {
 		return 0, fmt.Errorf("%w: %s out of range", ErrInvalidParams, name)
 	}
-	return v, nil
+	return uint32(v), nil
+}
+
+func uint8Field(n *json.Number, name string) (uint8, error) {
+	if n == nil {
+		return 0, fmt.Errorf("%w: missing %s", ErrInvalidKeychain, name)
+	}
+	v, err := strconv.ParseUint(n.String(), 10, 8)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %s out of range", ErrInvalidParams, name)
+	}
+	return uint8(v), nil
 }
 
 func readFile(path string) ([]byte, error) {
