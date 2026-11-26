@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -181,8 +182,11 @@ func TestCallTool_ListSecrets_OK(t *testing.T) {
 
 func TestCallTool_LeaseSecret_Found(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/secrets/ns1/mykey" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"namespace":"ns1","secrets":[{"name":"mykey","value":"s3cr3t"}]}`)
+		fmt.Fprint(w, `{"namespace":"ns1","name":"mykey","value":"s3cr3t"}`)
 	}))
 	defer ts.Close()
 	s := newTestServer(ts)
@@ -196,13 +200,13 @@ func TestCallTool_LeaseSecret_Found(t *testing.T) {
 	}
 }
 
-// ---- tools/call lease_secret (NOT found) ------------------------------
+// ---- tools/call lease_secret (NOT found / no value / bad JSON) ---------
 
 func TestCallTool_LeaseSecret_NotFound(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		// Return a response with no matching secret name.
-		fmt.Fprint(w, `{"namespace":"ns1","secrets":[{"name":"other","value":"x"}]}`)
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, `{"error":"NotFound","detail":"secret ns1/missing not found at /var/lib/vault"}`)
 	}))
 	defer ts.Close()
 	s := newTestServer(ts)
@@ -211,8 +215,25 @@ func TestCallTool_LeaseSecret_NotFound(t *testing.T) {
 	if !isError {
 		t.Fatalf("expected isError=true; text=%s", text)
 	}
-	if !strings.Contains(text, "not found") {
-		t.Errorf("expected 'not found' message, got %q", text)
+	if text != "backend error: 404 Not Found" {
+		t.Errorf("expected sanitized 404, got %q", text)
+	}
+}
+
+func TestCallTool_LeaseSecret_NoValueOrBadJSON(t *testing.T) {
+	for body, want := range map[string]string{
+		`{"name":"k","namespace":"ns1"}`: "backend did not return a secret value",
+		`not json`:                       "backend returned an invalid response",
+	} {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprint(w, body)
+		}))
+		s := newTestServer(ts)
+		text, isError := s.callTool("lease_secret", map[string]any{"namespace": "ns1", "name": "k"})
+		ts.Close()
+		if !isError || text != want {
+			t.Errorf("body %q: got (%q, %v), want (%q, true)", body, text, isError, want)
+		}
 	}
 }
 
@@ -252,19 +273,19 @@ func TestCallTool_ExecuteSecret_OK(t *testing.T) {
 		if r.URL.Path != wantPath {
 			t.Errorf("unexpected path %s, want %s", r.URL.Path, wantPath)
 		}
-		
+
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("failed to decode body: %v", err)
 		}
-		
+
 		if body["action"] != "echo" {
 			t.Errorf("expected action 'echo', got %v", body["action"])
 		}
 		if body["agent"] != "mcp-client" {
 			t.Errorf("expected agent 'mcp-client', got %v", body["agent"])
 		}
-		
+
 		params, ok := body["params"].(map[string]any)
 		if !ok || params["message"] != "hello" {
 			t.Errorf("expected params.message 'hello', got %v", body["params"])
@@ -403,5 +424,108 @@ func TestHandle_ToolsCall_ContentShape(t *testing.T) {
 	}
 	if _, ok := entry["text"]; !ok {
 		t.Error("content[0].text missing")
+	}
+}
+
+// ---- protocol edge cases (spec compliance for real MCP clients) --------
+
+func TestHandle_PingAndVersionNegotiation(t *testing.T) {
+	s := NewServer("http://127.0.0.1:1", "")
+	if r := s.handle(makeReq(1, "ping", nil)); r == nil || r.Error != nil {
+		t.Fatalf("ping: %+v", r)
+	}
+	for req, want := range map[string]string{
+		"2025-06-18": "2025-06-18",
+		"2024-11-05": "2024-11-05",
+		"1999-01-01": supportedProtocolVersions[0],
+		"":           supportedProtocolVersions[0],
+	} {
+		r := s.handle(makeReq(1, "initialize", map[string]any{"protocolVersion": req}))
+		got := r.Result.(map[string]any)["protocolVersion"]
+		if got != want {
+			t.Errorf("initialize(%q) negotiated %v, want %s", req, got, want)
+		}
+	}
+	// A request without an id is a notification: never answered.
+	if r := s.handle(rpcRequest{JSONRPC: "2.0", Method: "tools/list"}); r != nil {
+		t.Errorf("notification answered: %+v", r)
+	}
+}
+
+func TestHandle_ToolsCallInvalidParams(t *testing.T) {
+	s := NewServer("http://127.0.0.1:1", "")
+	r := s.handle(rpcRequest{JSONRPC: "2.0", ID: json.RawMessage("3"), Method: "tools/call", Params: json.RawMessage(`[1]`)})
+	if r == nil || r.Error == nil || r.Error.Code != -32602 {
+		t.Fatalf("want -32602, got %+v", r)
+	}
+}
+
+func TestServe_ParseErrorAndBlankLines(t *testing.T) {
+	s := NewServer("http://127.0.0.1:1", "")
+	var out strings.Builder
+	in := strings.NewReader("\n   \n{not json\n" + `{"jsonrpc":"2.0","id":9,"method":"ping"}` + "\n")
+	if err := s.Serve(in, &out); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], "-32700") || !strings.Contains(lines[1], `"id":9`) {
+		t.Fatalf("unexpected output %q", out.String())
+	}
+}
+
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, fmt.Errorf("closed") }
+
+func TestServe_WriteErrorStops(t *testing.T) {
+	s := NewServer("http://127.0.0.1:1", "")
+	for _, in := range []string{"{bad\n", `{"jsonrpc":"2.0","id":1,"method":"ping"}` + "\n"} {
+		if err := s.Serve(strings.NewReader(in), failWriter{}); err == nil {
+			t.Errorf("input %q: expected write error", in)
+		}
+	}
+}
+
+func TestCallTool_BackendErrorsSanitizedAndUnreachable(t *testing.T) {
+	const leak = "/var/lib/rgt/state.db stack trace"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, strings.Repeat(leak, 100))
+	}))
+	defer ts.Close()
+	s := newTestServer(ts)
+	var logBuf strings.Builder
+	s.SetLogger(log.New(&logBuf, "", 0))
+
+	args := map[string]any{"namespace": "ns", "name": "n", "action": "a"}
+	for _, tool := range []string{"list_secrets", "lease_secret", "revoke_secret", "execute_secret"} {
+		text, isErr := s.callTool(tool, args)
+		if !isErr || text != "backend error: 403 Forbidden" {
+			t.Errorf("%s: got (%q, %v)", tool, text, isErr)
+		}
+	}
+	if !strings.Contains(logBuf.String(), leak) {
+		t.Error("backend body not logged")
+	}
+	if len(logBuf.String()) > 4*(maxLoggedErrorBody+200) {
+		t.Errorf("log not truncated: %d bytes", len(logBuf.String()))
+	}
+
+	// Unreachable backend (closed port) for every tool.
+	dead := NewServer("http://127.0.0.1:1", "")
+	dead.SetLogger(nil)
+	for _, tool := range []string{"list_secrets", "lease_secret", "revoke_secret", "execute_secret"} {
+		if text, isErr := dead.callTool(tool, args); !isErr || !strings.HasPrefix(text, "backend unreachable") {
+			t.Errorf("%s unreachable: got (%q, %v)", tool, text, isErr)
+		}
+	}
+	// Bad backend URL makes request construction fail.
+	bad := NewServer("http://[::1", "")
+	if _, isErr := bad.callTool("list_secrets", args); !isErr {
+		t.Error("bad URL: expected error")
+	}
+	// Non-string argument is treated as empty.
+	if _, isErr := s.callTool("list_secrets", map[string]any{"namespace": 7}); !isErr {
+		t.Error("expected backend error")
 	}
 }

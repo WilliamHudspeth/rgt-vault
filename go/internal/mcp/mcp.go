@@ -43,6 +43,9 @@ type Server struct {
 	httpClient    *http.Client
 	serverName    string
 	serverVersion string
+	// logger receives backend error details; stdout is the protocol channel,
+	// so it must never point there. Defaults to the standard logger (stderr).
+	logger *log.Logger
 }
 
 // NewServer initializes a new Server with trimmed backendURL, default client timeout,
@@ -57,6 +60,7 @@ func NewServer(backendURL, token string) *Server {
 		},
 		serverName:    "rgt-vault-mcp",
 		serverVersion: "0.3.0",
+		logger:        log.Default(),
 	}
 }
 
@@ -122,11 +126,43 @@ func (s *Server) Serve(in io.Reader, out io.Writer) error {
 	return nil
 }
 
+// supportedProtocolVersions lists the MCP protocol revisions this server can
+// speak, newest first. The tool surface is identical across all of them, so
+// the server echoes the client's requested revision when it is listed and
+// otherwise answers with the newest one (per the MCP lifecycle spec).
+var supportedProtocolVersions = []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
+
+func negotiateProtocolVersion(raw json.RawMessage) string {
+	var p struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	_ = json.Unmarshal(raw, &p)
+	for _, v := range supportedProtocolVersions {
+		if v == p.ProtocolVersion {
+			return v
+		}
+	}
+	return supportedProtocolVersions[0]
+}
+
+// isNotification reports whether req is a JSON-RPC notification (no id). A
+// server must never reply to a notification.
+func isNotification(req rpcRequest) bool {
+	id := strings.TrimSpace(string(req.ID))
+	return id == ""
+}
+
 func (s *Server) handle(req rpcRequest) *rpcResponse {
+	if isNotification(req) || strings.HasPrefix(req.Method, "notifications/") {
+		return nil
+	}
 	switch req.Method {
+	case "ping":
+		return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{}}
+
 	case "initialize":
 		result := map[string]any{
-			"protocolVersion": "2024-11-05",
+			"protocolVersion": negotiateProtocolVersion(req.Params),
 			"capabilities": map[string]any{
 				"tools": map[string]any{},
 			},
@@ -140,9 +176,6 @@ func (s *Server) handle(req rpcRequest) *rpcResponse {
 			ID:      req.ID,
 			Result:  result,
 		}
-
-	case "notifications/initialized":
-		return nil
 
 	case "tools/list":
 		result := map[string]any{
@@ -162,7 +195,7 @@ func (s *Server) handle(req rpcRequest) *rpcResponse {
 				},
 				map[string]any{
 					"name":        "lease_secret",
-					"description": "Retrieve a secret value for use by the agent.",
+					"description": "Lease a secret: return its plaintext value for use by the agent.",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
@@ -208,7 +241,7 @@ func (s *Server) handle(req rpcRequest) *rpcResponse {
 								"type": "string",
 							},
 							"params": map[string]any{
-								"type": "object",
+								"type":                 "object",
 								"additionalProperties": true,
 							},
 						},
@@ -288,50 +321,47 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 		if err != nil {
 			return "backend unreachable: " + err.Error(), true
 		}
-		if resp.StatusCode == 200 {
+		if resp.StatusCode == http.StatusOK {
 			return string(body), false
 		}
-		return "backend error: " + resp.Status, true
+		return s.backendError("list_secrets", resp, body)
 
 	case "lease_secret":
 		ns := getStr("namespace")
 		nm := getStr("name")
-		reqURL := s.backendURL + "/v1/secrets?namespace=" + url.QueryEscape(ns) + "&name=" + url.QueryEscape(nm)
+		// Single-secret route; the list route is not a plaintext source (it is
+		// being changed to return metadata only).
+		reqURL := s.backendURL + "/v1/secrets/" + url.PathEscape(ns) + "/" + url.PathEscape(nm)
 		resp, body, err := s.do("GET", reqURL, nil)
 		if err != nil {
 			return "backend unreachable: " + err.Error(), true
 		}
-		if resp.StatusCode == 200 {
-			var res struct {
-				Secrets []struct {
-					Name  string `json:"name"`
-					Value string `json:"value"`
-				} `json:"secrets"`
-			}
-			if err := json.Unmarshal(body, &res); err != nil {
-				return "unmarshal error: " + err.Error(), true
-			}
-			for _, sec := range res.Secrets {
-				if sec.Name == nm {
-					return sec.Value, false
-				}
-			}
-			return "secret not found", true
+		if resp.StatusCode != http.StatusOK {
+			return s.backendError("lease_secret", resp, body)
 		}
-		return "backend error: " + resp.Status, true
+		var res struct {
+			Value *string `json:"value"`
+		}
+		if err := json.Unmarshal(body, &res); err != nil {
+			return "backend returned an invalid response", true
+		}
+		if res.Value == nil {
+			return "backend did not return a secret value", true
+		}
+		return *res.Value, false
 
 	case "revoke_secret":
 		ns := getStr("namespace")
 		nm := getStr("name")
 		reqURL := s.backendURL + "/v1/secrets/" + url.PathEscape(ns) + "/" + url.PathEscape(nm) + "/revoke"
-		resp, _, err := s.do("POST", reqURL, nil)
+		resp, body, err := s.do("POST", reqURL, nil)
 		if err != nil {
 			return "backend unreachable: " + err.Error(), true
 		}
-		if resp.StatusCode == 200 || resp.StatusCode == 204 {
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent {
 			return "revoked " + ns + "/" + nm, false
 		}
-		return "backend error: " + resp.Status, true
+		return s.backendError("revoke_secret", resp, body)
 
 	case "execute_secret":
 		ns := getStr("namespace")
@@ -361,17 +391,39 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 		if err != nil {
 			return "backend unreachable: " + err.Error(), true
 		}
-		if resp.StatusCode == 200 {
+		if resp.StatusCode == http.StatusOK {
 			return string(body), false
 		}
-		// The backend's error body may contain internal details (paths, stack
-		// context) it was never meant to hand to an arbitrary MCP client;
-		// log it server-side and return only the status to the caller.
-		log.Printf("execute_secret backend error: %s - %s", resp.Status, string(body))
-		return "backend error: " + resp.Status, true
+		return s.backendError("execute_secret", resp, body)
 
 	default:
 		return "unknown tool: " + name, true
+	}
+}
+
+// maxLoggedErrorBody caps how much of a backend error body reaches the log.
+const maxLoggedErrorBody = 512
+
+// backendError turns a non-success backend response into a tool error. The
+// backend's error body may contain internal details (paths, stack context,
+// policy internals) it was never meant to hand to an arbitrary MCP client, so
+// the body is only logged (stderr, truncated) and the client gets the status.
+func (s *Server) backendError(tool string, resp *http.Response, body []byte) (string, bool) {
+	logged := body
+	if len(logged) > maxLoggedErrorBody {
+		logged = logged[:maxLoggedErrorBody]
+	}
+	s.logf("%s backend error: %s - %q", tool, resp.Status, logged)
+	return "backend error: " + resp.Status, true
+}
+
+// SetLogger redirects backend error logging (nil disables it). Never pass a
+// logger that writes to the protocol stream (stdout).
+func (s *Server) SetLogger(l *log.Logger) { s.logger = l }
+
+func (s *Server) logf(format string, args ...any) {
+	if s.logger != nil {
+		s.logger.Printf(format, args...)
 	}
 }
 
