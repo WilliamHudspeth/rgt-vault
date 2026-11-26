@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import re
 import sys
-import unicodedata
 
 import pytest
 
@@ -36,7 +35,6 @@ from rgt_vault.input_validation import (
     validate_name,
     validate_namespace,
 )
-
 
 # ---------------------------------------------------------------------------
 # RGT-374 / RGT-376: Memory safety and integer bounds
@@ -104,21 +102,26 @@ class TestNoPickleNoEval:
 
     def test_pickle_not_imported_in_vault(self):
         import rgt_vault.vault as vault_mod
+
         assert "pickle" not in dir(vault_mod)
 
     def test_pickle_not_imported_in_auth(self):
         import rgt_vault.auth as auth_mod
+
         assert "pickle" not in dir(auth_mod)
 
     def test_json_module_is_stdlib(self):
         import json
+
         # Confirm vault uses stdlib json, not a third-party eval-based parser
         assert json.loads('{"a": 1}') == {"a": 1}
 
     def test_yaml_safe_load_used(self):
         """RGT-377: yaml.safe_load is used, not yaml.load."""
         import inspect
+
         import rgt_vault.auth as auth_mod
+
         source = inspect.getsource(auth_mod)
         assert "yaml.safe_load" in source
         # Ensure bare yaml.load is not called with untrusted data
@@ -253,8 +256,8 @@ class TestUnicodeNormalization:
     def test_nfc_normalization_applied(self):
         # Build decomposed form programmatically to avoid editor normalization.
         # U+0065 (e) + U+0301 (combining acute accent) -> U+00E9 (e with acute)
-        decomposed = "é"   # e followed by combining acute accent (NFD)
-        composed = "é"      # precomposed e-with-acute (NFC)
+        decomposed = "é"  # e followed by combining acute accent (NFD)
+        composed = "é"  # precomposed e-with-acute (NFC)
         # Sanity: these are different strings
         assert decomposed != composed
         result = normalize_unicode(decomposed)
@@ -375,6 +378,7 @@ class TestSafeRegexMatch:
     def test_timeout_mechanism_available_on_posix(self):
         """Verify the SIGALRM timeout path is exercisable on POSIX."""
         import signal
+
         # Simply confirm SIGALRM exists and we can call alarm(0)
         signal.alarm(0)  # no-op; just verify it's available
 
@@ -390,6 +394,7 @@ class TestEmailSyntaxValidation:
     @pytest.fixture(autouse=True)
     def _import(self):
         from rgt_vault.email_verification import is_valid_email_syntax
+
         self.is_valid = is_valid_email_syntax
 
     def test_valid_simple_email(self):
@@ -458,8 +463,10 @@ class TestFileUploadNotImplemented:
     def test_no_upload_route_in_app(self):
         """The FastAPI app must not expose a /v1/upload endpoint."""
         pytest.importorskip("fastapi")
-        from rgt_vault.server.app import build_app
         import inspect
+
+        from rgt_vault.server.app import build_app
+
         source = inspect.getsource(build_app)
         assert "/upload" not in source
         assert "UploadFile" not in source
@@ -467,29 +474,37 @@ class TestFileUploadNotImplemented:
     def test_file_upload_policy_doc_exists(self):
         """The file upload policy document must exist."""
         import os
+
         doc_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
-            "docs", "architecture", "file-upload-policy.md",
+            "docs",
+            "architecture",
+            "file-upload-policy.md",
         )
         assert os.path.isfile(doc_path), (
-            f"File upload policy document not found at {doc_path}. "
-            "Create docs/architecture/file-upload-policy.md."
+            f"File upload policy document not found at {doc_path}. Create docs/architecture/file-upload-policy.md."
         )
 
     def test_memory_safety_doc_exists(self):
         """RGT-374: Memory safety document must exist."""
         import os
+
         doc_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
-            "docs", "architecture", "memory-safety.md",
+            "docs",
+            "architecture",
+            "memory-safety.md",
         )
         assert os.path.isfile(doc_path)
 
     def test_serialization_safety_doc_exists(self):
         """RGT-377/378/379/380: Serialization safety document must exist."""
         import os
+
         doc_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
-            "docs", "architecture", "serialization-safety.md",
+            "docs",
+            "architecture",
+            "serialization-safety.md",
         )
         assert os.path.isfile(doc_path)

@@ -54,6 +54,7 @@ smallest possible change for one capability.
 # my_capabilities.py
 from rgt_vault.capabilities import CapabilityRegistry
 
+
 def _github_read_repo(payload, ctx):
     # ``ctx.vault`` is the VaultManager; ``ctx.agent_id`` is the
     # verified agent; ``ctx.token_id`` is the deterministic
@@ -61,6 +62,7 @@ def _github_read_repo(payload, ctx):
     repo = payload["repo"]
     # ... fetch repo contents, return the result ...
     return {"repo": repo, "ok": True}
+
 
 registry = CapabilityRegistry()
 registry.register(
@@ -143,8 +145,9 @@ A v0.2 caller that does:
 
 ```python
 with vault.lease_secret("github_token", "agent-1", "default", "use it") as buf:
-    requests.get("https://api.github.com/repos/org/research",
-                 headers={"Authorization": f"Bearer {bytes(buf).decode()}"})
+    requests.get(
+        "https://api.github.com/repos/org/research", headers={"Authorization": f"Bearer {bytes(buf).decode()}"}
+    )
 ```
 
 becomes:
