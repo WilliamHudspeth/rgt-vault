@@ -166,10 +166,144 @@ jobs:
           path: go/cover.out
           if-no-files-found: ignore
 
+  # RGT-146 (G12): Python <-> Go compatibility. Lives here, not in ci.yml,
+  # because the required-status-checks aggregate below can only `needs:` jobs
+  # of its own workflow.
+  compat:
+    name: compat (python<->go)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: Install the frozen Python package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[server,dev]"
+      - name: Install a Secret Service (gnome-keyring on D-Bus)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends dbus dbus-user-session gnome-keyring libsecret-1-0
+      - name: Build the Go binary and test binaries
+        working-directory: go
+        run: |
+          go build -o /tmp/rgt-vault ./cmd/rgt-vault
+          go test -c -o /dev/null ./internal/compat
+      - name: Python and Go open each other's vaults (fixtures, CLI, round trip, exports)
+        working-directory: go
+        run: |
+          export RGT_VAULT_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+          export RGT_PYTHON="$RGT_VAULT_PYTHON" RGT_COMPAT_BIN=/tmp/rgt-vault
+          go test -count=1 -v -timeout 10m ./internal/compat \
+            -run 'TestFixtures|TestEdge|TestLegacy|TestCLI|TestPythonOpens'
+          # The other Python round trips that live next to the code they test.
+          go test -count=1 -timeout 10m ./internal/vault ./internal/store ./internal/keychain \
+            ./internal/server ./internal/capabilities ./cmd/rgt-vault
+      - name: In-place migration with a REAL OS keyring (Python creates, Go binary migrates, Python re-opens)
+        working-directory: go
+        run: |
+          export RGT_VAULT_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+          export RGT_COMPAT_BIN=/tmp/rgt-vault RGT_COMPAT_KEYRING=1 RGT_TEST_REAL_KEYRING=1
+          # A non-empty password makes gnome-keyring create and unlock its login keyring.
+          dbus-run-session -- bash -ec '
+            echo -n "rgt-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets >/dev/null
+            go test -count=1 -v -timeout 10m ./internal/compat -run TestKeyringInPlaceMigration
+            go test -count=1 -v ./internal/providers -run TestLiveKeyring
+          '
+
+  # TPM 2.0 on a software TPM. Not in the required aggregate until it has a
+  # track record; the human checklist (docs/guides/migration-python-to-go.md)
+  # still asks for one run on real hardware.
+  tpm:
+    name: tpm (swtpm)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: Install the frozen Python package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[server,dev]"
+      - name: Install swtpm and tpm2-tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends swtpm swtpm-tools tpm2-tools libtss2-tcti-swtpm0
+      - name: Start a software TPM
+        run: |
+          mkdir -p "$RUNNER_TEMP/tpm"
+          swtpm socket --tpm2 --tpmstate dir="$RUNNER_TEMP/tpm" \
+            --server type=tcp,port=2321 --ctrl type=tcp,port=2322 \
+            --flags not-need-init,startup-clear --daemon
+          sleep 1
+          echo "TPM2TOOLS_TCTI=swtpm:host=127.0.0.1,port=2321" >> "$GITHUB_ENV"
+      - name: Seal and unseal, Python <-> Go
+        working-directory: go
+        run: |
+          tpm2_getcap properties-fixed | head -5
+          export RGT_VAULT_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+          go test -count=1 -v -timeout 10m ./internal/providers -run TestLiveTPM
+          go test -count=1 -v -timeout 10m ./internal/compat -run TestPythonTPMInterop
+
+  # macOS Keychain and Windows (Credential Manager keyring + DPAPI) on the
+  # hosted runners. Not in the required aggregate until it has a track record.
+  providers:
+    name: providers (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: Install the frozen Python package (with pywin32 on Windows)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[server,dev,windows]"
+      - name: Go provider tests against the real OS stores
+        working-directory: go
+        env:
+          RGT_TEST_REAL_KEYRING: "1"
+          RGT_TEST_MACOS_KEYCHAIN: "1"
+        run: go test -count=1 -v -timeout 10m ./internal/providers
+      - name: Python <-> Go provider interop and in-place migration
+        working-directory: go
+        env:
+          RGT_COMPAT_KEYRING: "1"
+        run: |
+          export RGT_VAULT_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+          go test -count=1 -v -timeout 15m ./internal/compat \
+            -run 'TestPythonDPAPIInterop|TestPythonMacOSKeychainInterop|TestKeyringInPlaceMigration'
+
   required-status:
     name: required-status-checks
     runs-on: ubuntu-latest
-    needs: [lint, typecheck, test, coverage, bandit, pip-audit, gitleaks, go]
+    needs: [lint, typecheck, test, coverage, bandit, pip-audit, gitleaks, go, compat]
     if: always()
     steps:
       - name: Verify all gates green
