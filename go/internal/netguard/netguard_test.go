@@ -15,7 +15,7 @@ func startLoopbackListener(t *testing.T) (net.Listener, string) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	return ln, ln.Addr().String()
 }
 
@@ -26,7 +26,7 @@ func TestDialer_AllowsLoopbackByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected loopback dial to succeed, got: %v", err)
 	}
-	conn.Close()
+	_ = conn.Close()
 }
 
 func TestDialer_RejectsLinkLocalAlways(t *testing.T) {
@@ -64,5 +64,5 @@ func TestDialer_PermitsNonLoopbackWhenAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected loopback dial to succeed under allowRemote=true, got: %v", err)
 	}
-	conn.Close()
+	_ = conn.Close()
 }

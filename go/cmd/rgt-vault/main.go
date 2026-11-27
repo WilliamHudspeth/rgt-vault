@@ -17,6 +17,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"rgt-vault-server/internal/mcp"
 )
 
 // resolveToken returns the bearer token from flag > env > token file.
@@ -36,6 +38,18 @@ func resolveToken(flagVal string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
+}
+
+// mcpAgentLabel resolves the MCP agent label: flag > $RGT_VAULT_MCP_AGENT >
+// mcp.DefaultAgent.
+func mcpAgentLabel(flagVal string) string {
+	if flagVal != "" {
+		return flagVal
+	}
+	if v := os.Getenv("RGT_VAULT_MCP_AGENT"); v != "" {
+		return v
+	}
+	return mcp.DefaultAgent
 }
 
 // Build metadata, injected at release time via -ldflags by GoReleaser
@@ -243,13 +257,16 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 	// -----------------------------------------------------------------------
 	// mcp  — stdio MCP server bridging to the vault backend
 	// -----------------------------------------------------------------------
+	var mcpAgent string
 	mcpCmd := &cobra.Command{
 		Use:   "mcp",
 		Short: "Run a stdio MCP server bridging to the vault backend",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runMCP(strings.TrimSuffix(host, "/"), getToken(), stdin, stdout)
+			return runMCP(strings.TrimSuffix(host, "/"), getToken(), mcpAgentLabel(mcpAgent), stdin, stdout, cmd.ErrOrStderr())
 		},
 	}
+
+	mcpCmd.Flags().StringVar(&mcpAgent, "agent", "", "agent label sent with execute_secret (default $RGT_VAULT_MCP_AGENT, else \""+mcp.DefaultAgent+"\"); not an authenticated identity")
 
 	// -----------------------------------------------------------------------
 	// tui  — interactive Bubble Tea dashboard
