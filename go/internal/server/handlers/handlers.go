@@ -1,300 +1,139 @@
-// Package handlers implements the HTTP request handlers for the rgt-vault server.
+// Package handlers implements the HTTP request handlers of the rgt-vault
+// server on top of the real vault (internal/vault): the Go port of the
+// routes in python/server/app.py.
 //
-// The handlers provide a thin translation layer over an in-memory secret store,
-// mirroring the Python FastAPI app.py endpoints. All handlers (except health)
-// require bearer-token authentication via middleware.
+// Every endpoint maps an HTTP request onto a vault method, so the ABAC
+// policy, the rate limiter, honeytokens, the approval gate and the
+// hash-chained audit log apply exactly as they do for in-process callers.
+// Secret values never cross the HTTP boundary, with ONE documented
+// exception: the transitional exact-name lookup on GET /v1/secrets
+// (decision D5, see listSecretWithValue).
+//
+// Identity is still the shared bearer token plus a self-asserted "agent"
+// field, as in Python. Per-agent identity is batch H1.
 package handlers
 
 import (
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/hex"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
+	"unicode/utf8"
 
-	"rgt-vault-server/internal/auth"
+	"rgt-vault-server/internal/actions"
+	"rgt-vault-server/internal/approval"
+	"rgt-vault-server/internal/capabilities"
+	"rgt-vault-server/internal/hooks/pyfmt"
+	"rgt-vault-server/internal/store"
+	"rgt-vault-server/internal/vault"
 )
 
+// Version is reported by /healthz outside production.
+const Version = "0.3.0"
+
+// Handlers holds the HTTP handlers and their dependencies.
+type Handlers struct {
+	// Vault is the open vault. Required.
+	Vault *vault.Vault
+	// Actions backs POST /v1/secrets/{ns}/{name}/use and GET /v1/actions.
+	// Nil means no action is registered.
+	Actions *actions.Registry
+	// Capabilities is listed by /v1/capabilities*. Nil means the vault's
+	// registry if it is a *capabilities.Registry, else none.
+	Capabilities *capabilities.Registry
+	// Broker serves /v1/requests*. Nil means no live approval: those
+	// endpoints answer 409, as in Python.
+	Broker *approval.Broker
+}
+
+func (h *Handlers) capabilityList() []*capabilities.Spec {
+	reg := h.Capabilities
+	if reg == nil && h.Vault != nil {
+		reg, _ = h.Vault.Capabilities().(*capabilities.Registry)
+	}
+	if reg == nil {
+		return nil
+	}
+	return reg.List()
+}
+
 // ---------------------------------------------------------------------------
-// In-memory secret store (stand-in for VaultManager)
+// Authentication context (set by the server's auth middleware)
 // ---------------------------------------------------------------------------
 
-// Secret represents a stored secret.
-type Secret struct {
-	Name      string `json:"name"`
-	Value     string `json:"-"` // never serialised by accident; see ListSecrets
-	Namespace string `json:"namespace"`
-	Agent     string `json:"agent"`
-	Purpose   string `json:"purpose"`
-	CreatedAt string `json:"created_at"`
+// Scope is the token scope a request authenticated with.
+type Scope int
+
+const (
+	// ScopeNone: the request did not authenticate (public route).
+	ScopeNone Scope = iota
+	// ScopeAgent: the agent bearer token (every /v1 route but /v1/requests*).
+	ScopeAgent
+	// ScopeOperator: the operator token (/v1/requests* only).
+	ScopeOperator
+)
+
+type authKey struct{}
+
+type authInfo struct {
+	tokenID string
+	scope   Scope
 }
 
-// SecretMeta is the list/metadata view of a secret. It has no value field.
-type SecretMeta struct {
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
-	Agent     string `json:"agent"`
-	Purpose   string `json:"purpose"`
-	CreatedAt string `json:"created_at"`
+// WithAuth returns ctx carrying the authenticated token id and scope.
+func WithAuth(ctx context.Context, tokenID string, scope Scope) context.Context {
+	return context.WithValue(ctx, authKey{}, authInfo{tokenID: tokenID, scope: scope})
 }
 
-func metaOf(s Secret) SecretMeta {
-	return SecretMeta{Name: s.Name, Namespace: s.Namespace, Agent: s.Agent, Purpose: s.Purpose, CreatedAt: s.CreatedAt}
+// AuthFromContext returns the token id and scope stored by WithAuth.
+func AuthFromContext(ctx context.Context) (tokenID string, scope Scope) {
+	a, _ := ctx.Value(authKey{}).(authInfo)
+	return a.tokenID, a.scope
 }
 
-// AuditEntry represents a single audit log line.
-type AuditEntry struct {
-	Timestamp string `json:"timestamp"`
-	Event     string `json:"event"`
-	Principal string `json:"principal"`
-	Detail    string `json:"detail"`
-	Hash      string `json:"hash"`
-}
-
-// Store is an in-memory secret store with audit logging.
-type Store struct {
-	mu       sync.RWMutex
-	secrets  map[string]*Secret // key: "namespace/name"
-	auditLog []AuditEntry
-	auditSeq int
-	keyEpoch int
-	vaultID  string
-}
-
-// NewStore creates a new in-memory store.
-func NewStore() *Store {
-	return &Store{
-		secrets:  make(map[string]*Secret),
-		auditLog: make([]AuditEntry, 0),
-		auditSeq: 0,
-		keyEpoch: 1,
-		vaultID:  "rgt-vault-go-001",
-	}
-}
-
-func (s *Store) secretKey(namespace, name string) string {
-	return namespace + "/" + name
-}
-
-// SetSecret stores a secret.
-func (s *Store) SetSecret(name, value, namespace, agent, purpose string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	key := s.secretKey(namespace, name)
-	s.secrets[key] = &Secret{
-		Name:      name,
-		Value:     value,
-		Namespace: namespace,
-		Agent:     agent,
-		Purpose:   purpose,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
-	}
-	return nil
-}
-
-// GetSecret retrieves a single secret.
-func (s *Store) GetSecret(namespace, name string) (*Secret, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	key := s.secretKey(namespace, name)
-	sec, ok := s.secrets[key]
-	if !ok {
-		return nil, ErrSecretNotFound
-	}
-	return sec, nil
-}
-
-// ListSecrets returns all secrets in a namespace.
-func (s *Store) ListSecrets(namespace string) []Secret {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	var result []Secret
-	prefix := namespace + "/"
-	for key, sec := range s.secrets {
-		if strings.HasPrefix(key, prefix) {
-			result = append(result, *sec)
+// AuditHTTP writes one HTTP_API (agent scope) or HTTP_OPERATOR (operator
+// scope) row per authenticated request, before the handler runs: token id,
+// client IP, method and path (python require_token / require_operator_token).
+// The token itself is never recorded. A failed audit write fails the request
+// closed with a 500.
+func (h *Handlers) AuditHTTP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenID, scope := AuthFromContext(r.Context())
+		if scope == ScopeNone || h.Vault == nil {
+			next.ServeHTTP(w, r)
+			return
 		}
-	}
-	if result == nil {
-		result = []Secret{}
-	}
-	return result
-}
-
-// DeleteSecret removes a secret.
-func (s *Store) DeleteSecret(namespace, name string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	key := s.secretKey(namespace, name)
-	if _, ok := s.secrets[key]; !ok {
-		return ErrSecretNotFound
-	}
-	delete(s.secrets, key)
-	return nil
-}
-
-// RevokeSecret is an alias for DeleteSecret (matches Python API).
-func (s *Store) RevokeSecret(namespace, name string) error {
-	return s.DeleteSecret(namespace, name)
-}
-
-// AddAuditEntry adds an entry to the audit log.
-func (s *Store) AddAuditEntry(event, principal, detail string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.auditSeq++
-
-	prevHash := ""
-	if len(s.auditLog) > 0 {
-		prevHash = s.auditLog[len(s.auditLog)-1].Hash
-	}
-
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	raw := fmt.Sprintf("%s|%s|%s|%s|%s", prevHash, timestamp, event, principal, detail)
-	hasher := sha256.New()
-	hasher.Write([]byte(raw))
-	hash := hex.EncodeToString(hasher.Sum(nil))
-
-	s.auditLog = append(s.auditLog, AuditEntry{
-		Timestamp: timestamp,
-		Event:     event,
-		Principal: principal,
-		Detail:    detail,
-		Hash:      hash,
+		event := "HTTP_API"
+		if scope == ScopeOperator {
+			event = "HTTP_OPERATOR"
+		}
+		client, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil || client == "" {
+			client = "?"
+		}
+		details := "token=" + tokenID + " ip=" + client + " " + r.Method + " " + r.URL.Path
+		if err := h.Vault.Audit(r.Context(), event, sql.NullString{}, details, sql.NullString{}); err != nil {
+			writeError(w, r, err)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
-// GetAuditLog returns the last `limit` audit entries.
-func (s *Store) GetAuditLog(limit int) []AuditEntry {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if limit <= 0 || limit > len(s.auditLog) {
-		limit = len(s.auditLog)
-	}
-	start := len(s.auditLog) - limit
-	if start < 0 {
-		start = 0
-	}
-	result := make([]AuditEntry, limit)
-	copy(result, s.auditLog[start:])
-	return result
-}
-
-// VerifyAuditChain walks every entry in the in-memory audit log and recomputes the SHA-256 chain hash.
-func (s *Store) VerifyAuditChain() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if len(s.auditLog) == 0 {
-		return true
-	}
-
-	prevHash := ""
-	for _, entry := range s.auditLog {
-		raw := fmt.Sprintf("%s|%s|%s|%s|%s", prevHash, entry.Timestamp, entry.Event, entry.Principal, entry.Detail)
-		hasher := sha256.New()
-		hasher.Write([]byte(raw))
-		expectedHash := hex.EncodeToString(hasher.Sum(nil))
-
-		if subtle.ConstantTimeCompare([]byte(entry.Hash), []byte(expectedHash)) != 1 {
-			return false
-		}
-		prevHash = entry.Hash
-	}
-	return true
-}
-
-// RotateMasterKey increments the key epoch.
-func (s *Store) RotateMasterKey() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.keyEpoch++
-}
-
-// RotateDEK increments the key epoch (same as master in stub).
-func (s *Store) RotateDEK() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.keyEpoch++
-}
-
-// KeyEpoch returns the current key epoch.
-func (s *Store) KeyEpoch() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.keyEpoch
-}
-
-// VaultID returns the vault identifier.
-func (s *Store) VaultID() string {
-	return s.vaultID
-}
-
-// SimulatePolicy returns a simulated policy decision.
-func (s *Store) SimulatePolicy(agent, namespace, purpose, action string) map[string]interface{} {
-	return map[string]interface{}{
-		"allowed":   true,
-		"agent":     agent,
-		"namespace": namespace,
-		"purpose":   purpose,
-		"action":    action,
-		"reason":    "simulated - all access granted in stub",
-	}
-}
-
 // ---------------------------------------------------------------------------
-// Error types
+// JSON helpers
 // ---------------------------------------------------------------------------
 
-var (
-	ErrSecretNotFound = &AppError{Code: http.StatusNotFound, Type: "SecretNotFoundError", Message: "secret not found"}
-	ErrBadRequest     = &AppError{Code: http.StatusBadRequest, Type: "ValidationError", Message: "bad request"}
-	ErrUnauthorized   = &AppError{Code: http.StatusUnauthorized, Type: "ServerAuthError", Message: "unauthorized"}
-	ErrForbidden      = &AppError{Code: http.StatusForbidden, Type: "PolicyDeniedError", Message: "forbidden"}
-	ErrInternal       = &AppError{Code: http.StatusInternalServerError, Type: "ActionExecutionError", Message: "internal server error"}
-)
-
-// AppError is an application error with an HTTP status code.
-type AppError struct {
-	Code    int    `json:"-"`
-	Type    string `json:"error"`
-	Message string `json:"detail"`
-}
-
-func (e *AppError) Error() string {
-	return e.Message
-}
-
-func newAppError(code int, typ, msg string) *AppError {
-	return &AppError{Code: code, Type: typ, Message: msg}
-}
-
-// ---------------------------------------------------------------------------
-// Handlers struct
-// ---------------------------------------------------------------------------
-
-// Handlers holds all HTTP handler methods and their dependencies.
-type Handlers struct {
-	Store      *Store
-	TokenStore *auth.TokenStore
-}
-
-// NewHandlers creates a new Handlers instance.
-func NewHandlers(store *Store, tokenStore *auth.TokenStore) *Handlers {
-	return &Handlers{Store: store, TokenStore: tokenStore}
-}
-
-// writeJSON writes a JSON response.
-func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
@@ -302,22 +141,27 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	}
 }
 
-// maxBodyMsg is returned when the request body exceeds the configured limit.
 const maxBodyMsg = "request body too large"
 
-// decodeJSON decodes exactly one JSON value from the request body into dst.
-// Unknown fields and trailing data are rejected (400); a body larger than the
-// limit installed by the server's body-limit middleware is rejected with 413.
-func decodeJSON(w http.ResponseWriter, r *http.Request, dst interface{}) bool {
+// decodeJSON decodes exactly one JSON object from the body into dst.
+//
+//   - malformed JSON, unknown fields or trailing data: 400 (B3 hardening;
+//     the message never quotes the request);
+//   - a field of the wrong type: 422, naming only the (known) field;
+//   - a body over the server limit: 413.
+//
+// Numbers are decoded as json.Number so integer payloads keep their exact
+// form (the capability audit context_hash depends on it).
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	if r.Body == nil {
-		writeError(w, newAppError(http.StatusBadRequest, "ValidationError", "invalid JSON body"))
+		writeError(w, r, badRequest("invalid JSON body"))
 		return false
 	}
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
+	dec.UseNumber()
 	err := dec.Decode(dst)
 	if err == nil {
-		// Reject trailing garbage / a second JSON value.
 		if _, terr := dec.Token(); terr != io.EOF {
 			err = terr
 			if err == nil {
@@ -331,44 +175,109 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst interface{}) bool {
 	var tooBig *http.MaxBytesError
 	if errors.As(err, &tooBig) {
 		w.Header().Set("Connection", "close")
-		writeError(w, newAppError(http.StatusRequestEntityTooLarge, "RequestTooLarge", maxBodyMsg))
+		writeError(w, r, newAppError(http.StatusRequestEntityTooLarge, "RequestTooLarge", maxBodyMsg))
 		return false
 	}
-	// Deliberately generic: the decoder's message can quote request content.
-	writeError(w, newAppError(http.StatusBadRequest, "ValidationError", "invalid JSON body"))
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) && typeErr.Field != "" && knownField(dst, typeErr.Field) {
+		writeError(w, r, unprocessable("invalid type for field '"+typeErr.Field+"'"))
+		return false
+	}
+	writeError(w, r, badRequest("invalid JSON body"))
 	return false
 }
 
-// writeError writes a JSON error response.
-func writeError(w http.ResponseWriter, err error) {
-	appErr, ok := err.(*AppError)
-	if !ok {
-		// Never echo an unexpected error's text to the client.
-		log.Printf("ERROR: unexpected handler error: %v", err)
-		appErr = &AppError{Code: http.StatusInternalServerError, Type: "InternalError", Message: "internal server error"}
+// knownField reports whether name is a top-level JSON field of *dst, so a
+// 422 message only ever names a field from our own schema.
+func knownField(dst any, name string) bool {
+	t := reflect.TypeOf(dst)
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
 	}
-	writeJSON(w, appErr.Code, map[string]string{
-		"error":  appErr.Type,
-		"detail": appErr.Message,
-	})
+	if t.Kind() != reflect.Struct {
+		return false
+	}
+	for i := 0; i < t.NumField(); i++ {
+		tag := strings.Split(t.Field(i).Tag.Get("json"), ",")[0]
+		if tag == name {
+			return true
+		}
+	}
+	return false
+}
+
+// required returns a 422 naming the first missing field, or nil.
+func required(fields ...namedField) *AppError {
+	for _, f := range fields {
+		if f.missing {
+			return unprocessable("field '" + f.name + "' is required")
+		}
+	}
+	return nil
+}
+
+type namedField struct {
+	name    string
+	missing bool
+}
+
+func field[T any](name string, p *T) namedField { return namedField{name: name, missing: p == nil} }
+
+func deref[T any](p *T, def T) T {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+// queryInt parses an optional integer query parameter (FastAPI: 422 when
+// it is not an integer).
+func queryInt(r *http.Request, name string, def int) (int, *AppError) {
+	s := r.URL.Query().Get(name)
+	if s == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, unprocessable("query parameter '" + name + "' must be an integer")
+	}
+	return n, nil
+}
+
+func queryDefault(r *http.Request, name, def string) string {
+	if v, ok := r.URL.Query()[name]; ok && len(v) > 0 {
+		return v[0]
+	}
+	return def
 }
 
 // ---------------------------------------------------------------------------
-// Handler: GET /healthz
+// GET /healthz, XML policy stubs
 // ---------------------------------------------------------------------------
 
 // HealthCheck returns server health information. No auth required.
 func (h *Handlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
-	version := "0.3.0"
+	version := Version
 	if os.Getenv("APP_ENV") == "production" {
 		version = ""
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"status":    "ok",
-		"vault_id":  h.Store.VaultID(),
-		"key_epoch": h.Store.KeyEpoch(),
+		"vault_id":  h.Vault.VaultID(),
+		"key_epoch": h.Vault.KeyEpoch(),
+		"actions":   h.actionNames(),
 		"version":   version,
 	})
+}
+
+func (h *Handlers) actionNames() []string {
+	out := []string{}
+	if h.Actions != nil {
+		for _, s := range h.Actions.List() {
+			out = append(out, s.Name)
+		}
+	}
+	return out
 }
 
 // BlockXMLPolicy serves restrictive policies with a 404 status and disables caching.
@@ -379,7 +288,7 @@ func (h *Handlers) BlockXMLPolicy(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusNotFound)
-	w.Write([]byte(`<?xml version="1.0"?>
+	_, _ = w.Write([]byte(`<?xml version="1.0"?>
 <!DOCTYPE cross-domain-policy SYSTEM "http://www.adobe.com/xml/dtds/cross-domain-policy.dtd">
 <cross-domain-policy>
   <site-control permitted-cross-domain-policies="none"/>
@@ -387,16 +296,19 @@ func (h *Handlers) BlockXMLPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
-// Handler: POST /v1/secrets
+// POST /v1/secrets
 // ---------------------------------------------------------------------------
 
-// SetSecretRequest is the JSON body for setting a secret.
+// SetSecretRequest is the JSON body of POST /v1/secrets (python
+// SetSecretBody). Absent optional fields take Python's defaults.
 type SetSecretRequest struct {
-	Name      string `json:"name"`
-	Value     string `json:"value"`
-	Namespace string `json:"namespace"`
-	Agent     string `json:"agent"`
-	Purpose   string `json:"purpose"`
+	Name       *string `json:"name"`
+	Value      *string `json:"value"`
+	Namespace  *string `json:"namespace"`
+	Agent      *string `json:"agent"`
+	Purpose    *string `json:"purpose"`
+	Note       *string `json:"note"`
+	Require2FA *bool   `json:"require_2fa"`
 }
 
 // SetSecret handles POST /v1/secrets.
@@ -405,334 +317,650 @@ func (h *Handlers) SetSecret(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.Name == "" {
-		writeError(w, newAppError(http.StatusBadRequest, "ValidationError", "'name' is required"))
+	if e := required(field("name", req.Name), field("value", req.Value)); e != nil {
+		writeError(w, r, e)
 		return
 	}
-	if req.Value == "" {
-		writeError(w, newAppError(http.StatusBadRequest, "ValidationError", "'value' is required"))
-		return
-	}
-	if req.Namespace == "" {
-		req.Namespace = "default"
-	}
-	if req.Agent == "" {
-		req.Agent = "cli"
-	}
-
-	if err := h.Store.SetSecret(req.Name, req.Value, req.Namespace, req.Agent, req.Purpose); err != nil {
-		writeError(w, err)
-		return
-	}
-
-	h.Store.AddAuditEntry("SECRET_SET", req.Agent, req.Namespace+"/"+req.Name)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"ok":        true,
-		"namespace": req.Namespace,
-		"name":      req.Name,
+	ns := deref(req.Namespace, vault.DefaultNamespace)
+	value := []byte(*req.Value)
+	err := h.Vault.SetSecret(r.Context(), vault.SetSecretRequest{
+		Name:       *req.Name,
+		Namespace:  ns,
+		Agent:      deref(req.Agent, "cli"),
+		Purpose:    deref(req.Purpose, ""),
+		Value:      value,
+		Note:       deref(req.Note, ""),
+		Require2FA: deref(req.Require2FA, false),
 	})
-}
-
-// ---------------------------------------------------------------------------
-// Handler: GET /v1/secrets/{namespace}/{name}
-// ---------------------------------------------------------------------------
-
-// GetSecret handles GET /v1/secrets/{namespace}/{name}.
-func (h *Handlers) GetSecret(w http.ResponseWriter, r *http.Request) {
-	namespace := r.PathValue("namespace")
-	name := r.PathValue("name")
-
-	secret, err := h.Store.GetSecret(namespace, name)
+	for i := range value {
+		value[i] = 0
+	}
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
-
-	// Return the secret metadata without the raw value for safety
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"name":       secret.Name,
-		"namespace":  secret.Namespace,
-		"agent":      secret.Agent,
-		"purpose":    secret.Purpose,
-		"created_at": secret.CreatedAt,
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "namespace": ns, "name": *req.Name})
 }
 
 // ---------------------------------------------------------------------------
-// Handler: GET /v1/secrets (list)
+// GET /v1/secrets (list)
 // ---------------------------------------------------------------------------
 
-// ListSecrets handles GET /v1/secrets.
+// ListSecrets handles GET /v1/secrets?namespace=&agent=&purpose=&limit=&offset=
+// (python list_secrets). The list never contains secret values.
 //
-// The list never contains secret values: each entry is a SecretMeta.
-//
-// TODO(D5/G9): transitional plaintext path. The Go CLI `get` and the MCP
-// `lease_secret` tool still fetch plaintext with GET /v1/secrets?name=<exact>
-// (go/cmd/rgt-vault/commands.go runGet, go/internal/mcp/mcp.go lease_secret).
-// To avoid breaking them before B12/G10 move them off this route, an EXACT
-// `name` filter returns that one secret INCLUDING its value, and the read is
-// audited. An unfiltered list, and every other route, never returns a value.
-// This path is removed when the server moves onto the real vault (G9) and the
-// CLI `get` becomes an offline, operator-only operation.
+// Go clients (CLI list, TUI, MCP) do not send agent; it defaults to "cli",
+// the Python CLI's default agent, and namespace defaults to "default".
+// Both are still subject to the ABAC policy.
 func (h *Handlers) ListSecrets(w http.ResponseWriter, r *http.Request) {
-	namespace := r.URL.Query().Get("namespace")
-	if namespace == "" {
-		namespace = "default"
-	}
+	q := r.URL.Query()
+	namespace := queryDefault(r, "namespace", vault.DefaultNamespace)
+	agent := queryDefault(r, "agent", "cli")
 
-	if name := r.URL.Query().Get("name"); name != "" {
-		h.listSecretWithValue(w, namespace, name)
+	if _, ok := q["name"]; ok {
+		h.listSecretWithValue(w, r, namespace, q.Get("name"), agent)
 		return
 	}
 
-	secrets := h.Store.ListSecrets(namespace)
-	metas := make([]SecretMeta, 0, len(secrets))
-	for _, s := range secrets {
-		metas = append(metas, metaOf(s))
+	limit, e := queryInt(r, "limit", vault.DefaultListSize)
+	if e == nil {
+		var offset int
+		if offset, e = queryInt(r, "offset", 0); e == nil {
+			switch {
+			case limit < 1 || limit > 1000:
+				e = badRequest("'limit' must be between 1 and 1000.")
+			case offset < 0:
+				e = badRequest("'offset' must be >= 0.")
+			default:
+				items, err := h.Vault.ListSecrets(r.Context(), vault.ListRequest{
+					Namespace: namespace, Agent: agent, Purpose: q.Get("purpose"),
+					Limit: limit, Offset: offset,
+				})
+				if err != nil {
+					writeError(w, r, err)
+					return
+				}
+				if items == nil {
+					items = []store.SecretInfo{}
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"namespace": namespace, "secrets": items})
+				return
+			}
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"namespace": namespace,
-		"secrets":   metas,
+	writeError(w, r, e)
+}
+
+// D5PurposeDefault is the purpose recorded for the transitional plaintext
+// lookup when the caller gives none.
+const D5PurposeDefault = "cli get"
+
+// listSecretWithValue serves GET /v1/secrets?name=<exact>.
+//
+// TODO(D5/H1): transitional plaintext path. The Go CLI `get` and the MCP
+// `lease_secret` tool read a value through this route (go/cmd/rgt-vault
+// commands.go runGet, go/internal/mcp lease_secret). It is NOT a raw read:
+// it goes through vault.Lease, so the hook, rate limit, honeytokens, ABAC
+// "read" for (agent, namespace, purpose), the approval gate (and its 2FA)
+// and the LEASE_GRANTED/LEASE_RETURNED audit rows all apply, and a
+// SECRET_READ row records that the value left the process over HTTP. It is
+// still a plaintext-returning route behind the shared agent token, so it is
+// removed once an operator scope exists (H1) and `get` becomes an offline,
+// operator-only read (G10).
+//
+// A secret that does not exist (or was revoked) is an empty list, not an
+// error, so the CLI prints its own "not found".
+func (h *Handlers) listSecretWithValue(w http.ResponseWriter, r *http.Request, namespace, name, agent string) {
+	purpose := queryDefault(r, "purpose", D5PurposeDefault)
+	var value string
+	var notUTF8 bool
+	err := h.Vault.Lease(r.Context(), vault.LeaseRequest{
+		Name: name, Namespace: namespace, Agent: agent, Purpose: purpose,
+	}, func(secret []byte) error {
+		if !utf8.Valid(secret) {
+			notUTF8 = true
+			return nil
+		}
+		value = string(secret)
+		return nil
 	})
-}
-
-// transitionalSecret is the one response shape that carries a value.
-// TODO(D5/G9): delete together with the plaintext-by-name path.
-type transitionalSecret struct {
-	SecretMeta
-	Value string `json:"value"`
-}
-
-func (h *Handlers) listSecretWithValue(w http.ResponseWriter, namespace, name string) {
-	out := []transitionalSecret{}
-	if sec, err := h.Store.GetSecret(namespace, name); err == nil {
-		out = append(out, transitionalSecret{SecretMeta: metaOf(*sec), Value: sec.Value})
-		h.Store.AddAuditEntry("SECRET_READ", "api", namespace+"/"+name)
+	if errors.Is(err, vault.ErrNotFound) {
+		writeJSON(w, http.StatusOK, map[string]any{"namespace": namespace, "secrets": []any{}})
+		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	if notUTF8 {
+		writeError(w, r, badRequest("secret value is not valid UTF-8 and cannot be returned as JSON"))
+		return
+	}
+	tokenID, _ := AuthFromContext(r.Context())
+	details := "Agent: " + agent + ", Namespace: " + namespace + ", Purpose: " + purpose +
+		", Route: GET /v1/secrets?name= (D5 plaintext), token=" + tokenID
+	if err := h.Vault.Audit(r.Context(), "SECRET_READ", store.Name(name), details, sql.NullString{String: agent, Valid: true}); err != nil {
+		writeError(w, r, err) // fail closed: no audit row, no value
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
 		"namespace": namespace,
-		"secrets":   out,
+		"secrets":   []map[string]string{{"name": name, "namespace": namespace, "value": value}},
 	})
 }
 
 // ---------------------------------------------------------------------------
-// Handler: POST /v1/secrets/{namespace}/{name}/use
+// GET /v1/secrets/{namespace}/{name}  (fingerprint; Go-only, RGT-502)
 // ---------------------------------------------------------------------------
 
-// UseSecretRequest is the JSON body for using a secret.
+// GetSecret handles GET /v1/secrets/{namespace}/{name}[?version=N]: the
+// ciphertext fingerprint (python get_fingerprint, sha256(ciphertext)[:8]).
+// It never returns the value and, as in Python, is not policy-gated (a
+// fingerprint leaks no plaintext); honeytokens still trigger.
+func (h *Handlers) GetSecret(w http.ResponseWriter, r *http.Request) {
+	namespace, name := r.PathValue("namespace"), r.PathValue("name")
+	version, e := queryInt(r, "version", 0)
+	if e == nil && r.URL.Query().Has("version") && version < 1 {
+		e = badRequest("'version' must be >= 1.")
+	}
+	if e != nil {
+		writeError(w, r, e)
+		return
+	}
+	fp, err := h.Vault.Fingerprint(r.Context(), namespace, name, int64(version))
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"namespace": namespace, "name": name, "fingerprint": fp})
+}
+
+// ---------------------------------------------------------------------------
+// POST /v1/secrets/{namespace}/{name}/use
+// ---------------------------------------------------------------------------
+
+// UseSecretRequest is the JSON body of the use endpoint (python UseBody).
 type UseSecretRequest struct {
-	Action  string                 `json:"action"`
-	Agent   string                 `json:"agent"`
-	Purpose string                 `json:"purpose"`
-	Params  map[string]interface{} `json:"params"`
+	Action  *string        `json:"action"`
+	Agent   *string        `json:"agent"`
+	Purpose *string        `json:"purpose"`
+	Params  map[string]any `json:"params"`
 }
 
-// UseSecret handles POST /v1/secrets/{namespace}/{name}/use.
+// UseSecret handles POST /v1/secrets/{namespace}/{name}/use: lease the
+// secret server-side, run a registered action on it, return only the
+// action's result (python use_secret).
 func (h *Handlers) UseSecret(w http.ResponseWriter, r *http.Request) {
-	namespace := r.PathValue("namespace")
-	name := r.PathValue("name")
-
+	namespace, name := r.PathValue("namespace"), r.PathValue("name")
 	var req UseSecretRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.Action == "" {
-		writeError(w, newAppError(http.StatusBadRequest, "ValidationError", "'action' is required"))
+	if e := required(field("action", req.Action), field("agent", req.Agent)); e != nil {
+		writeError(w, r, e)
 		return
 	}
-	if req.Agent == "" {
-		writeError(w, newAppError(http.StatusBadRequest, "ValidationError", "'agent' is required"))
+	if h.Actions == nil {
+		writeError(w, r, capabilities.ActionNotFound(*req.Action, nil))
 		return
 	}
-
-	secret, err := h.Store.GetSecret(namespace, name)
+	spec, err := h.Actions.Get(*req.Action)
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err) // 404
 		return
 	}
-
-	// Execute the action (stub - in production this would run real actions)
-	result := map[string]interface{}{
-		"action":        req.Action,
-		"status":        "completed",
-		"secret_leased": true,
-		"secret_len":    len(secret.Value),
-		"message":       "action executed; secret NOT returned in response",
+	if req.Params == nil {
+		req.Params = map[string]any{}
 	}
-
-	h.Store.AddAuditEntry("SECRET_USE", req.Agent, namespace+"/"+name+" action="+req.Action)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"ok":     true,
-		"action": req.Action,
-		"result": result,
+	if err := spec.ValidateParams(req.Params); err != nil {
+		// A malformed param set is a client error, not a server fault.
+		writeError(w, r, badRequest(err.Error()))
+		return
+	}
+	var result map[string]any
+	err = h.Vault.Lease(r.Context(), vault.LeaseRequest{
+		Name: name, Namespace: namespace, Agent: *req.Agent, Purpose: deref(req.Purpose, ""),
+	}, func(secret []byte) error {
+		var aerr error
+		result, aerr = h.Actions.Execute(r.Context(), *req.Action, secret, req.Params)
+		return aerr
 	})
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "action": *req.Action, "result": result})
 }
 
 // ---------------------------------------------------------------------------
-// Handler: POST /v1/secrets/{namespace}/{name}/revoke
+// POST /v1/secrets/{namespace}/{name}/revoke
 // ---------------------------------------------------------------------------
 
-// RevokeSecret handles POST /v1/secrets/{namespace}/{name}/revoke.
+// RevokeSecret handles POST /v1/secrets/{namespace}/{name}/revoke?agent=
+// (python revoke; agent defaults to "system"). Any request body is ignored.
 func (h *Handlers) RevokeSecret(w http.ResponseWriter, r *http.Request) {
-	namespace := r.PathValue("namespace")
-	name := r.PathValue("name")
-
-	if err := h.Store.RevokeSecret(namespace, name); err != nil {
-		writeError(w, err)
+	namespace, name := r.PathValue("namespace"), r.PathValue("name")
+	agent := queryDefault(r, "agent", vault.SystemAgent)
+	if err := h.Vault.RevokeSecret(r.Context(), namespace, name, agent); err != nil {
+		writeError(w, r, err)
 		return
 	}
-
-	h.Store.AddAuditEntry("SECRET_REVOKE", "api", namespace+"/"+name)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"ok":        true,
-		"namespace": namespace,
-		"name":      name,
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "namespace": namespace, "name": name})
 }
 
 // ---------------------------------------------------------------------------
-// Handler: DELETE /v1/secrets/{namespace}/{name}
-// ---------------------------------------------------------------------------
-
-// DeleteSecret handles DELETE /v1/secrets/{namespace}/{name}.
-func (h *Handlers) DeleteSecret(w http.ResponseWriter, r *http.Request) {
-	namespace := r.PathValue("namespace")
-	name := r.PathValue("name")
-
-	if err := h.Store.DeleteSecret(namespace, name); err != nil {
-		writeError(w, err)
-		return
-	}
-
-	h.Store.AddAuditEntry("SECRET_DELETE", "api", namespace+"/"+name)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"ok":        true,
-		"namespace": namespace,
-		"name":      name,
-	})
-}
-
-// ---------------------------------------------------------------------------
-// Handler: POST /v1/rotate
+// POST /v1/rotate
 // ---------------------------------------------------------------------------
 
 // RotateRequest is the JSON body for key rotation.
 type RotateRequest struct {
-	Target string `json:"target"` // "master" or "dek"
+	Target *string `json:"target"` // "master" or "dek"
 }
 
-// Rotate handles POST /v1/rotate.
+// Rotate handles POST /v1/rotate (python rotate).
 func (h *Handlers) Rotate(w http.ResponseWriter, r *http.Request) {
 	var req RotateRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-
-	switch req.Target {
+	if e := required(field("target", req.Target)); e != nil {
+		writeError(w, r, e)
+		return
+	}
+	var err error
+	switch *req.Target {
 	case "master":
-		h.Store.RotateMasterKey()
+		err = h.Vault.RotateMaster(r.Context())
 	case "dek":
-		h.Store.RotateDEK()
+		err = h.Vault.RotateDEK(r.Context())
 	default:
-		writeError(w, newAppError(http.StatusBadRequest, "ValidationError", "target must be 'master' or 'dek'"))
+		err = badRequest("target must be 'master' or 'dek'")
+	}
+	if err != nil {
+		writeError(w, r, err)
 		return
 	}
-
-	h.Store.AddAuditEntry("KEY_ROTATE", "api", "target="+req.Target)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"ok":        true,
-		"target":    req.Target,
-		"key_epoch": h.Store.KeyEpoch(),
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "target": *req.Target, "key_epoch": h.Vault.KeyEpoch()})
 }
 
 // ---------------------------------------------------------------------------
-// Handler: GET /v1/audit
+// GET /v1/audit, POST /v1/audit/verify
 // ---------------------------------------------------------------------------
 
-// Audit handles GET /v1/audit.
+// AuditEntry is one audit_logs row as Python's dict(sqlite3.Row) renders it
+// (NULL columns are JSON null).
+type AuditEntry struct {
+	ID         int64   `json:"id"`
+	Action     string  `json:"action"`
+	SecretName *string `json:"secret_name"`
+	Timestamp  string  `json:"timestamp"`
+	Details    *string `json:"details"`
+	PrevHash   *string `json:"prev_hash"`
+	EntryHash  string  `json:"entry_hash"`
+	PolicyHash *string `json:"policy_hash"`
+	AgentID    *string `json:"agent_id"`
+}
+
+func nullable(s sql.NullString) *string {
+	if !s.Valid {
+		return nil
+	}
+	v := s.String
+	return &v
+}
+
+func entryOf(r store.AuditRow) AuditEntry {
+	return AuditEntry{
+		ID: r.ID, Action: r.Action, SecretName: nullable(r.SecretName), Timestamp: r.Timestamp,
+		Details: nullable(r.Details), PrevHash: nullable(r.PrevHash), EntryHash: r.EntryHash,
+		PolicyHash: nullable(r.PolicyHash), AgentID: nullable(r.AgentID),
+	}
+}
+
+// rowCapability returns the "capability" field of a row whose details are a
+// JSON object (the CAPABILITY_EXECUTED / _DENIED / _FAILED and
+// HOOK_CAPABILITY rows written by vault.ExecuteCapability).
+func rowCapability(r store.AuditRow) (string, bool) {
+	if !r.Details.Valid || !strings.HasPrefix(r.Details.String, "{") {
+		return "", false
+	}
+	var d struct {
+		Capability *string `json:"capability"`
+	}
+	if json.Unmarshal([]byte(r.Details.String), &d) != nil || d.Capability == nil {
+		return "", false
+	}
+	return *d.Capability, true
+}
+
+// Audit handles GET /v1/audit?limit=50[&capability=NAME], newest first
+// (python audit). capability= (RGT-166) keeps only the capability rows
+// that name that capability; limit then counts matching rows.
 func (h *Handlers) Audit(w http.ResponseWriter, r *http.Request) {
-	limitStr := r.URL.Query().Get("limit")
-	limit := 50
-	if limitStr != "" {
-		if parsed, err := strconv.Atoi(limitStr); err == nil {
-			limit = parsed
+	limit, e := queryInt(r, "limit", 50)
+	switch {
+	case e != nil:
+	case limit < 1:
+		e = badRequest("'limit' must be >= 1.")
+	case limit > 1000:
+		e = badRequest("'limit' must be <= 1000. Use /v1/audit/verify and a tail query tool to walk larger histories.")
+	}
+	if e != nil {
+		writeError(w, r, e)
+		return
+	}
+	capFilter, filtered := r.URL.Query()["capability"]
+	fetch := limit
+	if filtered {
+		fetch = -1 // filter over the whole log
+	}
+	rows, err := h.Vault.AuditLog(r.Context(), fetch)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	// No pre-allocation sized by the request: limit is bounded above, but
+	// the slice only ever grows to the rows actually returned.
+	entries := []AuditEntry{}
+	for _, row := range rows {
+		if len(entries) == limit {
+			break
 		}
+		if filtered {
+			if c, ok := rowCapability(row); !ok || c != capFilter[0] {
+				continue
+			}
+		}
+		entries = append(entries, entryOf(row))
 	}
-	if limit < 1 {
-		writeError(w, newAppError(http.StatusBadRequest, "ValidationError", "'limit' must be >= 1"))
-		return
-	}
-	if limit > 1000 {
-		writeError(w, newAppError(http.StatusBadRequest, "ValidationError", "'limit' must be <= 1000"))
-		return
-	}
-
-	entries := h.Store.GetAuditLog(limit)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"entries": entries,
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
 }
-
-// ---------------------------------------------------------------------------
-// Handler: POST /v1/audit/verify
-// ---------------------------------------------------------------------------
 
 // AuditVerify handles POST /v1/audit/verify.
 func (h *Handlers) AuditVerify(w http.ResponseWriter, r *http.Request) {
-	ok := h.Store.VerifyAuditChain()
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"ok": ok,
-	})
+	ok, err := h.Vault.VerifyAuditChain(r.Context())
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": ok})
 }
 
 // ---------------------------------------------------------------------------
-// Handler: POST /v1/policy/simulate
+// POST /v1/policy/simulate
 // ---------------------------------------------------------------------------
 
-// SimulateRequest is the JSON body for policy simulation.
+// SimulateRequest is the JSON body for policy simulation (python SimulateBody).
 type SimulateRequest struct {
-	Agent     string `json:"agent"`
-	Namespace string `json:"namespace"`
-	Purpose   string `json:"purpose"`
-	Action    string `json:"action"`
+	Agent     *string `json:"agent"`
+	Namespace *string `json:"namespace"`
+	Purpose   *string `json:"purpose"`
+	Action    *string `json:"action"`
 }
 
-// PolicySimulate handles POST /v1/policy/simulate.
+// PolicySimulate handles POST /v1/policy/simulate: the ABAC decision
+// {"allowed", "reason", "matched_rule"} (python simulate).
 func (h *Handlers) PolicySimulate(w http.ResponseWriter, r *http.Request) {
 	var req SimulateRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.Agent == "" {
-		writeError(w, newAppError(http.StatusBadRequest, "ValidationError", "'agent' is required"))
+	if e := required(field("agent", req.Agent), field("namespace", req.Namespace)); e != nil {
+		writeError(w, r, e)
 		return
 	}
-	if req.Namespace == "" {
-		writeError(w, newAppError(http.StatusBadRequest, "ValidationError", "'namespace' is required"))
+	d, err := h.Vault.Simulate(r.Context(), *req.Agent, *req.Namespace, deref(req.Purpose, ""), deref(req.Action, "read"))
+	if err != nil {
+		writeError(w, r, err)
 		return
 	}
-	if req.Action == "" {
-		req.Action = "read"
-	}
-
-	result := h.Store.SimulatePolicy(req.Agent, req.Namespace, req.Purpose, req.Action)
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, d)
 }
 
 // ---------------------------------------------------------------------------
-// Handler: GET /v1/actions (list registered actions)
+// /v1/requests (operator approval endpoints; operator token)
 // ---------------------------------------------------------------------------
 
-// ListActions handles GET /v1/actions.
-func (h *Handlers) ListActions(w http.ResponseWriter, r *http.Request) {
-	actions := []map[string]interface{}{
-		{"name": "echo", "description": "Diagnostic action. Confirms lease worked; secret NEVER returned."},
-		{"name": "http_get_with_auth", "description": "GET a URL with the leased secret as a Bearer token."},
-		{"name": "http_post_with_auth", "description": "POST to a URL with the leased secret as a Bearer token."},
-		{"name": "openai_chat", "description": "POST to an OpenAI-compatible /v1/chat/completions endpoint."},
+// requireOperator refuses a request that did not authenticate with the
+// operator scope (defence in depth behind the auth middleware) and one made
+// while no broker is active (409, as in Python).
+func (h *Handlers) requireOperator(w http.ResponseWriter, r *http.Request) bool {
+	if _, scope := AuthFromContext(r.Context()); scope != ScopeOperator {
+		writeError(w, r, newAppError(http.StatusForbidden, "ServerAuthError", "operator token required"))
+		return false
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"actions": actions,
+	if h.Broker == nil {
+		writeError(w, r, newAppError(http.StatusConflict, "Conflict", "No approval broker is active on this server."))
+		return false
+	}
+	return true
+}
+
+// ListRequests handles GET /v1/requests: the pending approval requests,
+// oldest first. A request carries no secret value.
+func (h *Handlers) ListRequests(w http.ResponseWriter, r *http.Request) {
+	if !h.requireOperator(w, r) {
+		return
+	}
+	pending := h.Broker.List()
+	out := make([]map[string]any, 0, len(pending))
+	for _, p := range pending {
+		out = append(out, map[string]any{
+			"request_id":  p.RequestID,
+			"agent":       p.Agent,
+			"namespace":   p.Namespace,
+			"secret_name": p.SecretName,
+			"purpose":     p.Purpose,
+			"action":      p.Action,
+			"require_2fa": p.Require2FA,
+			// Python: time.time() float seconds.
+			"created_at": float64(p.CreatedAt.UnixNano()) / 1e9,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requests": out})
+}
+
+// ApproveRequest is the JSON body of the approve endpoint (python ApproveBody).
+type ApproveRequest struct {
+	TOTPCode *string `json:"totp_code"`
+	Operator *string `json:"operator"`
+}
+
+// DenyRequest is the JSON body of the deny endpoint (python DenyBody).
+type DenyRequest struct {
+	Reason   *string `json:"reason"`
+	Operator *string `json:"operator"`
+}
+
+// decodeOptionalJSON accepts an empty body as {} (every field optional).
+func decodeOptionalJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if r.Body == nil || r.Body == http.NoBody || r.ContentLength == 0 {
+		return true
+	}
+	return decodeJSON(w, r, dst)
+}
+
+// Approve handles POST /v1/requests/{id}/approve. A request flagged
+// require_2fa needs a valid, unused TOTP code (the broker's verifier).
+func (h *Handlers) Approve(w http.ResponseWriter, r *http.Request) {
+	if !h.requireOperator(w, r) {
+		return
+	}
+	var req ApproveRequest
+	if !decodeOptionalJSON(w, r, &req) {
+		return
+	}
+	id := r.PathValue("id")
+	if err := h.Broker.Approve(id, deref(req.TOTPCode, ""), deref(req.Operator, "operator")); err != nil {
+		writeError(w, r, err) // ApprovalError -> 400
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "request_id": id, "decision": "approved"})
+}
+
+// Deny handles POST /v1/requests/{id}/deny.
+func (h *Handlers) Deny(w http.ResponseWriter, r *http.Request) {
+	if !h.requireOperator(w, r) {
+		return
+	}
+	var req DenyRequest
+	if !decodeOptionalJSON(w, r, &req) {
+		return
+	}
+	id := r.PathValue("id")
+	if err := h.Broker.Deny(id, deref(req.Reason, "denied by operator"), deref(req.Operator, "operator")); err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "request_id": id, "decision": "denied"})
+}
+
+// ---------------------------------------------------------------------------
+// /v1/capabilities*
+// ---------------------------------------------------------------------------
+
+// ExecuteCapabilityRequest is the JSON body of /v1/capabilities/execute
+// (python ExecuteCapabilityBody).
+type ExecuteCapabilityRequest struct {
+	Capability        *string        `json:"capability"`
+	AgentID           *string        `json:"agent_id"`
+	CapabilityToken   *string        `json:"capability_token"`
+	Payload           map[string]any `json:"payload"`
+	CapabilityVersion *int           `json:"capability_version"`
+}
+
+// ExecuteCapability handles POST /v1/capabilities/execute (python
+// execute_capability): every check of vault.ExecuteCapability, in Python's
+// order, with Python's audit rows.
+//
+// As in Python only validation (400), version (400), policy (403) and
+// not-found (404) errors keep their message; every other failure, including
+// a handler error, is a sanitized 500 so a handler's error text can never
+// leak a secret. A rate-limit refusal is 429 (Python: a sanitized 500).
+func (h *Handlers) ExecuteCapability(w http.ResponseWriter, r *http.Request) {
+	var req ExecuteCapabilityRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if e := required(field("capability", req.Capability), field("agent_id", req.AgentID),
+		field("capability_token", req.CapabilityToken)); e != nil {
+		writeError(w, r, e)
+		return
+	}
+	version := deref(req.CapabilityVersion, 1)
+	if version < 1 {
+		// Version 0 would silently mean 1 inside the vault.
+		writeError(w, r, badRequest("capability_version must be >= 1"))
+		return
+	}
+	result, err := h.Vault.ExecuteCapability(r.Context(), vault.CapabilityRequest{
+		Capability: *req.Capability,
+		Version:    version,
+		Agent:      *req.AgentID,
+		Token:      *req.CapabilityToken,
+		Payload:    req.Payload,
 	})
+	if err != nil {
+		writeError(w, r, executeError(*req.Capability, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "capability": *req.Capability, "result": result})
+}
+
+func executeError(capability string, err error) error {
+	if errors.Is(err, vault.ErrCapabilityFailed) {
+		// The handler's own error: never echoed.
+		log.Printf("ERROR: capability %s failed; details suppressed from response: %s", LogSafe(capability), LogSafe(err.Error()))
+		return newAppError(http.StatusInternalServerError, "ActionExecutionError",
+			"capability "+pyfmt.Repr(capability)+" failed; see server logs for details")
+	}
+	for _, kind := range []error{vault.ErrValidation, vault.ErrCapabilityVersion, vault.ErrPolicyDenied,
+		vault.ErrCapabilityNotFound, vault.ErrRateLimited} {
+		if errors.Is(err, kind) {
+			return err
+		}
+	}
+	log.Printf("ERROR: capability %s raised an unhandled error; details suppressed from response: %s", LogSafe(capability), LogSafe(err.Error()))
+	return newAppError(http.StatusInternalServerError, "ActionExecutionError",
+		"capability "+pyfmt.Repr(capability)+" failed; see server logs for details")
+}
+
+type capabilityView struct {
+	Name              string   `json:"name"`
+	Description       string   `json:"description"`
+	SupportedVersions []int    `json:"supported_versions"`
+	ParamsSchema      []string `json:"params_schema"`
+}
+
+func viewOf(s *capabilities.Spec) capabilityView {
+	versions := s.SupportedVersions()
+	sort.Ints(versions)
+	return capabilityView{Name: s.Name, Description: s.Description, SupportedVersions: versions, ParamsSchema: schemaKeys(s.Schema)}
+}
+
+// schemaKeys is python list(spec.params_schema): the parameter names of a
+// ParamList, or the top-level keys of a JSON-schema dict (sorted; Go maps
+// have no insertion order).
+func schemaKeys(s capabilities.Schema) []string {
+	switch v := s.(type) {
+	case capabilities.ParamList:
+		return append([]string{}, v...)
+	case capabilities.JSONSchema:
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		return keys
+	default:
+		return []string{}
+	}
+}
+
+// ListCapabilities handles GET /v1/capabilities: every registered
+// capability and the versions it supports (no handler bodies, no secrets).
+func (h *Handlers) ListCapabilities(w http.ResponseWriter, r *http.Request) {
+	out := []capabilityView{}
+	for _, s := range h.capabilityList() {
+		out = append(out, viewOf(s))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"capabilities": out})
+}
+
+// ListAuthorizedCapabilities handles GET /v1/capabilities/list?agent=
+// [&namespace=*][&purpose=*]: the capabilities the ABAC policy allows the
+// agent to execute (action = capability name).
+func (h *Handlers) ListAuthorizedCapabilities(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	if !q.Has("agent") {
+		writeError(w, r, unprocessable("query parameter 'agent' is required"))
+		return
+	}
+	agent := q.Get("agent")
+	namespace := queryDefault(r, "namespace", "*")
+	purpose := queryDefault(r, "purpose", "*")
+	engine := h.Vault.Policy()
+	out := []capabilityView{}
+	for _, s := range h.capabilityList() {
+		if engine.Evaluate(agent, namespace, purpose, s.Name).Allowed {
+			out = append(out, viewOf(s))
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"agent": agent, "capabilities": out})
+}
+
+// ---------------------------------------------------------------------------
+// GET /v1/actions (Go-only)
+// ---------------------------------------------------------------------------
+
+// ListActions handles GET /v1/actions: the registered actions for /use.
+func (h *Handlers) ListActions(w http.ResponseWriter, r *http.Request) {
+	out := []map[string]any{}
+	if h.Actions != nil {
+		for _, s := range h.Actions.List() {
+			schema := append([]string{}, s.ParamsSchema...)
+			out = append(out, map[string]any{"name": s.Name, "description": s.Description, "params_schema": schema})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"actions": out})
 }

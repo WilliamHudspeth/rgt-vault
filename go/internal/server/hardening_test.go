@@ -15,9 +15,11 @@ import (
 	"rgt-vault-server/internal/server/handlers"
 )
 
-// hardenedServer builds a router with the supplied middleware tweaks.
+// hardenedServer builds a router over a real (test) vault with the supplied
+// middleware tweaks.
 func hardenedServer(t *testing.T, tweak func(*Middleware)) (http.Handler, string) {
 	t.Helper()
+	e := newEnv(t, envOpts{})
 	ts := auth.NewTokenStore(filepath.Join(t.TempDir(), "server.token"))
 	token, err := auth.GenerateToken()
 	if err != nil {
@@ -30,7 +32,8 @@ func hardenedServer(t *testing.T, tweak func(*Middleware)) (http.Handler, string
 	if tweak != nil {
 		tweak(mw)
 	}
-	return NewRouter(handlers.NewHandlers(handlers.NewStore(), ts), mw), token
+	h := &handlers.Handlers{Vault: e.stack.Vault, Actions: e.stack.Actions, Capabilities: e.stack.Capabilities}
+	return NewRouter(h, mw), token
 }
 
 func do(h http.Handler, method, path, token string, hdr map[string]string, body string) *httptest.ResponseRecorder {
@@ -239,7 +242,8 @@ func TestAuthErrorDoesNotLeakTokenPath(t *testing.T) {
 	dir := t.TempDir()
 	ts := auth.NewTokenStore(filepath.Join(dir, "gone", "secret-location.token")) // never created
 	mw := NewMiddleware(ts)
-	h := NewRouter(handlers.NewHandlers(handlers.NewStore(), ts), mw)
+	e := newEnv(t, envOpts{})
+	h := NewRouter(&handlers.Handlers{Vault: e.stack.Vault}, mw)
 	var logbuf bytes.Buffer
 	log.SetOutput(&logbuf)
 	defer log.SetOutput(io.Discard)
@@ -404,8 +408,8 @@ func TestRouterRecoversHandlerPanic(t *testing.T) {
 	log.SetOutput(io.Discard)
 	ts := auth.NewTokenStore(filepath.Join(t.TempDir(), "t"))
 	_ = ts.Write("tok")
-	// A nil Store makes /healthz panic (nil deref) -> proves the router wires recover.
-	h := NewRouter(&handlers.Handlers{TokenStore: ts}, NewMiddleware(ts))
+	// A nil Vault makes /healthz panic (nil deref) -> proves the router wires recover.
+	h := NewRouter(&handlers.Handlers{}, NewMiddleware(ts))
 	rec := do(h, "GET", "/healthz", "", nil, "")
 	if rec.Code != 500 || mustJSONError(t, rec)["incident_id"] == "" {
 		t.Errorf("router did not recover: %d %s", rec.Code, rec.Body.String())
@@ -441,12 +445,12 @@ func TestListSecretsNeverReturnsValue(t *testing.T) {
 	}
 	// An unfiltered list of a different namespace is still empty and value-free.
 	rec = do(h, "GET", "/v1/secrets", token, nil, "")
-	if strings.Contains(rec.Body.String(), "value") {
-		t.Errorf("default list: %s", rec.Body.String())
+	if rec.Code != 200 || strings.Contains(rec.Body.String(), "value") {
+		t.Errorf("default list: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
-// TODO(D5/G9): remove this test with the transitional plaintext-by-name path.
+// TODO(D5/H1): remove this test with the transitional plaintext-by-name path.
 func TestTransitionalNameLookupKeepsCLIWorking(t *testing.T) {
 	h, token := hardenedServer(t, nil)
 	do(h, "POST", "/v1/secrets", token, nil, `{"name":"k","value":"v1","namespace":"ns"}`)
@@ -475,9 +479,37 @@ func TestTransitionalNameLookupKeepsCLIWorking(t *testing.T) {
 		t.Errorf("missing lookup = %d %s", rec.Code, rec.Body.String())
 	}
 	// The read was audited.
-	rec = do(h, "GET", "/v1/audit", token, nil, "")
+	rec = do(h, "GET", "/v1/audit?limit=1000", token, nil, "")
 	if !strings.Contains(rec.Body.String(), "SECRET_READ") {
 		t.Errorf("plaintext read not audited: %s", rec.Body.String())
+	}
+}
+
+// DELETE was a Go-only route of the stub store; it is gone (D5).
+func TestDeleteRouteRemoved(t *testing.T) {
+	h, token := hardenedServer(t, nil)
+	do(h, "POST", "/v1/secrets", token, nil, `{"name":"k","value":"v"}`)
+	rec := do(h, "DELETE", "/v1/secrets/default/k", token, nil, "")
+	if rec.Code != http.StatusMethodNotAllowed || strings.Contains(rec.Header().Get("Allow"), "DELETE") {
+		t.Errorf("DELETE: %d Allow=%q", rec.Code, rec.Header().Get("Allow"))
+	}
+}
+
+// Python StrictURLNormalizationMiddleware: ambiguous paths are 400 before auth.
+func TestAmbiguousPathsRejected(t *testing.T) {
+	h, token := hardenedServer(t, nil)
+	for _, p := range []string{"/v1/secrets/a/../b", "/v1//secrets", "/v1/secrets/a%2F..%2Fb/x", "/v1/secrets/a%5Cb/x", "/v1/secrets/a%00b/x", "/v1/requests/..%2F..%2Fsecrets"} {
+		for _, tok := range []string{"", token} {
+			req := httptest.NewRequest("GET", "http://x"+p, nil)
+			if tok != "" {
+				req.Header.Set("Authorization", "Bearer "+tok)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest || mustJSONError(t, rec)["detail"] != "Invalid URI path" {
+				t.Errorf("%s: %d %s", p, rec.Code, rec.Body.String())
+			}
+		}
 	}
 }
 
@@ -525,5 +557,33 @@ func TestNoVaryHeaderWhenCORSDisabledAndAllowOn405(t *testing.T) {
 	rec = do(h, "PUT", "/v1/secrets", "", map[string]string{"Origin": "https://app.example"}, "")
 	if rec.Code != 405 || rec.Header().Get("Access-Control-Allow-Origin") != "https://app.example" {
 		t.Errorf("PUT from allowed origin: %d ACAO=%q", rec.Code, rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+// The request logger encodes the path, so a %0A in a URL cannot forge a log
+// line (CodeQL go/log-injection).
+func TestRequestLogEncodesPath(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(io.Discard)
+	h, _ := hardenedServer(t, nil)
+	req := httptest.NewRequest("GET", "/v1/x%0AHTTP%20GET%20/forged%20-%3E%20200", nil)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	out := buf.String()
+	if strings.Contains(out, "\nHTTP GET /forged") || !strings.Contains(out, `/v1/x\nHTTP GET /forged -> 200`) {
+		t.Errorf("request log not encoded:\n%s", out)
+	}
+}
+
+// /v1/audit bounds limit before reading anything (CodeQL go/uncontrolled-allocation-size).
+func TestAuditLimitBounds(t *testing.T) {
+	h, token := hardenedServer(t, nil)
+	for q, want := range map[string]int{"1": 200, "1000": 200, "1001": 400, "0": 400, "-5": 400, "99999999999999999999": 422, "1e9": 422} {
+		if rec := do(h, "GET", "/v1/audit?limit="+q, token, nil, ""); rec.Code != want {
+			t.Errorf("limit=%s: %d, want %d", q, rec.Code, want)
+		}
+		if rec := do(h, "GET", "/v1/audit?capability=x&limit="+q, token, nil, ""); rec.Code != want {
+			t.Errorf("capability limit=%s: %d, want %d", q, rec.Code, want)
+		}
 	}
 }

@@ -1,608 +1,875 @@
-// Package server contains integration tests for the rgt-vault Go server.
-//
-// Tests cover:
-//  1. Health check endpoint (no auth required)
-//  2. Authentication middleware (rejects missing/invalid tokens)
-//  3. Secret CRUD operations (set, get, list, delete)
-//  4. Audit log endpoint
 package server
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/server/handlers"
+	"rgt-vault-server/internal/capabilities"
+	"rgt-vault-server/internal/providers/providerstest"
+	"rgt-vault-server/internal/totp"
+	"rgt-vault-server/internal/vault"
 )
 
-// setupTestServer creates a test server with a fresh token and store.
-func setupTestServer(t *testing.T) (*httptest.Server, string) {
-	t.Helper()
+func durationSeconds(n int) time.Duration { return time.Duration(n) * time.Second }
 
-	// Create a temporary token file
-	tmpDir := t.TempDir()
-	tokenPath := filepath.Join(tmpDir, "server.token")
-
-	// Generate and write a token
-	token, err := auth.GenerateToken()
-	if err != nil {
-		t.Fatalf("Failed to generate token: %v", err)
-	}
-	tokenStore := auth.NewTokenStore(tokenPath)
-	if err := tokenStore.Write(token); err != nil {
-		t.Fatalf("Failed to write token: %v", err)
-	}
-
-	// Create store and handlers
-	store := handlers.NewStore()
-	h := handlers.NewHandlers(store, tokenStore)
-
-	// Create middleware and router
-	mw := NewMiddleware(tokenStore)
-	router := NewRouter(h, mw)
-
-	ts := httptest.NewServer(router)
-	return ts, token
-}
-
-// authHeader returns the Authorization header value for the given token.
-func authHeader(token string) string {
-	return "Bearer " + token
-}
-
-// doJSON performs an HTTP request and decodes the JSON response.
-func doJSON(t *testing.T, method, url, token string, body interface{}) (*http.Response, map[string]interface{}) {
-	t.Helper()
-
-	var bodyReader io.Reader
-	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			t.Fatalf("Failed to marshal body: %v", err)
-		}
-		bodyReader = bytes.NewReader(data)
-	}
-
-	req, err := http.NewRequest(method, url, bodyReader)
-	if err != nil {
-		t.Fatalf("Failed to create request: %v", err)
-	}
-
-	if token != "" {
-		req.Header.Set("Authorization", authHeader(token))
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("Request failed: %v", err)
-	}
-
-	var result map[string]interface{}
-	if resp.Body != nil {
-		defer resp.Body.Close()
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			// Empty body or non-JSON - not an error for some tests
-			result = nil
-		}
-	}
-
-	return resp, result
-}
-
-// ---------------------------------------------------------------------------
-// Test 1: Health check returns real JSON status (no auth required)
-// ---------------------------------------------------------------------------
+// --- health, auth ---------------------------------------------------------
 
 func TestHealthCheck(t *testing.T) {
-	ts, _ := setupTestServer(t)
-	defer ts.Close()
-
-	resp, result := doJSON(t, "GET", ts.URL+"/healthz", "", nil)
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", resp.StatusCode)
+	e := newEnv(t, envOpts{})
+	code, m, rec := e.call("GET", "/healthz", "", nil)
+	if code != 200 || m["status"] != "ok" || m["vault_id"] != e.stack.Vault.VaultID() {
+		t.Fatalf("healthz: %d %s", code, rec.Body.String())
 	}
-
-	if result == nil {
-		t.Fatal("Expected JSON response body")
+	if m["key_epoch"].(float64) != float64(e.stack.Vault.KeyEpoch()) {
+		t.Errorf("key_epoch = %v", m["key_epoch"])
 	}
-
-	if status, ok := result["status"].(string); !ok || status != "ok" {
-		t.Errorf("Expected status 'ok', got %v", result["status"])
+	if !strings.Contains(fmt.Sprint(m["actions"]), "echo") {
+		t.Errorf("actions = %v", m["actions"])
 	}
-
-	if vaultID, ok := result["vault_id"].(string); !ok || vaultID == "" {
-		t.Errorf("Expected non-empty vault_id, got %v", result["vault_id"])
-	}
-
-	if _, ok := result["key_epoch"]; !ok {
-		t.Error("Expected key_epoch in response")
-	}
-
-	t.Logf("Health check response: %+v", result)
-}
-
-// ---------------------------------------------------------------------------
-// Test 2: Auth middleware rejects missing and invalid tokens
-// ---------------------------------------------------------------------------
-
-func TestAuthRejectsUnauthorized(t *testing.T) {
-	ts, token := setupTestServer(t)
-	defer ts.Close()
-
-	// Test missing auth header
-	resp, result := doJSON(t, "GET", ts.URL+"/v1/secrets?namespace=default", "", nil)
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("Expected 401 for missing auth, got %d", resp.StatusCode)
-	}
-	if result != nil {
-		t.Logf("Missing auth response: %+v", result)
-	}
-
-	// Test invalid token
-	resp, result = doJSON(t, "GET", ts.URL+"/v1/secrets?namespace=default", "invalid-token", nil)
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("Expected 401 for invalid token, got %d", resp.StatusCode)
-	}
-	if result != nil {
-		t.Logf("Invalid auth response: %+v", result)
-	}
-
-	// Test valid token works
-	resp, result = doJSON(t, "GET", ts.URL+"/v1/secrets?namespace=default", token, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Expected 200 for valid token, got %d", resp.StatusCode)
-	}
-	if result != nil {
-		t.Logf("Valid auth response: %+v", result)
+	t.Setenv("APP_ENV", "production")
+	if _, m, _ = e.call("GET", "/healthz", "", nil); m["version"] != "" {
+		t.Errorf("production version = %v", m["version"])
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Test 3: Secret CRUD operations (set, get, list, delete)
-// ---------------------------------------------------------------------------
+func TestAuthRejectsMissingAndWrongTokens(t *testing.T) {
+	e := newEnv(t, envOpts{})
+	for _, tok := range []string{"", "wrong-token"} {
+		code, m, rec := e.call("GET", "/v1/secrets?namespace=default", tok, nil)
+		if code != 401 || m["error"] != "ServerAuthError" || rec.Header().Get("WWW-Authenticate") == "" {
+			t.Errorf("token %q: %d %v", tok, code, m)
+		}
+	}
+	// Unauthenticated requests write no HTTP_API row.
+	for _, r := range e.auditRows("") {
+		if r["action"] == "HTTP_API" && strings.Contains(fmt.Sprint(r["details"]), "GET /v1/secrets ") {
+			// only the authed audit call itself may appear
+			t.Errorf("unauthenticated request audited: %v", r)
+		}
+	}
+}
 
-func TestSecretCRUD(t *testing.T) {
-	ts, token := setupTestServer(t)
-	defer ts.Close()
+func TestNewRequiresVaultAndTokens(t *testing.T) {
+	if _, err := New(Config{}); err == nil {
+		t.Error("nil vault accepted")
+	}
+	e := newEnv(t, envOpts{})
+	if _, err := New(Config{Vault: e.stack.Vault}); err == nil {
+		t.Error("nil token store accepted")
+	}
+}
 
-	baseURL := ts.URL
+// --- secrets lifecycle ----------------------------------------------------
 
-	// SET a secret
-	setBody := map[string]interface{}{
-		"name":      "api-key",
-		"value":     "sk-1234567890abcdef",
-		"namespace": "default",
-		"agent":     "test-agent",
-		"purpose":   "integration-test",
+func TestSecretLifecycle(t *testing.T) {
+	e := newEnv(t, envOpts{})
+	const value = "s3cr3t-SENTINEL-value"
+	m := e.mustOK("POST", "/v1/secrets", map[string]any{
+		"name": "api-key", "value": value, "namespace": "prod", "agent": "bot", "purpose": "ci",
+		"note": "rotate monthly", "require_2fa": false,
+	})
+	if m["ok"] != true || m["namespace"] != "prod" || m["name"] != "api-key" {
+		t.Fatalf("set: %v", m)
 	}
-	resp, result := doJSON(t, "POST", baseURL+"/v1/secrets", token, setBody)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("SetSecret failed: status=%d, body=%+v", resp.StatusCode, result)
-	}
-	if ok, _ := result["ok"].(bool); !ok {
-		t.Errorf("Expected ok=true, got %v", result["ok"])
-	}
-	t.Logf("SetSecret response: %+v", result)
 
-	// GET the secret
-	resp, result = doJSON(t, "GET", baseURL+"/v1/secrets/default/api-key", token, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GetSecret failed: status=%d, body=%+v", resp.StatusCode, result)
+	// list: metadata only, Python's SecretInfo fields
+	_, _, rec := e.call("GET", "/v1/secrets?namespace=prod&agent=bot", e.agentTok, nil)
+	if strings.Contains(rec.Body.String(), value) || strings.Contains(rec.Body.String(), `"value"`) {
+		t.Fatalf("list leaks a value: %s", rec.Body.String())
 	}
-	if name, _ := result["name"].(string); name != "api-key" {
-		t.Errorf("Expected name='api-key', got %q", name)
-	}
-	if ns, _ := result["namespace"].(string); ns != "default" {
-		t.Errorf("Expected namespace='default', got %q", ns)
-	}
-	t.Logf("GetSecret response: %+v", result)
-
-	// LIST secrets
-	resp, result = doJSON(t, "GET", baseURL+"/v1/secrets?namespace=default", token, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("ListSecrets failed: status=%d, body=%+v", resp.StatusCode, result)
-	}
-	secrets, ok := result["secrets"].([]interface{})
-	if !ok {
-		t.Fatalf("Expected secrets array, got %T", result["secrets"])
-	}
+	m = e.mustOK("GET", "/v1/secrets?namespace=prod&agent=bot", nil)
+	secrets := m["secrets"].([]any)
 	if len(secrets) != 1 {
-		t.Errorf("Expected 1 secret, got %d", len(secrets))
+		t.Fatalf("list: %v", m)
 	}
-	t.Logf("ListSecrets response: %+v", result)
+	s0 := secrets[0].(map[string]any)
+	for _, k := range []string{"secret_id", "name", "latest_version", "created_at", "updated_at", "status", "note", "require_2fa"} {
+		if _, ok := s0[k]; !ok {
+			t.Errorf("list item lacks %q: %v", k, s0)
+		}
+	}
+	if s0["note"] != "rotate monthly" || s0["status"] != "ACTIVE" {
+		t.Errorf("list item = %v", s0)
+	}
 
-	// DELETE the secret
-	resp, result = doJSON(t, "DELETE", baseURL+"/v1/secrets/default/api-key", token, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("DeleteSecret failed: status=%d, body=%+v", resp.StatusCode, result)
+	// fingerprint (RGT-502): 8 hex digits, equal to the vault's, no value
+	fp := e.mustOK("GET", "/v1/secrets/prod/api-key", nil)
+	want, err := e.stack.Vault.Fingerprint(context.Background(), "prod", "api-key", 0)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if ok, _ := result["ok"].(bool); !ok {
-		t.Errorf("Expected ok=true, got %v", result["ok"])
+	if fp["fingerprint"] != want || !regexp.MustCompile(`^[0-9a-f]{8}$`).MatchString(want) {
+		t.Errorf("fingerprint = %v, want %s", fp, want)
+	}
+	if _, leaked := fp["value"]; leaked {
+		t.Error("fingerprint route returned a value")
+	}
+	if fpv := e.mustOK("GET", "/v1/secrets/prod/api-key?version=1", nil); fpv["fingerprint"] != want {
+		t.Errorf("fingerprint v1 = %v", fpv)
 	}
 
-	// Verify secret is gone
-	resp, result = doJSON(t, "GET", baseURL+"/v1/secrets/default/api-key", token, nil)
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("Expected 404 for deleted secret, got %d", resp.StatusCode)
+	// use: lease server-side, run echo, never return the value
+	code, m, rec := e.call("POST", "/v1/secrets/prod/api-key/use", e.agentTok,
+		map[string]any{"action": "echo", "agent": "bot", "purpose": "ci", "params": map[string]any{}})
+	if code != 200 || m["ok"] != true || m["action"] != "echo" || strings.Contains(rec.Body.String(), value) {
+		t.Fatalf("use: %d %s", code, rec.Body.String())
+	}
+	rows := e.auditRows("")
+	for _, a := range []string{"SET_SECRET", "LIST_SECRETS", "GET_SECRET", "LEASE_GRANTED", "LEASE_RETURNED", "HTTP_API"} {
+		if !hasAction(rows, a) {
+			t.Errorf("audit lacks %s", a)
+		}
+	}
+
+	// revoke (agent defaults to "system"), then gone everywhere
+	if m := e.mustOK("POST", "/v1/secrets/prod/api-key/revoke", "{}"); m["ok"] != true {
+		t.Fatalf("revoke: %v", m)
+	}
+	if m := e.mustOK("GET", "/v1/secrets?namespace=prod", nil); len(m["secrets"].([]any)) != 0 {
+		t.Errorf("list after revoke: %v", m)
+	}
+	if code, m := e.agent("GET", "/v1/secrets/prod/api-key", nil); code != 404 || m["error"] != "SecretNotFoundError" {
+		t.Errorf("fingerprint after revoke: %d %v", code, m)
+	}
+	// but the revoked version is still addressable by number
+	if code, _ := e.agent("GET", "/v1/secrets/prod/api-key?version=1", nil); code != 200 {
+		t.Errorf("fingerprint of revoked v1: %d", code)
+	}
+	if ok := e.mustOK("POST", "/v1/audit/verify", nil); ok["ok"] != true {
+		t.Errorf("chain does not verify: %v", ok)
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Test 4: Audit log endpoint returns entries
-// ---------------------------------------------------------------------------
+// --- error -> status mapping ----------------------------------------------
 
-func TestAuditLog(t *testing.T) {
-	ts, token := setupTestServer(t)
-	defer ts.Close()
+func TestErrorStatusMapping(t *testing.T) {
+	e := newEnv(t, envOpts{harness: true, rateLimit: 3})
+	e.set("default", "k", "v", nil)
+	noVerifier := newEnv(t, envOpts{})
+	fixed := newEnv(t, envOpts{provider: providerstest.Fixed{Secret: []byte("0123456789abcdef0123456789abcdef")}})
 
-	baseURL := ts.URL
-
-	// First, create a few secrets to generate audit entries
-	for i := 1; i <= 3; i++ {
-		setBody := map[string]interface{}{
-			"name":      fmt.Sprintf("secret-%d", i),
-			"value":     fmt.Sprintf("value-%d", i),
-			"namespace": "default",
-			"agent":     "audit-test",
-		}
-		resp, _ := doJSON(t, "POST", baseURL+"/v1/secrets", token, setBody)
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("SetSecret %d failed: status=%d", i, resp.StatusCode)
-		}
+	type tc struct {
+		name   string
+		env    *testEnv
+		method string
+		path   string
+		token  string // "" = agent token, "-" = none
+		body   any
+		status int
+		errTyp string
+	}
+	cases := []tc{
+		{"401 no token", e, "GET", "/v1/audit", "-", nil, 401, "ServerAuthError"},
+		{"400 bad name", e, "POST", "/v1/secrets", "", map[string]any{"name": "bad name!", "value": "x"}, 400, "ValidationError"},
+		{"400 bad version", e, "GET", "/v1/secrets/default/k?version=0", "", nil, 400, "ValidationError"},
+		{"400 audit limit 0", e, "GET", "/v1/audit?limit=0", "", nil, 400, "ValidationError"},
+		{"400 audit limit big", e, "GET", "/v1/audit?limit=5000", "", nil, 400, "ValidationError"},
+		{"400 list limit", e, "GET", "/v1/secrets?limit=0", "", nil, 400, "ValidationError"},
+		{"400 list offset", e, "GET", "/v1/secrets?offset=-1", "", nil, 400, "ValidationError"},
+		{"400 rotate target", e, "POST", "/v1/rotate", "", map[string]any{"target": "everything"}, 400, "ValidationError"},
+		{"400 rotate unsupported", fixed, "POST", "/v1/rotate", "", map[string]any{"target": "master"}, 400, "RotateNotSupportedError"},
+		{"400 use bad params", e, "POST", "/v1/secrets/default/k/use", "", map[string]any{"action": "echo", "agent": "bot", "purpose": "p", "params": map[string]any{"zzz": 1}}, 400, "ValidationError"},
+		{"400 use empty purpose", e, "POST", "/v1/secrets/default/k/use", "", map[string]any{"action": "echo", "agent": "bot"}, 400, "ValidationError"},
+		{"400 no verifier", noVerifier, "POST", "/v1/capabilities/execute", "", map[string]any{"capability": "secrets.echo", "agent_id": "bot", "capability_token": "x.y"}, 400, "ValidationError"},
+		{"400 capability_version 0", e, "POST", "/v1/capabilities/execute", "", map[string]any{"capability": "secrets.echo", "agent_id": "bot", "capability_token": "x.y", "capability_version": 0}, 400, "ValidationError"},
+		{"400 capability version", e, "POST", "/v1/capabilities/execute", "", map[string]any{"capability": "secrets.echo", "agent_id": "bot", "capability_token": e.sign("bot", "secrets.echo", 2), "capability_version": 2}, 400, "CapabilityVersionError"},
+		{"403 policy list", e, "GET", "/v1/secrets?namespace=default&agent=intruder", "", nil, 403, "PolicyDeniedError"},
+		{"403 policy use", e, "POST", "/v1/secrets/default/k/use", "", map[string]any{"action": "echo", "agent": "intruder", "purpose": "p"}, 403, "PolicyDeniedError"},
+		{"403 policy revoke", e, "POST", "/v1/secrets/default/k/revoke?agent=intruder", "", nil, 403, "PolicyDeniedError"},
+		{"403 token forged", e, "POST", "/v1/capabilities/execute", "", map[string]any{"capability": "secrets.echo", "agent_id": "bot", "capability_token": "eyJ4IjoxfQ.AAAA"}, 403, "PolicyDeniedError"},
+		{"403 token agent mismatch", e, "POST", "/v1/capabilities/execute", "", map[string]any{"capability": "secrets.echo", "agent_id": "mallory", "capability_token": e.sign("bot", "secrets.echo", 1)}, 403, "PolicyDeniedError"},
+		{"404 secret", e, "POST", "/v1/secrets/default/missing/use", "", map[string]any{"action": "echo", "agent": "bot", "purpose": "p"}, 404, "SecretNotFoundError"},
+		{"404 fingerprint", e, "GET", "/v1/secrets/default/missing", "", nil, 404, "SecretNotFoundError"},
+		{"404 action", e, "POST", "/v1/secrets/default/k/use", "", map[string]any{"action": "nope", "agent": "bot", "purpose": "p"}, 404, "ActionNotFoundError"},
+		{"404 capability", e, "POST", "/v1/capabilities/execute", "", map[string]any{"capability": "no.such", "agent_id": "bot", "capability_token": e.sign("bot", "no.such", 1)}, 404, "CapabilityNotFoundError"},
+		{"409 no broker", e, "GET", "/v1/requests", "", nil, 409, "Conflict"},
+		{"409 no broker approve", e, "POST", "/v1/requests/abc/approve", "", nil, 409, "Conflict"},
+		{"422 set missing value", e, "POST", "/v1/secrets", "", map[string]any{"name": "x"}, 422, "RequestValidationError"},
+		{"422 set name type", e, "POST", "/v1/secrets", "", map[string]any{"name": 5, "value": "x"}, 422, "RequestValidationError"},
+		{"422 use missing agent", e, "POST", "/v1/secrets/default/k/use", "", map[string]any{"action": "echo"}, 422, "RequestValidationError"},
+		{"422 simulate missing namespace", e, "POST", "/v1/policy/simulate", "", map[string]any{"agent": "bot"}, 422, "RequestValidationError"},
+		{"422 rotate missing target", e, "POST", "/v1/rotate", "", "{}", 422, "RequestValidationError"},
+		{"422 execute missing token", e, "POST", "/v1/capabilities/execute", "", map[string]any{"capability": "secrets.echo", "agent_id": "bot"}, 422, "RequestValidationError"},
+		{"422 list limit not int", e, "GET", "/v1/secrets?limit=abc", "", nil, 422, "RequestValidationError"},
+		{"422 audit limit not int", e, "GET", "/v1/audit?limit=1.5", "", nil, 422, "RequestValidationError"},
+		{"422 capabilities/list agent", e, "GET", "/v1/capabilities/list", "", nil, 422, "RequestValidationError"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tok := c.env.agentTok
+			switch c.token {
+			case "-":
+				tok = ""
+			case "":
+			default:
+				tok = c.token
+			}
+			code, m, rec := c.env.call(c.method, c.path, tok, c.body)
+			if code != c.status || m["error"] != c.errTyp {
+				t.Fatalf("got %d %s, want %d %s", code, rec.Body.String(), c.status, c.errTyp)
+			}
+			if code != 401 && m["incident_id"] == "" {
+				t.Errorf("no incident_id: %v", m)
+			}
+		})
 	}
 
-	// Now fetch the audit log
-	resp, result := doJSON(t, "GET", baseURL+"/v1/audit?limit=10", token, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("Audit failed: status=%d, body=%+v", resp.StatusCode, result)
-	}
+	// 429: the per-agent lease limiter (RateLimit 3).
+	t.Run("429 rate limited", func(t *testing.T) {
+		var last int
+		var m map[string]any
+		for i := 0; i < 5; i++ {
+			last, m = e.agent("POST", "/v1/secrets/default/k/use", map[string]any{"action": "echo", "agent": "burst", "purpose": "p"})
+		}
+		if last != http.StatusTooManyRequests || m["error"] != "PermissionError" {
+			t.Fatalf("got %d %v", last, m)
+		}
+		if !hasAction(e.auditRows(""), "RATE_LIMITED") {
+			t.Error("RATE_LIMITED not audited")
+		}
+	})
 
-	entries, ok := result["entries"].([]interface{})
-	if !ok {
-		t.Fatalf("Expected entries array, got %T", result["entries"])
-	}
-	if len(entries) < 3 {
-		t.Errorf("Expected at least 3 audit entries, got %d", len(entries))
-	}
+	// 403 honeytoken (PermissionError).
+	t.Run("403 honeytoken", func(t *testing.T) {
+		if err := e.stack.Vault.Store().AddHoneytoken(context.Background(), "default", "trap"); err != nil {
+			t.Skipf("no honeytoken seam: %v", err)
+		}
+		code, m := e.agent("GET", "/v1/secrets/default/trap", nil)
+		if code != 403 || m["error"] != "PermissionError" {
+			t.Fatalf("got %d %v", code, m)
+		}
+	})
 
-	// Check that entries have expected fields
-	for i, entry := range entries {
-		e, ok := entry.(map[string]interface{})
-		if !ok {
-			t.Errorf("Entry %d is not a map: %T", i, entry)
-			continue
+	// 503 after the vault is closed.
+	t.Run("503 closed", func(t *testing.T) {
+		x := newEnv(t, envOpts{})
+		_ = x.stack.Vault.Close()
+		code, m := x.agent("GET", "/v1/secrets/default/k", nil)
+		if code != 503 || m["error"] != "VaultUnavailable" {
+			t.Fatalf("got %d %v", code, m)
 		}
-		if _, ok := e["timestamp"]; !ok {
-			t.Errorf("Entry %d missing 'timestamp'", i)
-		}
-		if _, ok := e["event"]; !ok {
-			t.Errorf("Entry %d missing 'event'", i)
-		}
-		if _, ok := e["hash"]; !ok {
-			t.Errorf("Entry %d missing 'hash'", i)
-		}
-	}
-
-	t.Logf("Audit log has %d entries", len(entries))
-	t.Logf("First entry: %+v", entries[0])
+	})
 }
 
-// ---------------------------------------------------------------------------
-// Test 5: Rotate endpoint
-// ---------------------------------------------------------------------------
-
-func TestRotate(t *testing.T) {
-	ts, token := setupTestServer(t)
-	defer ts.Close()
-
-	baseURL := ts.URL
-
-	// Rotate master key
-	rotateBody := map[string]interface{}{
-		"target": "master",
+// A handler's own error text never reaches the client (Python P0-2).
+func TestCapabilityHandlerFailureIsSanitized(t *testing.T) {
+	e := newEnv(t, envOpts{harness: true})
+	if err := e.stack.Capabilities.Register(capabilities.Spec{
+		Name: "test.boom", Description: "fails", Versions: []int{1},
+		Handler: func(context.Context, map[string]any, vault.CapabilityContext) (any, error) {
+			return nil, errors.New("upstream said sk-LEAKED-SECRET")
+		},
+	}); err != nil {
+		t.Fatal(err)
 	}
-	resp, result := doJSON(t, "POST", baseURL+"/v1/rotate", token, rotateBody)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("Rotate master failed: status=%d, body=%+v", resp.StatusCode, result)
+	code, m, rec := e.call("POST", "/v1/capabilities/execute", e.agentTok, map[string]any{
+		"capability": "test.boom", "agent_id": "bot", "capability_token": e.sign("bot", "test.boom", 1),
+	})
+	if code != 500 || m["error"] != "ActionExecutionError" || strings.Contains(rec.Body.String(), "LEAKED") {
+		t.Fatalf("got %d %s", code, rec.Body.String())
 	}
-	if ok, _ := result["ok"].(bool); !ok {
-		t.Errorf("Expected ok=true, got %v", result["ok"])
+	if m["detail"] != "capability 'test.boom' failed; see server logs for details" {
+		t.Errorf("detail = %v", m["detail"])
 	}
-	if target, _ := result["target"].(string); target != "master" {
-		t.Errorf("Expected target='master', got %q", target)
-	}
-	t.Logf("Rotate master response: %+v", result)
-
-	// Rotate DEK
-	rotateBody["target"] = "dek"
-	resp, result = doJSON(t, "POST", baseURL+"/v1/rotate", token, rotateBody)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("Rotate dek failed: status=%d, body=%+v", resp.StatusCode, result)
-	}
-	if target, _ := result["target"].(string); target != "dek" {
-		t.Errorf("Expected target='dek', got %q", target)
-	}
-
-	// Invalid target
-	rotateBody["target"] = "invalid"
-	resp, result = doJSON(t, "POST", baseURL+"/v1/rotate", token, rotateBody)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected 400 for invalid target, got %d", resp.StatusCode)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Test 6: Use secret endpoint
-// ---------------------------------------------------------------------------
-
-func TestUseSecret(t *testing.T) {
-	ts, token := setupTestServer(t)
-	defer ts.Close()
-
-	baseURL := ts.URL
-
-	// Create a secret first
-	setBody := map[string]interface{}{
-		"name":      "test-secret",
-		"value":     "my-secret-value",
-		"namespace": "default",
-		"agent":     "use-test",
-	}
-	resp, _ := doJSON(t, "POST", baseURL+"/v1/secrets", token, setBody)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("SetSecret failed: status=%d", resp.StatusCode)
-	}
-
-	// Use the secret
-	useBody := map[string]interface{}{
-		"action":  "echo",
-		"agent":   "use-test",
-		"purpose": "testing",
-		"params":  map[string]interface{}{"message": "hello"},
-	}
-	resp, result := doJSON(t, "POST", baseURL+"/v1/secrets/default/test-secret/use", token, useBody)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("UseSecret failed: status=%d, body=%+v", resp.StatusCode, result)
-	}
-	if ok, _ := result["ok"].(bool); !ok {
-		t.Errorf("Expected ok=true, got %v", result["ok"])
-	}
-	if action, _ := result["action"].(string); action != "echo" {
-		t.Errorf("Expected action='echo', got %q", action)
-	}
-	t.Logf("UseSecret response: %+v", result)
-
-	// Use non-existent secret
-	resp, result = doJSON(t, "POST", baseURL+"/v1/secrets/default/nonexistent/use", token, useBody)
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("Expected 404 for nonexistent secret, got %d", resp.StatusCode)
+	if !hasAction(e.auditRows(""), "CAPABILITY_FAILED") {
+		t.Error("CAPABILITY_FAILED not audited")
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Test 7: Policy simulate endpoint
-// ---------------------------------------------------------------------------
+// --- capabilities ---------------------------------------------------------
+
+func TestCapabilityExecuteEndToEnd(t *testing.T) {
+	e := newEnv(t, envOpts{harness: true})
+	tok := e.sign("bot", "secrets.echo", 1)
+	code, m, rec := e.call("POST", "/v1/capabilities/execute", e.agentTok, map[string]any{
+		"capability": "secrets.echo", "agent_id": "bot", "capability_token": tok,
+		"payload": map[string]any{"message": "hi"},
+	})
+	if code != 200 || m["ok"] != true || m["capability"] != "secrets.echo" {
+		t.Fatalf("execute: %d %s", code, rec.Body.String())
+	}
+	res := m["result"].(map[string]any)
+	if res["message"] != "hi" || res["agent_id"] != "bot" || res["capability"] != "secrets.echo" || res["token_id"] == "" {
+		t.Errorf("result = %v", res)
+	}
+	if strings.Contains(rec.Body.String(), tok) {
+		t.Error("response echoes the capability token")
+	}
+
+	// secrets.use through the capability path runs the same actions as /use.
+	const value = "cap-SENTINEL"
+	e.set("prod", "db", value, nil)
+	code, m, rec = e.call("POST", "/v1/capabilities/execute", e.agentTok, map[string]any{
+		"capability": "secrets.use", "agent_id": "bot", "capability_token": e.sign("bot", "secrets.use", 1),
+		"payload": map[string]any{"secret_name": "db", "namespace": "prod", "action": "echo"},
+	})
+	if code != 200 || m["ok"] != true || strings.Contains(rec.Body.String(), value) {
+		t.Fatalf("secrets.use: %d %s", code, rec.Body.String())
+	}
+
+	// A token is bound to its capability.
+	code, m = e.agent("POST", "/v1/capabilities/execute", map[string]any{
+		"capability": "secrets.use", "agent_id": "bot", "capability_token": tok,
+	})
+	if code != 403 || !strings.Contains(fmt.Sprint(m["detail"]), "token authorizes") {
+		t.Errorf("capability mismatch: %d %v", code, m)
+	}
+	rows := e.auditRows("")
+	for _, a := range []string{"CAPABILITY_EXECUTED", "CAPABILITY_DENIED", "HOOK_CAPABILITY"} {
+		if !hasAction(rows, a) {
+			t.Errorf("audit lacks %s", a)
+		}
+	}
+	for _, r := range rows {
+		if strings.Contains(fmt.Sprint(r["details"]), tok) {
+			t.Errorf("capability token recorded in audit row %v", r)
+		}
+	}
+}
+
+func TestCapabilityListing(t *testing.T) {
+	e := newEnv(t, envOpts{})
+	m := e.mustOK("GET", "/v1/capabilities", nil)
+	caps := m["capabilities"].([]any)
+	if len(caps) != 2 {
+		t.Fatalf("capabilities = %v", m)
+	}
+	first := caps[0].(map[string]any)
+	if first["name"] != "secrets.echo" || fmt.Sprint(first["supported_versions"]) != "[1]" ||
+		fmt.Sprint(first["params_schema"]) != "[message]" {
+		t.Errorf("secrets.echo view = %v", first)
+	}
+
+	names := func(agent string) []string {
+		m := e.mustOK("GET", "/v1/capabilities/list?agent="+agent, nil)
+		if m["agent"] != agent {
+			t.Errorf("agent = %v", m["agent"])
+		}
+		var out []string
+		for _, c := range m["capabilities"].([]any) {
+			out = append(out, c.(map[string]any)["name"].(string))
+		}
+		return out
+	}
+	if got := fmt.Sprint(names("bot")); got != "[secrets.echo secrets.use]" {
+		t.Errorf("bot = %s", got)
+	}
+	if got := fmt.Sprint(names("limited")); got != "[secrets.echo]" {
+		t.Errorf("limited = %s", got)
+	}
+	if got := fmt.Sprint(names("intruder")); got != "[]" {
+		t.Errorf("intruder = %s", got)
+	}
+
+	// Default-deny vault: nothing is authorized.
+	d := newEnv(t, envOpts{policy: "-"})
+	if m := d.mustOK("GET", "/v1/capabilities/list?agent=bot", nil); len(m["capabilities"].([]any)) != 0 {
+		t.Errorf("default deny lists %v", m)
+	}
+
+	// /v1/actions lists the real registry.
+	acts := e.mustOK("GET", "/v1/actions", nil)["actions"].([]any)
+	if len(acts) != 4 {
+		t.Errorf("actions = %v", acts)
+	}
+}
+
+// --- audit ----------------------------------------------------------------
+
+func TestAuditEndpoint(t *testing.T) {
+	e := newEnv(t, envOpts{})
+	e.set("default", "a", "1", nil)
+	e.set("default", "b", "2", nil)
+	rows := e.auditRows("")
+	if len(rows) < 4 {
+		t.Fatalf("rows = %v", rows)
+	}
+	// newest first, Python column set
+	if rows[0]["id"].(float64) < rows[len(rows)-1]["id"].(float64) {
+		t.Error("audit not newest first")
+	}
+	for _, k := range []string{"id", "action", "secret_name", "timestamp", "details", "prev_hash", "entry_hash", "policy_hash", "agent_id"} {
+		if _, ok := rows[0][k]; !ok {
+			t.Errorf("row lacks %q: %v", k, rows[0])
+		}
+	}
+	// HTTP_API rows: token id + ip + method + path, never the token
+	found := false
+	for _, r := range rows {
+		d := fmt.Sprint(r["details"])
+		if strings.Contains(d, e.agentTok) {
+			t.Fatalf("token in audit row: %v", r)
+		}
+		if r["action"] == "HTTP_API" && regexp.MustCompile(`^token=[0-9a-f]{8} ip=127\.0\.0\.1 POST /v1/secrets$`).MatchString(d) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no HTTP_API row for POST /v1/secrets: %v", rows)
+	}
+	if m := e.mustOK("GET", "/v1/audit?limit=2", nil); len(m["entries"].([]any)) != 2 {
+		t.Errorf("limit=2: %v", m)
+	}
+	if m := e.mustOK("GET", "/v1/audit", nil); len(m["entries"].([]any)) == 0 {
+		t.Error("default limit returned nothing")
+	}
+}
+
+// RGT-166: GET /v1/audit?capability=NAME keeps only that capability's rows.
+func TestAuditCapabilityFilter(t *testing.T) {
+	e := newEnv(t, envOpts{harness: true})
+	exec := func(capability, agent string, payload map[string]any) int {
+		code, _ := e.agent("POST", "/v1/capabilities/execute", map[string]any{
+			"capability": capability, "agent_id": agent, "capability_token": e.sign(agent, capability, 1), "payload": payload,
+		})
+		return code
+	}
+	if exec("secrets.echo", "bot", nil) != 200 || exec("secrets.echo", "bot", map[string]any{"message": "2"}) != 200 {
+		t.Fatal("echo failed")
+	}
+	if code := exec("secrets.use", "bot", map[string]any{"secret_name": "missing", "action": "nope"}); code != 500 {
+		t.Fatalf("failing secrets.use: %d", code)
+	}
+
+	check := func(capability string, want map[string]int) {
+		t.Helper()
+		got := map[string]int{}
+		for _, r := range e.auditRows("&capability=" + capability) {
+			got[r["action"].(string)]++
+			if !strings.Contains(fmt.Sprint(r["details"]), `"capability": "`+capability+`"`) {
+				t.Errorf("row for another capability: %v", r)
+			}
+		}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("capability=%s: %v, want %v", capability, got, want)
+		}
+	}
+	check("secrets.echo", map[string]int{"CAPABILITY_EXECUTED": 2, "HOOK_CAPABILITY": 2})
+	check("secrets.use", map[string]int{"CAPABILITY_FAILED": 1, "HOOK_CAPABILITY": 1})
+	check("no.such", map[string]int{})
+
+	// limit counts matching rows only
+	if m := e.mustOK("GET", "/v1/audit?capability=secrets.echo&limit=1", nil); len(m["entries"].([]any)) != 1 {
+		t.Errorf("limit=1: %v", m)
+	}
+}
+
+func TestAuditVerifyDetectsTampering(t *testing.T) {
+	e := newEnv(t, envOpts{})
+	e.set("default", "a", "1", nil)
+	if m := e.mustOK("POST", "/v1/audit/verify", nil); m["ok"] != true {
+		t.Fatalf("fresh chain: %v", m)
+	}
+	db := e.rawDB()
+	if _, err := db.Exec("UPDATE audit_logs SET details = 'forged' WHERE id = 1"); err != nil {
+		t.Fatal(err)
+	}
+	if m := e.mustOK("POST", "/v1/audit/verify", nil); m["ok"] != false {
+		t.Errorf("tampered chain verifies: %v", m)
+	}
+}
+
+// --- rotation -------------------------------------------------------------
+
+func TestRotateEndpoints(t *testing.T) {
+	e := newEnv(t, envOpts{})
+	e.set("default", "k", "before-rotation", nil)
+	fp0 := e.mustOK("GET", "/v1/secrets/default/k", nil)["fingerprint"]
+	epoch0 := e.stack.Vault.KeyEpoch()
+
+	m := e.mustOK("POST", "/v1/rotate", map[string]any{"target": "dek"})
+	if m["ok"] != true || m["target"] != "dek" || int64(m["key_epoch"].(float64)) != epoch0+1 {
+		t.Fatalf("rotate dek: %v", m)
+	}
+	if fp := e.mustOK("GET", "/v1/secrets/default/k", nil)["fingerprint"]; fp == fp0 {
+		t.Error("DEK rotation did not re-encrypt (fingerprint unchanged)")
+	}
+	m = e.mustOK("POST", "/v1/rotate", map[string]any{"target": "master"})
+	if int64(m["key_epoch"].(float64)) != epoch0+2 {
+		t.Fatalf("rotate master: %v", m)
+	}
+	// still readable through the vault after both rotations
+	if m := e.mustOK("GET", "/v1/secrets?namespace=default&name=k", nil); fmt.Sprint(m["secrets"]) == "[]" ||
+		m["secrets"].([]any)[0].(map[string]any)["value"] != "before-rotation" {
+		t.Errorf("after rotation: %v", m)
+	}
+	if m := e.mustOK("POST", "/v1/audit/verify", nil); m["ok"] != true {
+		t.Error("chain broken by rotation")
+	}
+	if !hasAction(e.auditRows(""), "ROTATE") {
+		t.Error("rotation not audited")
+	}
+}
+
+// --- policy simulate ------------------------------------------------------
 
 func TestPolicySimulate(t *testing.T) {
-	ts, token := setupTestServer(t)
-	defer ts.Close()
-
-	baseURL := ts.URL
-
-	simBody := map[string]interface{}{
-		"agent":     "test-agent",
-		"namespace": "default",
-		"purpose":   "testing",
-		"action":    "read",
+	e := newEnv(t, envOpts{})
+	m := e.mustOK("POST", "/v1/policy/simulate", map[string]any{"agent": "bot", "namespace": "prod", "purpose": "ci"})
+	if m["allowed"] != true || m["reason"] != "Allow rule matched" || m["matched_rule"] == nil {
+		t.Errorf("allow: %v", m)
 	}
-	resp, result := doJSON(t, "POST", baseURL+"/v1/policy/simulate", token, simBody)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("PolicySimulate failed: status=%d, body=%+v", resp.StatusCode, result)
+	m = e.mustOK("POST", "/v1/policy/simulate", map[string]any{"agent": "intruder", "namespace": "prod", "action": "write"})
+	if m["allowed"] != false || m["reason"] != "Explicit deny rule matched" {
+		t.Errorf("deny: %v", m)
 	}
-	if allowed, _ := result["allowed"].(bool); !allowed {
-		t.Errorf("Expected allowed=true, got %v", result["allowed"])
+	d := newEnv(t, envOpts{policy: "-"})
+	m = d.mustOK("POST", "/v1/policy/simulate", map[string]any{"agent": "bot", "namespace": "prod"})
+	if m["allowed"] != false || m["matched_rule"] != nil {
+		t.Errorf("default deny: %v", m)
 	}
-	t.Logf("PolicySimulate response: %+v", result)
-}
-
-// ---------------------------------------------------------------------------
-// Test 8: Audit verify endpoint
-// ---------------------------------------------------------------------------
-
-func TestAuditVerify(t *testing.T) {
-	ts, token := setupTestServer(t)
-	defer ts.Close()
-
-	baseURL := ts.URL
-
-	resp, result := doJSON(t, "POST", baseURL+"/v1/audit/verify", token, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("AuditVerify failed: status=%d, body=%+v", resp.StatusCode, result)
-	}
-	if ok, _ := result["ok"].(bool); !ok {
-		t.Errorf("Expected ok=true, got %v", result["ok"])
-	}
-	t.Logf("AuditVerify response: %+v", result)
-}
-
-// ---------------------------------------------------------------------------
-// Test 9: Validation errors
-// ---------------------------------------------------------------------------
-
-func TestValidationErrors(t *testing.T) {
-	ts, token := setupTestServer(t)
-	defer ts.Close()
-
-	baseURL := ts.URL
-
-	// Test missing name
-	body := map[string]interface{}{
-		"value":     "some-value",
-		"namespace": "default",
-	}
-	resp, result := doJSON(t, "POST", baseURL+"/v1/secrets", token, body)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected 400 for missing name, got %d", resp.StatusCode)
-	}
-	if result != nil {
-		t.Logf("Validation error response: %+v", result)
-	}
-
-	// Test missing value
-	body = map[string]interface{}{
-		"name":      "some-name",
-		"namespace": "default",
-	}
-	resp, result = doJSON(t, "POST", baseURL+"/v1/secrets", token, body)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected 400 for missing value, got %d", resp.StatusCode)
+	if !hasAction(e.auditRows(""), "SIMULATION_RUN") {
+		t.Error("SIMULATION_RUN not audited")
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Test 10: List actions endpoint
-// ---------------------------------------------------------------------------
+// --- approval flow with TOTP ----------------------------------------------
 
-func TestListActions(t *testing.T) {
-	ts, token := setupTestServer(t)
-	defer ts.Close()
-
-	baseURL := ts.URL
-
-	resp, result := doJSON(t, "GET", baseURL+"/v1/actions", token, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("ListActions failed: status=%d, body=%+v", resp.StatusCode, result)
-	}
-
-	actions, ok := result["actions"].([]interface{})
-	if !ok {
-		t.Fatalf("Expected actions array, got %T", result["actions"])
-	}
-	if len(actions) < 1 {
-		t.Error("Expected at least 1 action")
-	}
-	t.Logf("ListActions response: %+v", result)
-}
-
-// ---------------------------------------------------------------------------
-// Test 11: Revoke secret
-// ---------------------------------------------------------------------------
-
-func TestRevokeSecret(t *testing.T) {
-	ts, token := setupTestServer(t)
-	defer ts.Close()
-
-	baseURL := ts.URL
-
-	// Create a secret first
-	setBody := map[string]interface{}{
-		"name":      "revoke-test",
-		"value":     "to-be-revoked",
-		"namespace": "default",
-		"agent":     "revoke-test",
-	}
-	resp, _ := doJSON(t, "POST", baseURL+"/v1/secrets", token, setBody)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("SetSecret failed: status=%d", resp.StatusCode)
-	}
-
-	// Revoke it
-	resp, result := doJSON(t, "POST", baseURL+"/v1/secrets/default/revoke-test/revoke", token, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("RevokeSecret failed: status=%d, body=%+v", resp.StatusCode, result)
-	}
-	if ok, _ := result["ok"].(bool); !ok {
-		t.Errorf("Expected ok=true, got %v", result["ok"])
-	}
-
-	// Verify secret is gone
-	resp, _ = doJSON(t, "GET", baseURL+"/v1/secrets/default/revoke-test", token, nil)
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("Expected 404 for revoked secret, got %d", resp.StatusCode)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Benchmark: Health check
-// ---------------------------------------------------------------------------
-
-func BenchmarkHealthCheck(b *testing.B) {
-	// Create minimal setup without httptest.Server overhead per iteration
-	tmpDir := b.TempDir()
-	tokenPath := filepath.Join(tmpDir, "server.token")
-	token, _ := auth.GenerateToken()
-	tokenStore := auth.NewTokenStore(tokenPath)
-	tokenStore.Write(token)
-
-	store := handlers.NewStore()
-	h := handlers.NewHandlers(store, tokenStore)
-	mw := NewMiddleware(tokenStore)
-	router := NewRouter(h, mw)
-
-	ts := httptest.NewServer(router)
-	defer ts.Close()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		resp, err := http.Get(ts.URL + "/healthz")
-		if err != nil {
-			b.Fatal(err)
+func waitPending(t *testing.T, e *testEnv, n int) []any {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		code, m, rec := e.call("GET", "/v1/requests", e.opTok, nil)
+		if code != 200 {
+			t.Fatalf("list requests: %d %s", code, rec.Body.String())
 		}
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		if reqs := m["requests"].([]any); len(reqs) >= n {
+			return reqs
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("no %d pending request(s)", n)
+	return nil
+}
+
+func TestApprovalFlowWithTOTP(t *testing.T) {
+	e := newEnv(t, envOpts{approval: true, operator: true, totp: true, approvalTTL: 30})
+	e.set("prod", "guarded", "2fa-SENTINEL", map[string]any{"require_2fa": true})
+
+	type result struct {
+		code int
+		body map[string]any
+	}
+	use := func() chan result {
+		ch := make(chan result, 1)
+		go func() {
+			code, m, _ := e.call("POST", "/v1/secrets/prod/guarded/use", e.agentTok,
+				map[string]any{"action": "echo", "agent": "bot", "purpose": "deploy"})
+			ch <- result{code, m}
+		}()
+		return ch
+	}
+
+	done := use()
+	reqs := waitPending(t, e, 1)
+	r0 := reqs[0].(map[string]any)
+	if r0["agent"] != "bot" || r0["namespace"] != "prod" || r0["secret_name"] != "guarded" ||
+		r0["purpose"] != "deploy" || r0["action"] != "read" || r0["require_2fa"] != true || r0["created_at"].(float64) < 1e9 {
+		t.Fatalf("pending request = %v", r0)
+	}
+	if strings.Contains(fmt.Sprint(reqs), "2fa-SENTINEL") {
+		t.Fatal("pending request carries the value")
+	}
+	id := r0["request_id"].(string)
+
+	// Scopes: the agent token cannot approve, the operator token cannot use the agent API.
+	if code, _, _ := e.call("GET", "/v1/requests", e.agentTok, nil); code != 401 {
+		t.Errorf("agent token on /v1/requests: %d", code)
+	}
+	if code, _, _ := e.call("POST", "/v1/requests/"+id+"/approve", e.agentTok, map[string]any{}); code != 401 {
+		t.Errorf("agent token approves: %d", code)
+	}
+	if code, _, _ := e.call("GET", "/v1/secrets?namespace=prod", e.opTok, nil); code != 401 {
+		t.Errorf("operator token on agent API: %d", code)
+	}
+
+	// Missing and wrong codes are refused and the request stays pending.
+	for _, body := range []any{nil, map[string]any{"totp_code": "000000"}} {
+		code, m, _ := e.call("POST", "/v1/requests/"+id+"/approve", e.opTok, body)
+		if code != 400 || m["error"] != "ApprovalError" {
+			t.Fatalf("approve %v: %d %v", body, code, m)
+		}
+	}
+	code, m, _ := e.call("POST", "/v1/requests/"+id+"/approve", e.opTok, map[string]any{"totp_code": "123"})
+	if code != 400 {
+		t.Fatalf("short code: %d %v", code, m)
+	}
+	now := time.Now()
+	good, err := totp.Generate(e.totpSecret, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if good == "000000" {
+		t.Skip("TOTP code collides with the wrong-code probe")
+	}
+	code, m, _ = e.call("POST", "/v1/requests/"+id+"/approve", e.opTok, map[string]any{"totp_code": good, "operator": "alice"})
+	if code != 200 || m["decision"] != "approved" || m["request_id"] != id {
+		t.Fatalf("approve: %d %v", code, m)
+	}
+	if res := <-done; res.code != 200 || res.body["ok"] != true {
+		t.Fatalf("agent after approval: %d %v", res.code, res.body)
+	}
+	// Deciding twice fails.
+	if code, _, _ := e.call("POST", "/v1/requests/"+id+"/deny", e.opTok, nil); code != 400 {
+		t.Errorf("second decision: %d", code)
+	}
+
+	// A replayed code is refused (replay-guarded verifier).
+	done = use()
+	id2 := waitPending(t, e, 1)[0].(map[string]any)["request_id"].(string)
+	if code, _, _ := e.call("POST", "/v1/requests/"+id2+"/approve", e.opTok, map[string]any{"totp_code": good}); code != 400 {
+		t.Errorf("replayed TOTP accepted: %d", code)
+	}
+	// Deny: the agent gets a 403 and an APPROVAL_DENIED row.
+	code, m, _ = e.call("POST", "/v1/requests/"+id2+"/deny", e.opTok, map[string]any{"reason": "not today", "operator": "alice"})
+	if code != 200 || m["decision"] != "denied" {
+		t.Fatalf("deny: %d %v", code, m)
+	}
+	if res := <-done; res.code != 403 || res.body["error"] != "PolicyDeniedError" || !strings.Contains(fmt.Sprint(res.body["detail"]), "not today") {
+		t.Fatalf("agent after deny: %d %v", res.code, res.body)
+	}
+	if code, _, _ := e.call("POST", "/v1/requests/unknown/approve", e.opTok, nil); code != 400 {
+		t.Errorf("unknown id: %d", code)
+	}
+	rows := e.auditRows("")
+	if !hasAction(rows, "APPROVAL_DENIED") || !hasAction(rows, "HTTP_OPERATOR") {
+		t.Error("approval audit rows missing")
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Milestone 2 tests: Server header stripping and XML policy caching
-// ---------------------------------------------------------------------------
-
-func TestServerHeaderAndDebugStripped(t *testing.T) {
-	ts, _ := setupTestServer(t)
-	defer ts.Close()
-
-	resp, _ := doJSON(t, "GET", ts.URL+"/healthz", "", nil)
-
-	// Verify server metadata headers are stripped (RGT-452)
-	if serverHeader := resp.Header.Get("Server"); serverHeader != "" {
-		t.Errorf("Expected Server header to be empty, got %q", serverHeader)
+// Without --operator-token-file the agent token reaches /v1/requests (Python).
+func TestApprovalOperatorFallbackAndNo2FA(t *testing.T) {
+	e := newEnv(t, envOpts{approval: true, approvalTTL: 30})
+	e.set("prod", "plain", "v", nil)
+	done := make(chan int, 1)
+	go func() {
+		code, _, _ := e.call("POST", "/v1/secrets/prod/plain/use", e.agentTok,
+			map[string]any{"action": "echo", "agent": "bot", "purpose": "p"})
+		done <- code
+	}()
+	id := waitPending(t, e, 1)[0].(map[string]any)["request_id"].(string)
+	if code, m, _ := e.call("POST", "/v1/requests/"+id+"/approve", e.agentTok, nil); code != 200 {
+		t.Fatalf("approve without 2FA: %d %v", code, m)
 	}
-	if poweredBy := resp.Header.Get("X-Powered-By"); poweredBy != "" {
-		t.Errorf("Expected X-Powered-By header to be empty, got %q", poweredBy)
+	if code := <-done; code != 200 {
+		t.Fatalf("use: %d", code)
+	}
+}
+
+// --- D5 transitional plaintext route --------------------------------------
+
+func TestD5PlaintextLeaseRoute(t *testing.T) {
+	e := newEnv(t, envOpts{})
+	e.set("ns", "k", "v1-value", nil)
+	e.set("ns", "other", "v2-value", nil)
+
+	m := e.mustOK("GET", "/v1/secrets?namespace=ns&name=k", nil)
+	s := m["secrets"].([]any)
+	if len(s) != 1 || s[0].(map[string]any)["value"] != "v1-value" || strings.Contains(fmt.Sprint(m), "v2-value") {
+		t.Fatalf("lookup = %v", m)
+	}
+	// audited as a lease and as an HTTP plaintext read
+	rows := e.auditRows("")
+	var read map[string]any
+	for _, r := range rows {
+		if r["action"] == "SECRET_READ" {
+			read = r
+			break
+		}
+	}
+	if read == nil || read["secret_name"] != "k" || read["agent_id"] != "cli" ||
+		!strings.Contains(fmt.Sprint(read["details"]), "Purpose: cli get") {
+		t.Errorf("SECRET_READ row = %v", read)
+	}
+	if !hasAction(rows, "LEASE_GRANTED") {
+		t.Error("no LEASE_GRANTED")
+	}
+	// ABAC applies (agent / purpose from the query)
+	if code, m := e.agent("GET", "/v1/secrets?namespace=ns&name=k&agent=intruder", nil); code != 403 {
+		t.Errorf("intruder: %d %v", code, m)
+	}
+	// missing: empty list
+	if m := e.mustOK("GET", "/v1/secrets?namespace=ns&name=missing", nil); fmt.Sprint(m["secrets"]) != "[]" {
+		t.Errorf("missing = %v", m)
+	}
+	// a non-UTF-8 value cannot be returned as JSON
+	if err := e.stack.Vault.SetSecret(context.Background(), vault.SetSecretRequest{
+		Name: "bin", Namespace: "ns", Agent: "bot", Purpose: "p", Value: []byte{0xff, 0xfe, 0x01},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, m := e.agent("GET", "/v1/secrets?namespace=ns&name=bin", nil); code != 400 {
+		t.Errorf("binary value: %d %v", code, m)
+	}
+}
+
+// --- concurrency (run with -race) -----------------------------------------
+
+func TestConcurrentRequests(t *testing.T) {
+	e := newEnv(t, envOpts{harness: true})
+	var wg sync.WaitGroup
+	errs := make(chan string, 256)
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 5; i++ {
+				name := fmt.Sprintf("k%d-%d", g, i)
+				steps := []struct {
+					method, path string
+					body         any
+				}{
+					{"POST", "/v1/secrets", map[string]any{"name": name, "value": "v", "namespace": "c", "agent": "bot"}},
+					{"GET", "/v1/secrets?namespace=c&agent=bot", nil},
+					{"GET", "/v1/secrets/c/" + name, nil},
+					{"POST", "/v1/secrets/c/" + name + "/use", map[string]any{"action": "echo", "agent": fmt.Sprintf("a%d", g), "purpose": "p"}},
+					{"POST", "/v1/capabilities/execute", map[string]any{"capability": "secrets.echo", "agent_id": "bot", "capability_token": e.sign("bot", "secrets.echo", 1)}},
+					{"GET", "/v1/audit?limit=10", nil},
+				}
+				for _, s := range steps {
+					if code, m, _ := e.call(s.method, s.path, e.agentTok, s.body); code != 200 {
+						errs <- fmt.Sprintf("%s %s: %d %v", s.method, s.path, code, m)
+					}
+				}
+			}
+		}(g)
+	}
+	// A DEK rotation in the middle of the traffic.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if code, m, _ := e.call("POST", "/v1/rotate", e.agentTok, map[string]any{"target": "dek"}); code != 200 {
+			errs <- fmt.Sprintf("rotate: %d %v", code, m)
+		}
+	}()
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	if m := e.mustOK("POST", "/v1/audit/verify", nil); m["ok"] != true {
+		t.Error("chain does not verify after concurrent traffic")
+	}
+}
+
+// --- stack / helpers ------------------------------------------------------
+
+func TestOpenStackErrors(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db := dir + "/v/vault.db"
+	mem := providerstest.NewMemory()
+	cases := map[string]StackOptions{
+		"bad provider":       {DBPath: db, Provider: "nope"},
+		"missing policy":     {DBPath: db, MasterProvider: mem, PolicyFile: dir + "/none.yaml"},
+		"totp w/o approval":  {DBPath: db, MasterProvider: mem, TOTPSecretFile: writeFile(t, dir+"/t", "JBSWY3DPEHPK3PXP")},
+		"empty totp file":    {DBPath: db, MasterProvider: mem, RequireApproval: true, TOTPSecretFile: writeFile(t, dir+"/e", "\n")},
+		"bad totp secret":    {DBPath: db, MasterProvider: mem, RequireApproval: true, TOTPSecretFile: writeFile(t, dir+"/b", "!!!")},
+		"short harness key":  {DBPath: db, MasterProvider: mem, HarnessKeyFile: writeFile(t, dir+"/h", "short")},
+		"missing harness":    {DBPath: db, MasterProvider: mem, HarnessKeyFile: dir + "/nokey"},
+		"bad policy yaml":    {DBPath: db, MasterProvider: mem, PolicyFile: writeFile(t, dir+"/p.yaml", "rules: [")},
+		"unreadable db path": {DBPath: writeFile(t, dir+"/file", "x") + "/vault.db", MasterProvider: mem, KDFParams: testKDF},
+	}
+	for name, o := range cases {
+		o.KDFParams = testKDF
+		if s, err := OpenStack(ctx, o); err == nil {
+			_ = s.Close()
+			t.Errorf("%s: no error", name)
+		}
+	}
+	if _, err := NewProvider("keyring"); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestExpandHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	for in, want := range map[string]string{
+		"~":                 home,
+		"~/.secure-vault/x": home + "/.secure-vault/x",
+		"/abs/path":         "/abs/path",
+		"rel":               "rel",
+		"~user/x":           "~user/x",
+	} {
+		got, err := ExpandHome(in)
+		if err != nil || filepathToSlash(got) != filepathToSlash(want) {
+			t.Errorf("ExpandHome(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+}
+
+func filepathToSlash(p string) string { return strings.ReplaceAll(p, "\\", "/") }
+
+func TestFingerprintMatchesCiphertextHash(t *testing.T) {
+	e := newEnv(t, envOpts{})
+	e.set("default", "k", "v", nil)
+	var ct []byte
+	if err := e.rawDB().QueryRow(
+		"SELECT ciphertext FROM secrets WHERE namespace='default' AND name='k'").Scan(&ct); err != nil {
+		t.Skipf("schema probe: %v", err)
+	}
+	sum := sha256.Sum256(ct)
+	if fp := e.mustOK("GET", "/v1/secrets/default/k", nil)["fingerprint"]; fp != hex.EncodeToString(sum[:])[:8] {
+		t.Errorf("fingerprint %v != sha256(ciphertext)[:8]", fp)
+	}
+}
+
+// --- headers / XML policy stubs (RGT-452, RGT-437) -------------------------
+
+func TestServerHeaderStrippedAndSecurityHeaders(t *testing.T) {
+	e := newEnv(t, envOpts{})
+	_, _, rec := e.call("GET", "/healthz", "", nil)
+	if rec.Header().Get("Server") != "" || rec.Header().Get("X-Powered-By") != "" {
+		t.Errorf("metadata headers leak: %v", rec.Header())
+	}
+	for k, want := range map[string]string{
+		"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
+	} {
+		if rec.Header().Get(k) != want {
+			t.Errorf("%s = %q", k, rec.Header().Get(k))
+		}
 	}
 }
 
 func TestXMLPoliciesCacheDisabled(t *testing.T) {
-	ts, _ := setupTestServer(t)
-	defer ts.Close()
+	e := newEnv(t, envOpts{})
+	for _, path := range []string{"/crossdomain.xml", "/clientaccesspolicy.xml"} {
+		code, _, rec := e.call("GET", path, "", nil)
+		if code != http.StatusNotFound || !strings.Contains(rec.Body.String(), `permitted-cross-domain-policies="none"`) {
+			t.Errorf("%s: %d %s", path, code, rec.Body.String())
+		}
+		for k, want := range map[string]string{
+			"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0",
+		} {
+			if rec.Header().Get(k) != want {
+				t.Errorf("%s %s = %q", path, k, rec.Header().Get(k))
+			}
+		}
+	}
+}
 
-	paths := []string{"/crossdomain.xml", "/clientaccesspolicy.xml"}
-	for _, path := range paths {
-		resp, _ := doJSON(t, "GET", ts.URL+path, "", nil)
-
-		if resp.StatusCode != http.StatusNotFound {
-			t.Errorf("Expected 404 for %s, got %d", path, resp.StatusCode)
-		}
-
-		// Verify Cache-Control directives (RGT-437)
-		if cc := resp.Header.Get("Cache-Control"); cc != "no-store, no-cache, must-revalidate, max-age=0" {
-			t.Errorf("Expected strict Cache-Control for %s, got %q", path, cc)
-		}
-		if pragma := resp.Header.Get("Pragma"); pragma != "no-cache" {
-			t.Errorf("Expected Pragma: no-cache, got %q", pragma)
-		}
-		if expires := resp.Header.Get("Expires"); expires != "0" {
-			t.Errorf("Expected Expires: 0, got %q", expires)
-		}
+func TestTokenIDFromContext(t *testing.T) {
+	e := newEnv(t, envOpts{})
+	var got string
+	mw := NewMiddleware(auth.NewTokenStore(e.dir + "/agent.token"))
+	h := mw.AuthMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got = TokenIDFromContext(r.Context()) }))
+	req := httptest.NewRequest("GET", "/v1/x", nil)
+	req.Header.Set("Authorization", "Bearer "+e.agentTok)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if got != auth.TokenID(e.agentTok) {
+		t.Errorf("token id = %q", got)
 	}
 }
