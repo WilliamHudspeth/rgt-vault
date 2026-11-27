@@ -304,3 +304,20 @@ When you're ready to migrate, start with one capability
 incrementally. The vault will be in a mixed state during
 migration — some callers on the v0.2 path, some on v0.3 — and
 that's fine; the v0.3 model is designed for that.
+
+## Go server: capability tokens are single-use (batch H2, breaking)
+
+`rgt-vault serve --harness-key-file ...` now wraps the token verifier in a replay guard. **A v2 capability
+token is accepted once**, then refused until it expires (`403`, `CAPABILITY_DENIED` with reason
+`token: TokenReplayError`, "capability token already used").
+
+- **Who is affected:** any harness or agent that mints one token and reuses it for several
+  `POST /v1/capabilities/execute` calls within its TTL. Those calls now fail from the second one on.
+- **What to do:** mint a token per call. Two tokens with the same agent, capability, version, bindings
+  and expiry second are the same token (the id is a hash of the claims), so add a context binding
+  that differs per call (for example a request nonce that is also in the payload), or vary the TTL.
+- **When it is consumed:** after the token's agent, capability, version and bindings matched the
+  request. Presenting somebody else's token as your own does not burn it. A request that later fails
+  (policy, rate limit, handler error) has still used the token: mint a new one to retry.
+- **Limits:** the cache is in memory and holds 4096 live ids. It is emptied by a restart (keep TTLs
+  short) and refuses new tokens when it is full of live ids, rather than evicting one.

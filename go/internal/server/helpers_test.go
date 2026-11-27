@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"rgt-vault-server/internal/auth"
@@ -217,10 +218,15 @@ func (e *testEnv) set(ns, name, value string, extra map[string]any) {
 	e.mustOK("POST", "/v1/secrets", body)
 }
 
+// signSeq makes every minted token distinct: a token id is a hash of its
+// claims, so two tokens with the same claims in the same second are the same
+// token, and capability tokens are single-use (batch H2).
+var signSeq atomic.Int64
+
 // sign mints a v2 capability token with the harness key.
 func (e *testEnv) sign(agent, capability string, version int) string {
 	e.t.Helper()
-	tok, err := e.signer.Sign(agent, capability, version, nil, 300)
+	tok, err := e.signer.Sign(agent, capability, version, nil, 300+int(signSeq.Add(1)))
 	if err != nil {
 		e.t.Fatal(err)
 	}

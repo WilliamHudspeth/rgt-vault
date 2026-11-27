@@ -23,6 +23,11 @@ const (
 // returns None). The GET_SECRET_FAILED audit row has been committed.
 var ErrNotFound = errors.New("store: secret not found")
 
+// ErrRequire2FADowngrade is returned by SetSecret when the new version
+// would drop require_2fa from a secret whose newest version has it and the
+// caller did not set SetSecretParams.AllowRequire2FADowngrade.
+var ErrRequire2FADowngrade = errors.New("store: new version would drop require_2fa")
+
 // ErrChecksum is the Go form of Python's ChecksumError: the stored checksum
 // does not match sha256(ciphertext). The GET_SECRET_FAILED audit row has been
 // committed. Errors wrap it with Python's message.
@@ -60,6 +65,11 @@ type SetSecretParams struct {
 	PolicyHash string
 	Note       string
 	Require2FA bool
+	// AllowRequire2FADowngrade lets a version without Require2FA follow a
+	// newest version (of any status, a revoked one included) that had it.
+	// Without it SetSecret refuses that with ErrRequire2FADowngrade, in the
+	// same transaction that would have written the row (no race).
+	AllowRequire2FADowngrade bool
 }
 
 // SetSecret stores a new ACTIVE version of (namespace, name), marking the
@@ -67,16 +77,24 @@ type SetSecretParams struct {
 // the same BEGIN IMMEDIATE transaction (set_secret). It returns the new
 // version number.
 func (s *Store) SetSecret(ctx context.Context, p SetSecretParams) (int64, error) {
+	v, _, err := s.SetSecretChecked(ctx, p)
+	return v, err
+}
+
+// SetSecretChecked is SetSecret that also reports whether the new version
+// dropped require_2fa from the previous newest version (only possible with
+// AllowRequire2FADowngrade).
+func (s *Store) SetSecretChecked(ctx context.Context, p SetSecretParams) (version int64, downgraded bool, err error) {
 	sum := checksum(p.Ciphertext)
 	secretID := p.SecretID
 	if secretID == "" {
-		var err error
-		if secretID, err = newUUID4(); err != nil {
-			return 0, err
+		var uerr error
+		if secretID, uerr = newUUID4(); uerr != nil {
+			return 0, false, uerr
 		}
 	}
 	var next int64
-	err := s.writeTx(ctx, func(tx *sql.Tx) error {
+	err = s.writeTx(ctx, func(tx *sql.Tx) error {
 		// Stamp inside the lock so versions of one name never go back in time.
 		now := audit.PyISOTime(s.now())
 		var existing string
@@ -97,6 +115,20 @@ func (s *Store) SetSecret(ctx context.Context, p SetSecretParams) (int64, error)
 		if err := tx.QueryRowContext(ctx,
 			"SELECT MAX(version) FROM secrets WHERE namespace = ? AND name = ?", p.Namespace, p.Name).Scan(&maxV); err != nil {
 			return err
+		}
+		if maxV.Valid && !p.Require2FA {
+			var prev sql.NullInt64
+			if err := tx.QueryRowContext(ctx,
+				"SELECT require_2fa FROM secrets WHERE namespace = ? AND name = ? AND version = ?",
+				p.Namespace, p.Name, maxV.Int64).Scan(&prev); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if prev.Int64 != 0 {
+				if !p.AllowRequire2FADowngrade {
+					return ErrRequire2FADowngrade
+				}
+				downgraded = true
+			}
 		}
 		next = 1
 		if maxV.Valid {
@@ -120,9 +152,9 @@ func (s *Store) SetSecret(ctx context.Context, p SetSecretParams) (int64, error)
 		})
 	})
 	if err != nil {
-		return 0, fmt.Errorf("store: set secret: %w", err)
+		return 0, false, fmt.Errorf("store: set secret: %w", err)
 	}
-	return next, nil
+	return next, downgraded, nil
 }
 
 // GetSecret returns the ciphertext and dek_version of the newest ACTIVE

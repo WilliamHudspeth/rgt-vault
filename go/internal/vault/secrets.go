@@ -32,6 +32,13 @@ type SetSecretRequest struct {
 	// Require2FA makes the approval gate demand a TOTP code before any agent
 	// can lease the secret.
 	Require2FA bool
+	// AllowRequire2FADowngrade lets this write drop require_2fa from a
+	// secret that had it (batch H2). Without it such a write is denied and
+	// audited (REQUIRE_2FA_DOWNGRADE_DENIED): a caller that can merely write
+	// must not be able to strip the second factor from a secret. The server
+	// sets it only for tokens with the operator scope; a successful
+	// downgrade is audited (REQUIRE_2FA_DOWNGRADED).
+	AllowRequire2FADowngrade bool
 }
 
 // LeaseRequest are the arguments of Lease (python lease_secret / execute).
@@ -117,16 +124,31 @@ func (v *Vault) setSecret(ctx context.Context, req SetSecretRequest) (needRotate
 		if err != nil {
 			return err
 		}
-		if _, err := v.store.SetSecret(ctx, store.SetSecretParams{
-			Namespace:  req.Namespace,
-			Name:       name,
-			Ciphertext: ct,
-			DEKVersion: 1,
-			PolicyHash: v.policyHash,
-			Note:       req.Note,
-			Require2FA: req.Require2FA,
-		}); err != nil {
+		_, downgraded, err := v.store.SetSecretChecked(ctx, store.SetSecretParams{
+			Namespace:                req.Namespace,
+			Name:                     name,
+			Ciphertext:               ct,
+			DEKVersion:               1,
+			PolicyHash:               v.policyHash,
+			Note:                     req.Note,
+			Require2FA:               req.Require2FA,
+			AllowRequire2FADowngrade: req.AllowRequire2FADowngrade,
+		})
+		if errors.Is(err, store.ErrRequire2FADowngrade) {
+			if aerr := v.logAudit(ctx, "REQUIRE_2FA_DOWNGRADE_DENIED", store.Name(name),
+				fmt.Sprintf("Agent: %s, Namespace: %s, Reason: the secret requires 2FA; dropping it needs the operator scope", req.Agent, req.Namespace)); aerr != nil {
+				return aerr
+			}
+			return deniedErr("Agent '%s' may not drop require_2fa from '%s' (%s): a new version must keep it (operator scope required)", req.Agent, name, req.Namespace)
+		}
+		if err != nil {
 			return err
+		}
+		if downgraded {
+			if err := v.logAudit(ctx, "REQUIRE_2FA_DOWNGRADED", store.Name(name),
+				fmt.Sprintf("Agent: %s, Namespace: %s, Reason: operator dropped require_2fa", req.Agent, req.Namespace)); err != nil {
+				return err
+			}
 		}
 		count, nbytes, err := v.store.IncrementDEKUsage(ctx, int64(len(req.Value)))
 		if err != nil {

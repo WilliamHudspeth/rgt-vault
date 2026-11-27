@@ -55,6 +55,14 @@ type Handlers struct {
 	// Broker serves /v1/requests*. Nil means no live approval: those
 	// endpoints answer 409, as in Python.
 	Broker *approval.Broker
+	// Notifier receives approval security events (bad and replayed TOTP
+	// codes, lockouts, separation-of-duties refusals). Nil logs a warning.
+	Notifier approval.Notifier
+
+	// gated is the set of operations that wait for approval (SetGatedOps).
+	gated gatedOps
+	// events coalesces repeated security events (approvalflow.go).
+	events eventLimiter
 }
 
 func (h *Handlers) capabilityList() []*capabilities.Spec {
@@ -97,7 +105,10 @@ func (h *Handlers) AuditHTTP(next http.Handler) http.Handler {
 			writeError(w, r, err)
 			return
 		}
-		next.ServeHTTP(w, r)
+		// Pin the caller for the approval broker: a request made with this
+		// token can never be approved with it (separation of duties).
+		ctx := approval.WithRequester(r.Context(), approval.Identity{TokenID: p.TokenID, Agent: p.Agent})
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -298,6 +309,21 @@ func (h *Handlers) SetSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ns := deref(req.Namespace, vault.DefaultNamespace)
+	p, _ := PrincipalFromContext(r.Context())
+	if h.gated[approval.OpSet] {
+		// The operator approves with a TOTP code when the secret already
+		// requires 2FA or this version asks for it.
+		need2FA := deref(req.Require2FA, false)
+		if cur, err := h.Vault.Requires2FA(r.Context(), ns, *req.Name); err != nil {
+			writeError(w, r, err)
+			return
+		} else if cur {
+			need2FA = true
+		}
+		if !h.gate(w, r, approval.OpSet, agent, ns, *req.Name, deref(req.Purpose, ""), need2FA, deref(req.Purpose, ""), "write") {
+			return
+		}
+	}
 	value := []byte(*req.Value)
 	err := h.Vault.SetSecret(r.Context(), vault.SetSecretRequest{
 		Name:       *req.Name,
@@ -307,6 +333,10 @@ func (h *Handlers) SetSecret(w http.ResponseWriter, r *http.Request) {
 		Value:      value,
 		Note:       deref(req.Note, ""),
 		Require2FA: deref(req.Require2FA, false),
+		// Only a per-agent token that carries the operator scope may drop
+		// require_2fa from a secret. The legacy shared token never can: it
+		// holds every scope, so the scope proves nothing there.
+		AllowRequire2FADowngrade: p.Has(auth.ScopeOperator) && !p.Legacy,
 	})
 	for i := range value {
 		value[i] = 0
@@ -588,6 +618,16 @@ func (h *Handlers) RevokeSecret(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if h.gated[approval.OpRevoke] {
+		cur, err := h.Vault.Requires2FA(r.Context(), namespace, name)
+		if err != nil {
+			writeError(w, r, err)
+			return
+		}
+		if !h.gate(w, r, approval.OpRevoke, agent, namespace, name, "", cur, "*", "revoke") {
+			return
+		}
+	}
 	if err := h.Vault.RevokeSecret(r.Context(), namespace, name, agent); err != nil {
 		writeError(w, r, err)
 		return
@@ -613,6 +653,19 @@ func (h *Handlers) Rotate(w http.ResponseWriter, r *http.Request) {
 	if e := required(field("target", req.Target)); e != nil {
 		writeError(w, r, e)
 		return
+	}
+	if *req.Target == "master" || *req.Target == "dek" {
+		p, _ := PrincipalFromContext(r.Context())
+		agent := p.Agent
+		if agent == "" {
+			agent = vault.SystemAgent
+		}
+		// Rotation is operator-only; the approver must be a DIFFERENT
+		// operator token. 2FA applies when a TOTP verifier is configured.
+		need2FA := h.Broker != nil && h.Broker.HasTOTP()
+		if !h.gate(w, r, approval.OpRotate, agent, "_admin", *req.Target, "rotate_"+*req.Target, need2FA, "", "") {
+			return
+		}
 	}
 	var err error
 	switch *req.Target {
@@ -851,10 +904,14 @@ func (h *Handlers) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if err := h.Broker.Approve(id, deref(req.TOTPCode, ""), operator); err != nil {
-		writeError(w, r, err) // ApprovalError -> 400
+	p, _ := PrincipalFromContext(r.Context())
+	who := approval.Approver{Name: operator, Identity: approval.Identity{TokenID: p.TokenID, Agent: p.Agent}}
+	if err := h.Broker.ApproveBy(id, deref(req.TOTPCode, ""), who); err != nil {
+		writeError(w, r, h.reportApprovalFailure(w, r, p, id, err)) // ApprovalError -> 400/403/429
 		return
 	}
+	h.auditEvent(r, EventApprovalApproved, sql.NullString{},
+		"request="+safeID(id)+" token="+p.TokenID+" ip="+ClientIP(r), agentCol(p))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "request_id": id, "decision": "approved"})
 }
 

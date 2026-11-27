@@ -58,7 +58,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"rgt-vault-server/internal/approval"
 	"rgt-vault-server/internal/auth"
+	"rgt-vault-server/internal/hooks"
 	"rgt-vault-server/internal/kdf"
 	"rgt-vault-server/internal/server"
 	"rgt-vault-server/internal/server/handlers"
@@ -205,6 +207,15 @@ type Flags struct {
 	ApprovalTimeout     time.Duration
 	HarnessKeyFile      string
 	AllowPrivateNetwork bool
+
+	// RequireApprovalFor lists mutating operations (set, rotate, revoke,
+	// all) that also wait for operator approval (batch H2; default none).
+	RequireApprovalFor string
+	// SecurityWebhookURL receives approval security events as JSON (bad or
+	// replayed TOTP codes, lockouts, self-approval attempts), in addition to
+	// the audit row and the log line every event always gets.
+	SecurityWebhookURL         string
+	SecurityWebhookAllowRemote bool
 }
 
 // config is the resolved server configuration.
@@ -230,7 +241,15 @@ type config struct {
 	approvalTimeout     time.Duration
 	harnessKeyFile      string
 	allowPrivateNetwork bool
+
+	gatedOps           []approval.GatedOp
+	securityWebhook    string
+	securityWebhookRem bool
 }
+
+// approvalActive reports whether an approval broker will run: reads
+// (--require-approval) or any gated mutating operation.
+func (c config) approvalActive() bool { return c.requireApproval || len(c.gatedOps) > 0 }
 
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
@@ -266,6 +285,16 @@ func parseConfig(f Flags, vf *VaultFlags, getenv func(string) string) (config, e
 		harnessKeyFile:      firstNonEmpty(f.HarnessKeyFile, getenv("RGT_VAULT_HARNESS_KEY_FILE")),
 		allowPrivateNetwork: f.AllowPrivateNetwork,
 	}
+	gated, err := approval.ParseGatedOps(firstNonEmpty(f.RequireApprovalFor, getenv("RGT_VAULT_REQUIRE_APPROVAL_FOR")))
+	if err != nil {
+		return config{}, err
+	}
+	cfg.gatedOps = gated
+	cfg.securityWebhook = firstNonEmpty(f.SecurityWebhookURL, getenv("RGT_VAULT_SECURITY_WEBHOOK_URL"))
+	cfg.securityWebhookRem = f.SecurityWebhookAllowRemote
+	if cfg.securityWebhookRem && cfg.securityWebhook == "" {
+		return config{}, errors.New("--security-webhook-allow-remote needs --security-webhook-url")
+	}
 	if cfg.legacyPrivileged && !cfg.legacy {
 		return config{}, errors.New("--legacy-allow-privileged-routes needs --legacy-shared-token")
 	}
@@ -289,15 +318,15 @@ func parseConfig(f Flags, vf *VaultFlags, getenv func(string) string) (config, e
 			return cfg, errors.New("no token store path: home directory unknown, pass --token-store")
 		}
 	}
-	if cfg.legacy && cfg.requireApproval && cfg.operatorTokenFile == "" {
+	if cfg.legacy && cfg.approvalActive() && cfg.operatorTokenFile == "" {
 		// Without a separate operator token the approve/deny endpoints would
 		// accept the AGENT token, so any agent could approve its own request.
-		return config{}, errors.New("--require-approval needs --operator-token-file (or RGT_VAULT_OPERATOR_TOKEN_FILE): " +
+		return config{}, errors.New("--require-approval / --require-approval-for need --operator-token-file (or RGT_VAULT_OPERATOR_TOKEN_FILE): " +
 			"without a separate operator token an agent could approve its own request. " +
 			"`rgt-vault init` creates one at " + DefaultOperatorTokenPath())
 	}
-	if cfg.totpSecretFile != "" && !cfg.requireApproval {
-		return config{}, errors.New("--totp-secret-file needs --require-approval")
+	if cfg.totpSecretFile != "" && !cfg.approvalActive() {
+		return config{}, errors.New("--totp-secret-file needs --require-approval or --require-approval-for")
 	}
 	if p, err := strconv.Atoi(cfg.port); err != nil || p < 0 || p > 65535 {
 		return config{}, fmt.Errorf("invalid port %q", cfg.port)
@@ -319,7 +348,7 @@ func parseConfig(f Flags, vf *VaultFlags, getenv func(string) string) (config, e
 // answered.
 func writeTimeout(cfg config) time.Duration {
 	const base = 60 * time.Second
-	if cfg.requireApproval {
+	if cfg.approvalActive() {
 		return cfg.approvalTimeout + base
 	}
 	return base
@@ -382,6 +411,12 @@ func NewCommand(env Env, vf *VaultFlags) *cobra.Command {
 	fs.BoolVar(&f.RequireApproval, "require-approval", false, "require live operator approval for every unseal")
 	fs.StringVar(&f.TOTPSecretFile, "totp-secret-file", "", "base32 TOTP secret for 2FA approvals (env RGT_VAULT_TOTP_SECRET_FILE; see enroll-2fa)")
 	fs.DurationVar(&f.ApprovalTimeout, "approval-timeout", DefaultApprovalTimeout, "how long an approval request waits before it is denied")
+	fs.StringVar(&f.RequireApprovalFor, "require-approval-for", "", "also require live operator approval for these operations: comma list of set, rotate, revoke or all (env RGT_VAULT_REQUIRE_APPROVAL_FOR; default none; the approver must be another token than the requester)")
+	fs.StringVar(&f.SecurityWebhookURL, "security-webhook-url", "", "DEPRECATED, use env RGT_VAULT_SECURITY_WEBHOOK_URL: POST approval security events (bad/replayed TOTP codes, lockouts, self-approval) to this http(s) URL ( loopback only unless --security-webhook-allow-remote)")
+	fs.BoolVar(&f.SecurityWebhookAllowRemote, "security-webhook-allow-remote", false, "let the security webhook reach a non-loopback host")
+	// The URL may carry a credential and a command-line flag is visible in
+	// `ps`: the environment variable is the supported way.
+	_ = fs.MarkDeprecated("security-webhook-url", "put the URL in the environment variable RGT_VAULT_SECURITY_WEBHOOK_URL: a command line is visible to other users in `ps`")
 	fs.StringVar(&f.HarnessKeyFile, "harness-key-file", "", "HMAC key for v2 capability tokens (env RGT_VAULT_HARNESS_KEY_FILE)")
 	fs.BoolVar(&f.AllowPrivateNetwork, "allow-private-network", false, "let built-in HTTP actions reach loopback/private addresses (SSRF risk)")
 	return cmd
@@ -529,11 +564,22 @@ func Run(ctx context.Context, cfg config, env Env) error {
 	if err != nil {
 		return err
 	}
+	// Approval security events always reach the log; a webhook is optional.
+	var notifier approval.Notifier = approval.LogNotifier{Logf: logger.Printf}
+	if cfg.securityWebhook != "" {
+		wh, err := hooks.NewEventWebhook(cfg.securityWebhook, cfg.securityWebhookRem)
+		if err != nil {
+			return err
+		}
+		notifier = approval.Multi{notifier, wh}
+	}
 	stack, err := server.OpenStack(ctx, server.StackOptions{
 		DBPath:              cfg.vault.DB,
 		PolicyFile:          cfg.vault.Policy,
 		MasterProvider:      prov,
 		RequireApproval:     cfg.requireApproval,
+		RequireApprovalFor:  cfg.gatedOps,
+		Notifier:            notifier,
 		TOTPSecretFile:      cfg.totpSecretFile,
 		ApprovalTimeout:     cfg.approvalTimeout,
 		HarnessKeyFile:      cfg.harnessKeyFile,
@@ -562,6 +608,8 @@ func Run(ctx context.Context, cfg config, env Env) error {
 		AgentTokens:            authn.agent,
 		OperatorTokens:         authn.operator,
 		Broker:                 stack.Broker,
+		GatedOps:               stack.GatedOps,
+		Notifier:               stack.Notifier,
 		Actions:                stack.Actions,
 		Capabilities:           stack.Capabilities,
 		AllowedOrigins:         cfg.origins,

@@ -423,6 +423,6 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 		initCmd, serveCmd, statusCmd, mcpCmd, tuiCmd,
 		newEnroll2FACmd(&vf, stdout), newExportCmd(&vf, stdout), newImportCmd(&vf, stdin, stdout),
 		newMigrateCmd(&vf, stdout), newProviderCmd(stdin, stdout),
-		newCryptoAuditCmd(stdout), newTokenCmd(stdin, stdout))
+		newCryptoAuditCmd(stdout), newTokenCmd(&vf, stdin, stdout))
 	return rootCmd
 }

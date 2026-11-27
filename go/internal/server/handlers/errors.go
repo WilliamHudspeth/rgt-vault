@@ -78,6 +78,13 @@ var statusRules = []statusRule{
 	{vault.ErrValidation, http.StatusBadRequest, "ValidationError"},
 	{capabilities.ErrActionExecution, http.StatusInternalServerError, "ActionExecutionError"},
 	{actions.ErrActionExecution, http.StatusInternalServerError, "ActionExecutionError"},
+	// Hardening kinds before the ErrApproval catch-all (H2): a request
+	// denied for bad codes and a refused self-approval are 403, a throttled
+	// operator 429.
+	{approval.ErrTooManyAttempts, http.StatusForbidden, "ApprovalError"},
+	{approval.ErrSeparationOfDuties, http.StatusForbidden, "SeparationOfDutiesError"},
+	{approval.ErrThrottled, http.StatusTooManyRequests, "ApprovalThrottled"},
+	{approval.ErrTooManyPending, http.StatusTooManyRequests, "ApprovalQueueFull"},
 	{approval.ErrApproval, http.StatusBadRequest, "ApprovalError"},
 }
 

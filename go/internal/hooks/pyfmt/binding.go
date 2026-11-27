@@ -77,6 +77,8 @@ func TokenErrorClass(err error) string {
 		return "TokenVersionError"
 	case errors.Is(err, captoken.ErrBinding):
 		return "TokenBindingError"
+	case errors.Is(err, captoken.ErrReplay):
+		return "TokenReplayError"
 	}
 	return "TokenError"
 }

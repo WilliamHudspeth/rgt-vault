@@ -27,7 +27,11 @@ func TestRequire2FAOnVersionLease(t *testing.T) {
 	if err := v.SetSecret(ctx, SetSecretRequest{Name: "root", Namespace: "prod", Agent: SystemAgent, Value: []byte("v1"), Require2FA: true}); err != nil {
 		t.Fatal(err)
 	}
-	set(t, v, "prod", "root", "v2") // successor without 2FA
+	// A successor without 2FA: only possible with the explicit downgrade
+	// permission (batch H2).
+	if err := v.SetSecret(ctx, SetSecretRequest{Name: "root", Namespace: "prod", Agent: SystemAgent, Value: []byte("v2"), AllowRequire2FADowngrade: true}); err != nil {
+		t.Fatal(err)
+	}
 	if err := v.SetSecret(ctx, SetSecretRequest{Name: "gone", Namespace: "prod", Agent: SystemAgent, Value: []byte("g"), Require2FA: true}); err != nil {
 		t.Fatal(err)
 	}

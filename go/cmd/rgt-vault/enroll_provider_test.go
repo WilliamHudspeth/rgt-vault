@@ -28,7 +28,7 @@ func TestEnroll2FA(t *testing.T) {
 		t.Errorf("non-terminal output leaked or lacks the notice:\n%s", quiet)
 	}
 	// --show-secret prints it (the secret of this run replaces the file's: --force).
-	code, stdout, stderr := runCLI(t, "", "enroll-2fa", "--out", out, "--account", "alice", "--show-secret", "--force")
+	code, stdout, stderr := runCLI(t, "", "enroll-2fa", "--out", out, "--account", "alice", "--show-secret", "--force", "--i-am-offline-operator")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
@@ -66,7 +66,7 @@ func TestEnroll2FAForceIsAudited(t *testing.T) {
 	e.mustCLI("", "enroll-2fa", "--out", out)
 	old := mustRead(t, out)
 
-	e.mustCLI("", "enroll-2fa", "--out", out, "--force")
+	e.mustCLI("", "enroll-2fa", "--out", out, "--force", "--i-am-offline-operator")
 	if string(mustRead(t, out)) == string(old) {
 		t.Error("--force kept the old secret")
 	}
@@ -93,14 +93,14 @@ func TestEnroll2FAForceIsAudited(t *testing.T) {
 	// Without a vault there is nothing to audit into: a notice, not a failure.
 	solo := filepath.Join(t.TempDir(), "totp")
 	_ = os.WriteFile(solo, []byte("OLD\n"), 0o600)
-	code, _, stderr := runCLI(t, "", "--db", filepath.Join(t.TempDir(), "no", "vault.db"), "enroll-2fa", "--out", solo, "--force")
+	code, _, stderr := runCLI(t, "", "--db", filepath.Join(t.TempDir(), "no", "vault.db"), "enroll-2fa", "--out", solo, "--force", "--i-am-offline-operator")
 	if code != 0 || !strings.Contains(stderr, "not audited") {
 		t.Errorf("no vault: exit %d err %q", code, stderr)
 	}
 	// A vault that exists but cannot be opened blocks the replacement.
 	useProvider(t, providerstest.NewMemory()) // wrong master secret
 	before := mustRead(t, out)
-	code, _, stderr = e.cli("", "enroll-2fa", "--out", out, "--force")
+	code, _, stderr = e.cli("", "enroll-2fa", "--out", out, "--force", "--i-am-offline-operator")
 	if code != 1 || !strings.Contains(stderr, "cannot record it in the audit log") {
 		t.Errorf("unopenable vault: exit %d err %q", code, stderr)
 	}

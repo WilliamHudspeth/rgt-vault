@@ -101,6 +101,20 @@ func (o *tokenOut) finish(out io.Writer, token string, commitErr error) error {
 	return err
 }
 
+// auditOrUndo records a token event; when the audit row cannot be written
+// although a vault exists, the new token is revoked again so that no active
+// credential is unaudited, and the error says so.
+func auditOrUndo(cmd *cobra.Command, vf *servecmd.VaultFlags, st *auth.Store, id, event string, info auth.TokenInfo, extra string) error {
+	err := (tokenAuditor{vf: vf, stderr: cmd.ErrOrStderr()}).record(cmd.Context(), event, info, extra)
+	if err == nil {
+		return nil
+	}
+	if _, rerr := st.Revoke(id); rerr != nil {
+		return fmt.Errorf("%w; the new token %s could not be revoked either: %v", err, id, rerr)
+	}
+	return fmt.Errorf("%w; the new token %s was revoked again", err, id)
+}
+
 func describe(info auth.TokenInfo) string {
 	exp := "never"
 	if info.ExpiresAt != nil {
@@ -117,7 +131,7 @@ func joinScopes(sc []auth.Scope) string {
 	return strings.Join(parts, ",")
 }
 
-func newTokenCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
+func newTokenCmd(vf *servecmd.VaultFlags, stdin io.Reader, stdout io.Writer) *cobra.Command {
 	var storeFlag string
 	cmd := &cobra.Command{
 		Use:   "token",
@@ -159,6 +173,9 @@ func newTokenCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 				return err
 			}
 			tok, info, err := st.Mint(auth.MintOptions{Agent: mintAgent, Scopes: scopes, TTL: mintTTL, BeforeCommit: to.hook()})
+			if err == nil {
+				err = auditOrUndo(cmd, vf, st, info.ID, auditTokenMinted, info, "")
+			}
 			if err == nil {
 				fmt.Fprintln(stdout, "minted "+describe(info))
 			}
@@ -223,6 +240,12 @@ func newTokenCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Revoking is the safe direction: if the row cannot be written
+			// the revocation stands and the error is reported.
+			if aerr := (tokenAuditor{vf: vf, stderr: cmd.ErrOrStderr()}).record(cmd.Context(), auditTokenRevoked, info, ""); aerr != nil {
+				fmt.Fprintln(stdout, "revoked "+describe(info))
+				return aerr
+			}
 			fmt.Fprintln(stdout, "revoked "+describe(info))
 			return nil
 		},
@@ -245,6 +268,10 @@ func newTokenCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 				return err
 			}
 			tok, info, err := st.RotateWith(args[0], rotTTL, to.hook())
+			if err == nil {
+				// A failed audit row revokes the NEW token; the old one is already gone.
+				err = auditOrUndo(cmd, vf, st, info.ID, auditTokenRotated, info, "replaces="+args[0])
+			}
 			if err == nil {
 				fmt.Fprintln(stdout, "rotated "+args[0]+" -> "+describe(info))
 			}
@@ -287,6 +314,9 @@ func newTokenCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 			}
 			info, err := st.Import(string(b), auth.MintOptions{Agent: impAgent, Scopes: scopes, TTL: impTTL})
 			if err != nil {
+				return err
+			}
+			if err := auditOrUndo(cmd, vf, st, info.ID, auditTokenImported, info, ""); err != nil {
 				return err
 			}
 			fmt.Fprintln(stdout, "imported "+describe(info))

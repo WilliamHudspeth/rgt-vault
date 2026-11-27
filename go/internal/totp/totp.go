@@ -23,8 +23,14 @@ import (
 	"crypto/subtle"
 	"encoding/base32"
 	"encoding/binary"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
+	"io/fs"
+	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,6 +57,7 @@ type params struct {
 	algorithm string
 	window    int
 	issuer    string
+	stateFile string
 }
 
 func defaults() params {
@@ -76,6 +83,14 @@ func WithWindow(steps int) Option { return func(p *params) { p.window = steps } 
 
 // WithIssuer sets the issuer label used by ProvisioningURI (default "rgt-vault").
 func WithIssuer(issuer string) Option { return func(p *params) { p.issuer = issuer } }
+
+// WithStateFile makes a ReplayGuardedVerifier remember the last accepted time
+// step across restarts: the step is written (atomically, 0600) before a code
+// is accepted, and loaded at construction, so a restart cannot reopen the
+// replay window of a code that was already used (RGT-510). The file also
+// carries a fingerprint of the secret: state of a replaced secret is ignored.
+// If the state cannot be written, codes are refused (fail closed).
+func WithStateFile(path string) Option { return func(p *params) { p.stateFile = path } }
 
 func resolve(opts []Option) (params, error) {
 	p := defaults()
@@ -241,6 +256,32 @@ func Verify(secret, code string, t time.Time, opts ...Option) bool {
 	return match == 1
 }
 
+// Result is the outcome of a replay-guarded verification. Telling a
+// replayed code from a wrong one lets the caller audit and notify a reuse
+// (ASVS 2.8.4 / RGT-312) instead of treating it as an ordinary typo.
+type Result int
+
+const (
+	// ResultInvalid: the code is malformed or matches no step in the window.
+	ResultInvalid Result = iota
+	// ResultOK: the code was valid and its step is now consumed.
+	ResultOK
+	// ResultReplay: the code matches a step in the window that was already
+	// consumed (or is older than the last accepted step): a reuse.
+	ResultReplay
+)
+
+// String returns "ok", "invalid" or "replay".
+func (r Result) String() string {
+	switch r {
+	case ResultOK:
+		return "ok"
+	case ResultReplay:
+		return "replay"
+	}
+	return "invalid"
+}
+
 // ReplayGuardedVerifier verifies TOTP codes and accepts each time step at
 // most once: it remembers the counter of the last accepted code and rejects
 // any code whose counter is <= that, so one observed code cannot approve
@@ -264,7 +305,71 @@ func NewReplayGuardedVerifier(secret string, opts ...Option) (*ReplayGuardedVeri
 	if err != nil {
 		return nil, err
 	}
-	return &ReplayGuardedVerifier{key: key, p: p, lastCounter: -1}, nil
+	v := &ReplayGuardedVerifier{key: key, p: p, lastCounter: -1}
+	if p.stateFile != "" {
+		if err := v.loadState(); err != nil {
+			return nil, err
+		}
+	}
+	return v, nil
+}
+
+// keyFingerprint ties the state file to this secret.
+func (v *ReplayGuardedVerifier) keyFingerprint() string {
+	sum := sha256.Sum256(v.key)
+	return hex.EncodeToString(sum[:4])
+}
+
+// loadState reads the persisted step (if any) and proves the state file is
+// writable by writing it back.
+func (v *ReplayGuardedVerifier) loadState() error {
+	b, err := os.ReadFile(v.p.stateFile)
+	switch {
+	case err == nil:
+		f := strings.Fields(string(b))
+		if len(f) != 3 || f[0] != "v1" {
+			return fmt.Errorf("totp: state file %s is corrupt (delete it only if you know no code was used in the last minute)", v.p.stateFile)
+		}
+		n, perr := strconv.ParseInt(f[2], 10, 64)
+		if perr != nil {
+			return fmt.Errorf("totp: state file %s is corrupt", v.p.stateFile)
+		}
+		if f[1] == v.keyFingerprint() {
+			v.lastCounter = n
+		}
+	case !errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("totp: read state file: %w", err)
+	}
+	return v.persist(v.lastCounter)
+}
+
+// persist writes the step atomically with mode 0600 (a private temp file in
+// the same directory, then a rename).
+func (v *ReplayGuardedVerifier) persist(counter int64) error {
+	if v.p.stateFile == "" {
+		return nil
+	}
+	dir := filepath.Dir(v.p.stateFile)
+	tmp, err := os.CreateTemp(dir, ".totp-state-*")
+	if err != nil {
+		return fmt.Errorf("totp: write state file: %w", err)
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	_, werr := fmt.Fprintf(tmp, "v1 %s %d\n", v.keyFingerprint(), counter)
+	if werr == nil {
+		werr = tmp.Sync()
+	}
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return fmt.Errorf("totp: write state file: %w", werr)
+	}
+	if err := os.Rename(name, v.p.stateFile); err != nil {
+		return fmt.Errorf("totp: write state file: %w", err)
+	}
+	return nil
 }
 
 // Verify checks code against the current time. It has the signature the
@@ -273,32 +378,62 @@ func (v *ReplayGuardedVerifier) Verify(code string) bool { return v.VerifyAt(cod
 
 // VerifyAt checks code against time t and, on success, consumes its step.
 func (v *ReplayGuardedVerifier) VerifyAt(code string, t time.Time) bool {
+	return v.VerifyResultAt(code, t) == ResultOK
+}
+
+// VerifyResult is Verify returning the distinguishing Result.
+func (v *ReplayGuardedVerifier) VerifyResult(code string) Result {
+	return v.VerifyResultAt(code, time.Now())
+}
+
+// VerifyResultAt checks code against time t. On ResultOK the step is
+// consumed; ResultReplay means the code is genuine for a step that was
+// already used (or is older than the last accepted step) and is refused.
+func (v *ReplayGuardedVerifier) VerifyResultAt(code string, t time.Time) Result {
 	code, ok := normalizeCode(code)
 	if !ok {
-		return false
+		return ResultInvalid
 	}
 	base := stepAt(t, v.p.period)
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	matched := int64(-1)
+	replayed := false
 	for off := -v.p.window; off <= v.p.window; off++ {
 		c := base + int64(off)
-		if c < 0 || c <= v.lastCounter {
-			continue // negative, already consumed or older: no replay
+		if c < 0 {
+			continue
 		}
 		cand, err := HOTP(v.key, uint64(c), v.p.digits, v.p.algorithm)
 		if err != nil {
-			return false
+			return ResultInvalid
 		}
-		if subtle.ConstantTimeCompare([]byte(cand), []byte(code)) == 1 && matched < 0 {
-			matched = c // keep scanning: no early exit on the secret-dependent branch
+		// Every candidate is compared, in constant time, whether or not its
+		// step was already consumed: no early exit on a secret-dependent
+		// branch.
+		if subtle.ConstantTimeCompare([]byte(cand), []byte(code)) != 1 {
+			continue
+		}
+		if c <= v.lastCounter {
+			replayed = true
+		} else if matched < 0 {
+			matched = c
 		}
 	}
 	if matched < 0 {
-		return false
+		if replayed {
+			return ResultReplay
+		}
+		return ResultInvalid
+	}
+	// Persist BEFORE accepting: if the step cannot be recorded, the code is
+	// refused rather than risk a replay after a restart.
+	if err := v.persist(matched); err != nil {
+		log.Printf("ERROR: %v: refusing the TOTP code (fail closed)", err)
+		return ResultInvalid
 	}
 	v.lastCounter = matched
-	return true
+	return ResultOK
 }
 
 // pyQuote mirrors urllib.parse.quote(s) with its default safe="/":
