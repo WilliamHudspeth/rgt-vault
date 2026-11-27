@@ -156,3 +156,89 @@ func TestEventWebhookDeliverSync(t *testing.T) {
 		t.Fatalf("500 = %v", err)
 	}
 }
+
+// A slow receiver plus a flood of ordinary events must not hide a lockout.
+func TestEventWebhookReservesCapacityForCriticalEvents(t *testing.T) {
+	release := make(chan struct{})
+	var mu sync.Mutex
+	var kinds []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		mu.Lock()
+		kinds = append(kinds, fmt.Sprint(m["event"]))
+		mu.Unlock()
+		<-release
+	}))
+	defer srv.Close()
+	w, _ := NewEventWebhook(srv.URL, false, WithEventTimeout(10*time.Second))
+	dropped := map[string]int{}
+	var dmu sync.Mutex
+	w.logf = func(f string, a ...any) {
+		if strings.Contains(f, "dropped") {
+			dmu.Lock()
+			dropped[fmt.Sprint(a[0])]++
+			dmu.Unlock()
+		}
+	}
+	for i := 0; i < 100; i++ { // the flood
+		w.Notify(context.Background(), approval.Event{Kind: approval.EventBadCode})
+	}
+	for _, k := range []approval.EventKind{approval.EventLockout, approval.EventAutoDenied, approval.EventSeparation} {
+		w.Notify(context.Background(), approval.Event{Kind: k})
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(kinds)
+		mu.Unlock()
+		if n >= maxEventsInFlight+3 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(release)
+	mu.Lock()
+	defer mu.Unlock()
+	got := map[string]int{}
+	for _, k := range kinds {
+		got[k]++
+	}
+	for _, k := range []string{"APPROVAL_LOCKOUT", "APPROVAL_AUTO_DENIED", "APPROVAL_SOD_DENIED"} {
+		if got[k] != 1 {
+			t.Errorf("critical event %s delivered %d times (all kinds: %v)", k, got[k], got)
+		}
+	}
+	dmu.Lock()
+	defer dmu.Unlock()
+	if dropped["APPROVAL_LOCKOUT"]+dropped["APPROVAL_AUTO_DENIED"]+dropped["APPROVAL_SOD_DENIED"] != 0 {
+		t.Errorf("critical events were dropped: %v", dropped)
+	}
+	if dropped["APPROVAL_BAD_CODE"] != 100-maxEventsInFlight {
+		t.Errorf("ordinary drops = %d, want %d", dropped["APPROVAL_BAD_CODE"], 100-maxEventsInFlight)
+	}
+}
+
+// The dial-time guard is what keeps the webhook on loopback: without
+// allowRemote a private address is refused by netguard.
+func TestEventWebhookRemoteRefusedWithoutAllowRemote(t *testing.T) {
+	w, _ := NewEventWebhook("http://10.0.0.5:9/", false, WithEventTimeout(time.Second))
+	err := w.Deliver(context.Background(), approval.Event{Kind: approval.EventBadCode})
+	if err == nil || !strings.Contains(err.Error(), "netguard") {
+		t.Fatalf("allowRemote=false to a private address: %v", err)
+	}
+	// The cloud metadata address is refused even WITH allowRemote.
+	w2, _ := NewEventWebhook("http://169.254.169.254/latest/meta-data/", true, WithEventTimeout(time.Second))
+	err = w2.Deliver(context.Background(), approval.Event{Kind: approval.EventBadCode})
+	if err == nil || !strings.Contains(err.Error(), "netguard") {
+		t.Fatalf("metadata address with allowRemote: %v", err)
+	}
+	// allowRemote lifts the loopback-only rule (the dial then fails or
+	// times out on its own, but not in netguard).
+	w3, _ := NewEventWebhook("http://10.255.255.1:9/", true, WithEventTimeout(300*time.Millisecond))
+	err = w3.Deliver(context.Background(), approval.Event{Kind: approval.EventBadCode})
+	if err != nil && strings.Contains(err.Error(), "netguard") {
+		t.Fatalf("allowRemote=true was still refused by netguard: %v", err)
+	}
+}

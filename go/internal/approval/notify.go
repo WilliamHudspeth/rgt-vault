@@ -25,11 +25,25 @@ const (
 	EventThrottled EventKind = "APPROVAL_THROTTLED"
 	// EventSeparation: the requesting token tried to approve its own request.
 	EventSeparation EventKind = "APPROVAL_SOD_DENIED"
+	// EventQueueFull: a request was refused because the pending-request cap
+	// was reached.
+	EventQueueFull EventKind = "APPROVAL_QUEUE_FULL"
 	// EventTOTPReplaced: the TOTP secret (authenticator) was replaced.
 	EventTOTPReplaced EventKind = "TOTP_SECRET_REPLACED"
 	// EventTokenMinted: a bearer token was minted, rotated, revoked or imported.
 	EventTokenMinted EventKind = "TOKEN_MINTED"
 )
+
+// Critical reports whether the event is one a flood of ordinary events must
+// never hide: a lockout, an auto-denied request, a self-approval attempt.
+// Delivery channels keep capacity for these.
+func (k EventKind) Critical() bool {
+	switch k {
+	case EventLockout, EventAutoDenied, EventSeparation:
+		return true
+	}
+	return false
+}
 
 // Event is one security event. Detail is a short server-built description;
 // it NEVER carries a TOTP code, a token or a secret value.

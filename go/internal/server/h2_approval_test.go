@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -380,23 +381,157 @@ func TestH2OperatorThrottledAcrossRequests(t *testing.T) {
 	e.assertNoCode(bad, good)
 }
 
-func TestH2MissingCodeIsAuditedButNotCounted(t *testing.T) {
+func TestH2MissingCodeIsCountedAndDeniesTheRequest(t *testing.T) {
 	e := newH2Env(t, nil)
 	e.seed("prod", "guarded", "SENTINEL", true)
 	done := e.useAsync("prod", "guarded")
 	id := e.pending(1)[0]["request_id"].(string)
-	for i := 0; i < 8; i++ {
+	for i := 1; i < approval.DefaultMaxCodeAttempts; i++ {
 		if code, _, _ := e.approve(e.opA, id, ""); code != 400 {
-			t.Fatalf("missing code: %d", code)
+			t.Fatalf("missing code %d: %d", i, code)
 		}
 	}
-	if n := len(e.rows("APPROVAL_BAD_CODE")); n != 8 {
-		t.Fatalf("rows = %d", n)
+	if code, m, _ := e.approve(e.opA, id, ""); code != 403 {
+		t.Fatalf("the capping missing code: %d %v", code, m)
 	}
-	if code, m, _ := e.approve(e.opA, id, e.goodCode()); code != 200 {
-		t.Fatalf("approve: %d %v", code, m)
+	if res := <-done; res.code != 403 {
+		t.Fatalf("agent: %d %v", res.code, res.body)
 	}
+	rows := e.rows("APPROVAL_BAD_CODE")
+	if len(rows) != approval.DefaultMaxCodeAttempts || !strings.Contains(rows[0].details, "attempt=1/5") {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+// A flood of code-less approve calls with one stolen operator token: the
+// budget stops it, the audit log and the notifier stay small, and the lockout
+// alert is among the events.
+func TestH2NoCodeFloodIsBoundedAndTheLockoutIsReported(t *testing.T) {
+	e := newH2Env(t, func(o *StackOptions) { o.ApprovalCodeAttempts = 1000 })
+	e.seed("prod", "guarded", "SENTINEL", true)
+	var dones []<-chan asyncResp
+	for i := 0; i < 3; i++ {
+		dones = append(dones, e.useAsync("prod", "guarded"))
+	}
+	reqs := e.pending(3)
+	codes := map[int]int{}
+	for i := 0; i < 400; i++ {
+		c, _, _ := e.approve(e.opA, reqs[i%3]["request_id"].(string), "")
+		codes[c]++
+	}
+	if codes[400] != approval.DefaultMaxOperatorFails || codes[429] != 400-approval.DefaultMaxOperatorFails {
+		t.Fatalf("status codes = %v, want %d x 400 then 429", codes, approval.DefaultMaxOperatorFails)
+	}
+	// 10 counted rows, one lockout row, and the 390 throttled calls
+	// coalesced into one row (not 390).
+	if n := len(e.rows("APPROVAL_BAD_CODE")); n != approval.DefaultMaxOperatorFails {
+		t.Fatalf("APPROVAL_BAD_CODE rows = %d", n)
+	}
+	if n := len(e.rows("APPROVAL_LOCKOUT")); n != 1 {
+		t.Fatalf("APPROVAL_LOCKOUT rows = %d", n)
+	}
+	if n := len(e.rows("APPROVAL_THROTTLED")); n != 1 {
+		t.Fatalf("APPROVAL_THROTTLED rows = %d, want the flood coalesced into 1", n)
+	}
+	if e.notes.count(approval.EventLockout) != 1 || e.notes.count(approval.EventThrottled) != 1 {
+		t.Fatalf("notifications = %v", e.notes.kinds())
+	}
+	for _, r := range reqs {
+		e.do("POST", "/v1/requests/"+r["request_id"].(string)+"/deny", e.opB, nil)
+	}
+	for _, d := range dones {
+		<-d
+	}
+}
+
+// Many self-approval attempts are coalesced too; the first one is reported.
+func TestH2SelfApprovalFloodIsCoalesced(t *testing.T) {
+	e := newH2Env(t, nil)
+	e.seed("prod", "plain", "SENTINEL", false)
+	done := e.useAsync("prod", "plain")
+	id := e.pending(1)[0]["request_id"].(string)
+	for i := 0; i < 50; i++ {
+		if c, _, _ := e.approve(e.aliceOp, id, ""); c != 403 {
+			t.Fatalf("self approval: %d", c)
+		}
+	}
+	if n := len(e.rows("APPROVAL_SOD_DENIED")); n != 1 {
+		t.Fatalf("APPROVAL_SOD_DENIED rows = %d, want 1 (coalesced)", n)
+	}
+	e.approve(e.opA, id, "")
 	<-done
+}
+
+// The pending-request cap and the per-agent rate limit stop one agent token
+// from burying the operator's queue with gated sets.
+func TestH2GatedSetQueueIsCapped(t *testing.T) {
+	e := newH2Env(t, func(o *StackOptions) {
+		o.RequireApproval = false
+		o.RequireApprovalFor = []approval.GatedOp{approval.OpSet}
+		o.ApprovalMaxPendingPerAgent = 5
+		o.RateLimit = 1000
+	})
+	var dones []<-chan asyncResp
+	for i := 0; i < 5; i++ {
+		dones = append(dones, e.async("POST", "/v1/secrets", e.alice,
+			map[string]any{"name": fmt.Sprintf("k%d", i), "value": "v", "namespace": "prod", "purpose": "ci"}))
+	}
+	e.pending(5)
+	codes := map[int]int{}
+	for i := 0; i < 30; i++ {
+		c, m, _ := e.do("POST", "/v1/secrets", e.alice, map[string]any{"name": fmt.Sprintf("x%d", i), "value": "v", "namespace": "prod", "purpose": "ci"})
+		codes[c]++
+		if c == 429 && m["error"] != "ApprovalQueueFull" {
+			t.Fatalf("429 = %v", m)
+		}
+	}
+	if codes[429] != 30 {
+		t.Fatalf("over the cap: %v", codes)
+	}
+	if n := len(e.rows("APPROVAL_QUEUE_FULL")); n != 1 {
+		t.Fatalf("APPROVAL_QUEUE_FULL rows = %d, want 1 (coalesced)", n)
+	}
+	if e.notes.count(approval.EventQueueFull) != 1 {
+		t.Fatalf("notifications = %v", e.notes.kinds())
+	}
+	if _, m, _ := e.do("GET", "/v1/requests", e.opA, nil); len(m["requests"].([]any)) != 5 {
+		t.Fatalf("queue = %v", m)
+	}
+	// Another agent is not affected by alice's cap.
+	for _, r := range e.pending(5) {
+		e.do("POST", "/v1/requests/"+r["request_id"].(string)+"/deny", e.opA, nil)
+	}
+	for _, d := range dones {
+		<-d
+	}
+}
+
+func TestH2GatedSetIsRateLimitedBeforeParking(t *testing.T) {
+	e := newH2Env(t, func(o *StackOptions) {
+		o.RequireApproval = false
+		o.RequireApprovalFor = []approval.GatedOp{approval.OpSet}
+		o.RateLimit = 3
+		o.RateWindow = time.Hour
+	})
+	var dones []<-chan asyncResp
+	for i := 0; i < 3; i++ {
+		dones = append(dones, e.async("POST", "/v1/secrets", e.alice,
+			map[string]any{"name": fmt.Sprintf("k%d", i), "value": "v", "namespace": "prod", "purpose": "ci"}))
+	}
+	e.pending(3)
+	c, m, _ := e.do("POST", "/v1/secrets", e.alice, map[string]any{"name": "k9", "value": "v", "namespace": "prod", "purpose": "ci"})
+	if c != 429 || !strings.Contains(fmt.Sprint(m["detail"]), "Rate limit") {
+		t.Fatalf("4th gated set: %d %v", c, m)
+	}
+	if len(e.rows("RATE_LIMITED")) != 1 {
+		t.Fatalf("RATE_LIMITED rows = %d", len(e.rows("RATE_LIMITED")))
+	}
+	for _, r := range e.pending(3) {
+		e.do("POST", "/v1/requests/"+r["request_id"].(string)+"/deny", e.opA, nil)
+	}
+	for _, d := range dones {
+		<-d
+	}
 }
 
 // --- (2) TOTP replay: rejected, audited, notified --------------------------
@@ -830,4 +965,176 @@ func TestH2GatedOpsValidateBeforeTheOperatorSees(t *testing.T) {
 	if _, m2, _ := e.do("GET", "/v1/requests", e.opA, nil); len(m2["requests"].([]any)) != 0 {
 		t.Fatalf("an invalid request reached the operator: %v", m2)
 	}
+}
+
+// A bystander who sees a capability token cannot burn it by presenting it as
+// another agent: it is consumed only after the agent binding matched.
+func TestH2CapabilityTokenNotBurnedByAWrongAgent(t *testing.T) {
+	e := newH2Env(t, nil)
+	tok, _ := e.signer.Sign("carol", "secrets.echo", 1, nil, 120)
+	carol := func() string {
+		tk, _, err := e.store.Mint(auth.MintOptions{Agent: "carol", Scopes: []auth.Scope{auth.ScopeAgent}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tk
+	}()
+	body := map[string]any{"capability": "secrets.echo", "capability_token": tok, "payload": map[string]any{"message": "hi"}}
+	// alice presents carol's token: refused (agent mismatch) and NOT consumed.
+	for i := 0; i < 3; i++ {
+		c, m, _ := e.do("POST", "/v1/capabilities/execute", e.alice, body)
+		if c != 403 || !strings.Contains(fmt.Sprint(m["detail"]), "bound to agent") {
+			t.Fatalf("bystander attempt %d: %d %v", i, c, m)
+		}
+	}
+	if c, m, _ := e.do("POST", "/v1/capabilities/execute", carol, body); c != 200 {
+		t.Fatalf("the rightful agent: %d %v", c, m)
+	}
+	if c, _, _ := e.do("POST", "/v1/capabilities/execute", carol, body); c != 403 {
+		t.Fatalf("replay by the rightful agent: %d", c)
+	}
+}
+
+// RGT-510: the last accepted TOTP step survives a restart.
+func TestH2TOTPReplayWindowStaysClosedAcrossRestart(t *testing.T) {
+	dir := t.TempDir()
+	secret, _ := totp.GenerateSecret(20)
+	secretFile := writeFile(t, filepath.Join(dir, "totp.secret"), secret+"\n")
+	open := func(db string) *Stack {
+		s, err := OpenStack(context.Background(), StackOptions{
+			DBPath: filepath.Join(dir, db, "vault.db"), MasterProvider: providerstest.NewMemory(),
+			RequireApproval: true, TOTPSecretFile: secretFile, ApprovalTimeout: 30 * time.Second, KDFParams: testKDF,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = s.Close() })
+		return s
+	}
+	approveWith := func(s *Stack, code string) error {
+		tk, err := s.Broker.Submit(approval.Request{RequestID: fmt.Sprintf("r-%d", time.Now().UnixNano()), Require2FA: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tk.Wait(context.Background())
+		err = s.Broker.Approve(tk.ID(), code, "op")
+		if err != nil {
+			_ = s.Broker.Deny(tk.ID(), "cleanup", "op")
+		}
+		return err
+	}
+	code, _ := totp.Generate(secret, time.Now())
+	s1 := open("v1")
+	if err := approveWith(s1, code); err != nil {
+		t.Fatal(err)
+	}
+	_ = s1.Close()
+	// The server restarts: the used code is still refused, as a replay.
+	s2 := open("v2")
+	if err := approveWith(s2, code); !errors.Is(err, approval.ErrCodeReplayed) {
+		t.Fatalf("code reused after a restart = %v, want a replay", err)
+	}
+	if _, err := os.Stat(secretFile + ".state"); err != nil {
+		t.Fatalf("state file: %v", err)
+	}
+}
+
+func TestH2TOTPSecretFileChecks(t *testing.T) {
+	dir := t.TempDir()
+	o := StackOptions{DBPath: filepath.Join(dir, "v", "vault.db"), MasterProvider: providerstest.NewMemory(), RequireApproval: true, KDFParams: testKDF}
+	o.TOTPSecretFile = dir // not a regular file
+	if _, err := OpenStack(context.Background(), o); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("directory: %v", err)
+	}
+	o.TOTPSecretFile = writeFile(t, filepath.Join(dir, "big"), strings.Repeat("A", 5000))
+	if _, err := OpenStack(context.Background(), o); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("oversized: %v", err)
+	}
+	o.TOTPSecretFile = writeFile(t, filepath.Join(dir, "empty"), "\n")
+	if _, err := OpenStack(context.Background(), o); err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("empty: %v", err)
+	}
+}
+
+// Review of PR #56: 64 goroutines guessing across 6 requests with one
+// operator token hold the operator budget exactly, and a correct code sent
+// while locked out is refused and NOT consumed.
+func TestH2ConcurrentGuessingHoldsTheOperatorBudget(t *testing.T) {
+	e := newH2Env(t, func(o *StackOptions) {
+		o.ApprovalCodeAttempts = 1000
+		o.ApprovalOperatorFails = 10
+		o.ApprovalLockout = time.Second
+	})
+	e.seed("prod", "guarded", "SENTINEL", true)
+	const nReq = 6
+	var dones []<-chan asyncResp
+	for i := 0; i < nReq; i++ {
+		dones = append(dones, e.useAsync("prod", "guarded"))
+	}
+	reqs := e.pending(nReq)
+	bad := e.wrongCode()
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	codes := map[int]int{}
+	for g := 0; g < 64; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			c, _, _ := e.approve(e.opA, reqs[g%nReq]["request_id"].(string), bad)
+			mu.Lock()
+			codes[c]++
+			mu.Unlock()
+		}(g)
+	}
+	wg.Wait()
+	if codes[400] != 10 || codes[429] != 54 || len(codes) != 2 {
+		t.Fatalf("status codes = %v, want 10 x 400 and 54 x 429", codes)
+	}
+	good := e.goodCode()
+	id := reqs[0]["request_id"].(string)
+	if c, _, _ := e.approve(e.opA, id, good); c != 429 {
+		t.Fatalf("correct code while locked out: %d", c)
+	}
+	time.Sleep(1200 * time.Millisecond)
+	// Same code, same time step: it was not consumed by the refused call.
+	if c, m, _ := e.approve(e.opA, id, good); c != 200 {
+		t.Fatalf("correct code after the lockout: %d %v", c, m)
+	}
+	for _, r := range reqs[1:] {
+		e.do("POST", "/v1/requests/"+r["request_id"].(string)+"/deny", e.opB, nil)
+	}
+	for _, d := range dones {
+		<-d
+	}
+}
+
+// A second token of the same operator shares the budget.
+func TestH2SecondTokenOfTheSameOperatorSharesTheBudget(t *testing.T) {
+	e := newH2Env(t, func(o *StackOptions) {
+		o.ApprovalCodeAttempts = 1000
+		o.ApprovalOperatorFails = 3
+	})
+	second, _, err := e.store.Mint(auth.MintOptions{Agent: "ops1", Scopes: []auth.Scope{auth.ScopeOperator}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.seed("prod", "guarded", "SENTINEL", true)
+	done := e.useAsync("prod", "guarded")
+	id := e.pending(1)[0]["request_id"].(string)
+	bad := e.wrongCode()
+	counted := 0
+	for i := 0; i < 8; i++ {
+		tok := e.opA
+		if i%2 == 1 {
+			tok = second
+		}
+		if c, _, _ := e.approve(tok, id, bad); c == 400 {
+			counted++
+		}
+	}
+	if counted != 3 {
+		t.Fatalf("%d guesses counted with two tokens of one operator, want 3", counted)
+	}
+	e.do("POST", "/v1/requests/"+id+"/deny", e.opB, nil)
+	<-done
 }

@@ -61,6 +61,8 @@ type Handlers struct {
 
 	// gated is the set of operations that wait for approval (SetGatedOps).
 	gated gatedOps
+	// events coalesces repeated security events (approvalflow.go).
+	events eventLimiter
 }
 
 func (h *Handlers) capabilityList() []*capabilities.Spec {

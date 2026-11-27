@@ -84,6 +84,7 @@ var statusRules = []statusRule{
 	{approval.ErrTooManyAttempts, http.StatusForbidden, "ApprovalError"},
 	{approval.ErrSeparationOfDuties, http.StatusForbidden, "SeparationOfDutiesError"},
 	{approval.ErrThrottled, http.StatusTooManyRequests, "ApprovalThrottled"},
+	{approval.ErrTooManyPending, http.StatusTooManyRequests, "ApprovalQueueFull"},
 	{approval.ErrApproval, http.StatusBadRequest, "ApprovalError"},
 }
 

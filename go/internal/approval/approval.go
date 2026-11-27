@@ -127,6 +127,9 @@ var (
 	ErrCodeReplayed = fmt.Errorf("%w: 2FA code already used", ErrInvalidTOTP)
 	// ErrTooManyAttempts: the request reached its bad-code cap and was denied.
 	ErrTooManyAttempts = fmt.Errorf("%w: too many invalid 2FA codes, request denied", ErrApproval)
+	// ErrTooManyPending: the pending-request cap (global or per agent) is
+	// reached; the request is refused, not queued.
+	ErrTooManyPending = fmt.Errorf("%w: too many pending approval requests", ErrApproval)
 	// ErrThrottled: the operator hit the bad-code limit and is locked out
 	// for a while; no code is checked until it passes.
 	ErrThrottled = fmt.Errorf("%w: too many invalid 2FA codes, operator throttled", ErrApproval)
@@ -142,6 +145,8 @@ var (
 type CodeError struct {
 	// Replay: the code was a reuse of a consumed step.
 	Replay bool
+	// Missing: no code was sent (counted like a wrong one).
+	Missing bool
 	// Attempt is the bad-code count of this request, Limit its cap.
 	Attempt, Limit int
 	// RequestDenied: this attempt reached the cap and denied the request.
@@ -201,6 +206,10 @@ const (
 	DefaultMaxOperatorFails = 10
 	DefaultOperatorLockout  = 5 * time.Minute
 	maxTrackedOperators     = 1024
+	// DefaultMaxPending / DefaultMaxPendingPerAgent cap parked requests
+	// (see WithPendingLimits).
+	DefaultMaxPending         = 512
+	DefaultMaxPendingPerAgent = 64
 )
 
 type pending struct {
@@ -212,10 +221,11 @@ type pending struct {
 	badCodes int
 }
 
-// operatorState counts one operator's recent bad codes.
+// operatorState is one operator's recent refused attempts: a SLIDING window
+// (the last maxOperatorFails timestamps), so a burst straddling a window
+// edge cannot double the budget.
 type operatorState struct {
-	start       time.Time
-	fails       int
+	fails       []time.Time
 	lockedUntil time.Time
 }
 
@@ -227,6 +237,8 @@ type Broker struct {
 
 	maxCodeAttempts  int
 	maxOperatorFails int
+	maxPending       int
+	maxPendingAgent  int
 	lockout          time.Duration
 	now              func() time.Time // attempt/lockout clock only
 
@@ -287,6 +299,21 @@ func WithAttemptLimits(perRequest, perOperator int, lockout time.Duration) Broke
 	}
 }
 
+// WithPendingLimits caps parked requests: at most global in the whole broker
+// and perAgent for one requester agent. A Submit over a cap fails with
+// ErrTooManyPending (fail closed), so one token cannot bury the operator's
+// queue or grow memory without bound. A value <= 0 keeps the default.
+func WithPendingLimits(global, perAgent int) BrokerOption {
+	return func(b *Broker) {
+		if global > 0 {
+			b.maxPending = global
+		}
+		if perAgent > 0 {
+			b.maxPendingAgent = perAgent
+		}
+	}
+}
+
 // WithAttemptClock overrides the clock used for operator lockouts (tests).
 // Request deadlines always use the real clock.
 func WithAttemptClock(now func() time.Time) BrokerOption { return func(b *Broker) { b.now = now } }
@@ -299,6 +326,8 @@ func NewBroker(opts ...BrokerOption) *Broker {
 		operators:        map[string]*operatorState{},
 		maxCodeAttempts:  DefaultMaxCodeAttempts,
 		maxOperatorFails: DefaultMaxOperatorFails,
+		maxPending:       DefaultMaxPending,
+		maxPendingAgent:  DefaultMaxPendingPerAgent,
 		lockout:          DefaultOperatorLockout,
 		now:              time.Now,
 	}
@@ -335,10 +364,32 @@ func (b *Broker) Submit(req Request) (*Ticket, error) {
 	if _, dup := b.pending[req.RequestID]; dup {
 		return nil, fmt.Errorf("%w: duplicate request id %q", ErrApproval, req.RequestID)
 	}
+	if len(b.pending) >= b.maxPending {
+		return nil, ErrTooManyPending
+	}
+	who := requesterAgent(req)
+	n := 0
+	for _, p := range b.pending {
+		if requesterAgent(p.req) == who {
+			n++
+		}
+	}
+	if n >= b.maxPendingAgent {
+		return nil, ErrTooManyPending
+	}
 	b.seq++
 	p := &pending{req: req, seq: b.seq, deadline: time.Now().Add(b.timeout), done: make(chan struct{})}
 	b.pending[req.RequestID] = p
 	return &Ticket{b: b, p: p}, nil
+}
+
+// requesterAgent is the agent a request counts against: the authenticated
+// requester when known, else the agent named in the request.
+func requesterAgent(r Request) string {
+	if r.Requester.Agent != "" {
+		return r.Requester.Agent
+	}
+	return r.Agent
 }
 
 // Wait blocks until an operator decides, the timeout elapses (measured from
@@ -478,13 +529,19 @@ func (b *Broker) ApproveBy(requestID, totpCode string, who Approver) error {
 		if wait := b.lockedFor(key); wait > 0 {
 			return &ThrottleError{RetryAfter: wait}
 		}
-		if totpCode == "" {
-			return ErrInvalidTOTP // a missing code is not a guess: not counted
+		if b.tableFull(key) {
+			// Fail closed: more live operator keys than the table holds.
+			return &ThrottleError{RetryAfter: b.lockout}
 		}
-		if res := b.totp(totpCode); res != CodeOK {
-			return b.badCode(p, key, res == CodeReplay)
+		// A missing code is an attempt like any other (it is what a flood
+		// of empty calls looks like); it just never reaches the verifier.
+		res := CodeInvalid
+		if totpCode != "" {
+			res = b.totp(totpCode)
 		}
-		delete(b.operators, key)
+		if res != CodeOK {
+			return b.badCode(p, key, res == CodeReplay, totpCode == "")
+		}
 	}
 	p.decision = &Decision{Allowed: true, Reason: "approved", DecidedBy: who.Name}
 	close(p.done)
@@ -508,8 +565,15 @@ func separation(req, appr Identity) error {
 	return nil
 }
 
+// operatorKey names the budget an attempt is charged to: the OPERATOR
+// identity (its agent), so a second token of the same operator shares the
+// budget instead of getting a fresh one. A token with no agent is keyed by
+// the token id, an anonymous caller by its label.
 func operatorKey(who Approver) string {
-	if who.TokenID != "" {
+	switch {
+	case who.Agent != "":
+		return "agent:" + who.Agent
+	case who.TokenID != "":
 		return "token:" + who.TokenID
 	}
 	return "name:" + who.Name
@@ -527,27 +591,38 @@ func (b *Broker) lockedFor(key string) time.Duration {
 	return 0
 }
 
-// badCode records a refused code and returns the error to report. The
+// tableFull reports whether key is unknown and the table has no room even
+// after dropping idle entries: such a caller is refused rather than left
+// unmetered.
+func (b *Broker) tableFull(key string) bool {
+	if _, ok := b.operators[key]; ok || len(b.operators) < maxTrackedOperators {
+		return false
+	}
+	b.pruneOperators(b.now())
+	_, ok := b.operators[key]
+	return !ok && len(b.operators) >= maxTrackedOperators
+}
+
+// badCode records a refused attempt and returns the error to report. The
 // broker lock is held.
-func (b *Broker) badCode(p *pending, key string, replay bool) error {
+func (b *Broker) badCode(p *pending, key string, replay, missing bool) error {
 	now := b.now()
-	ce := &CodeError{Replay: replay, Limit: b.maxCodeAttempts}
+	ce := &CodeError{Replay: replay, Missing: missing, Limit: b.maxCodeAttempts}
 
 	st := b.operators[key]
 	if st == nil {
-		if len(b.operators) >= maxTrackedOperators {
-			b.pruneOperators(now)
-		}
-		st = &operatorState{start: now}
-		if len(b.operators) < maxTrackedOperators {
-			b.operators[key] = st
+		st = &operatorState{}
+		b.operators[key] = st // tableFull ran first: there is room
+	}
+	// Sliding window: keep only the failures inside the last `lockout`.
+	kept := st.fails[:0]
+	for _, t := range st.fails {
+		if now.Sub(t) < b.lockout {
+			kept = append(kept, t)
 		}
 	}
-	if now.Sub(st.start) >= b.lockout && !now.Before(st.lockedUntil) {
-		st.start, st.fails = now, 0
-	}
-	st.fails++
-	if st.fails >= b.maxOperatorFails {
+	st.fails = append(kept, now)
+	if len(st.fails) >= b.maxOperatorFails {
 		st.lockedUntil = now.Add(b.lockout)
 		ce.OperatorLocked = true
 	}
@@ -568,7 +643,17 @@ func (b *Broker) badCode(p *pending, key string, replay bool) error {
 
 func (b *Broker) pruneOperators(now time.Time) {
 	for k, st := range b.operators {
-		if !now.Before(st.lockedUntil) && now.Sub(st.start) >= b.lockout {
+		if now.Before(st.lockedUntil) {
+			continue
+		}
+		recent := false
+		for _, t := range st.fails {
+			if now.Sub(t) < b.lockout {
+				recent = true
+				break
+			}
+		}
+		if !recent {
 			delete(b.operators, k)
 		}
 	}

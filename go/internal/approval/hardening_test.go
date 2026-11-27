@@ -146,46 +146,185 @@ func TestOperatorThrottledAcrossRequests(t *testing.T) {
 	}
 }
 
-func TestOperatorWindowResetsAndSuccessClearsCount(t *testing.T) {
+func TestOperatorBudgetIsASlidingWindow(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	clock := func() time.Time { return now }
 	codes := newCodes("111111", "222222")
-	b := NewBroker(WithTOTPChecker(codes.check), WithAttemptLimits(100, 3, time.Minute), WithAttemptClock(clock))
-	submit2FA(t, b, "r1")
-	submit2FA(t, b, "r2")
+	b := NewBroker(WithTOTPChecker(codes.check), WithAttemptLimits(1000, 3, time.Minute), WithAttemptClock(clock))
+	for _, id := range []string{"r1", "r2", "r3"} {
+		submit2FA(t, b, id)
+	}
+	// A success does NOT clear the budget (an attacker sharing the token
+	// would otherwise get it back from an honest approval).
 	_ = b.ApproveBy("r1", "000000", opID)
 	_ = b.ApproveBy("r1", "000000", opID)
-	// A success clears the count: two more bad codes do not lock.
 	if err := b.ApproveBy("r1", "111111", opID); err != nil {
 		t.Fatal(err)
 	}
-	_ = b.ApproveBy("r2", "000000", opID)
-	_ = b.ApproveBy("r2", "000000", opID)
+	var te *ThrottleError
+	err := b.ApproveBy("r2", "000000", opID) // third failure in the window
+	var ce *CodeError
+	if !errors.As(err, &ce) || !ce.OperatorLocked {
+		t.Fatalf("third failure = %v", err)
+	}
+	if err := b.ApproveBy("r2", "222222", opID); !errors.As(err, &te) {
+		t.Fatalf("locked operator = %v", err)
+	}
+	// After the lockout everything is forgotten.
+	now = now.Add(2 * time.Minute)
 	if err := b.ApproveBy("r2", "222222", opID); err != nil {
-		t.Fatalf("count was not cleared by the success: %v", err)
+		t.Fatalf("after lockout: %v", err)
+	}
+	// Burst across a "window edge": 2 failures just before, 2 just after is
+	// still 4 inside one minute, so the operator locks at the third.
+	submit2FA(t, b, "r4")
+	_ = b.ApproveBy("r4", "000000", opID)
+	_ = b.ApproveBy("r4", "000000", opID)
+	now = now.Add(59 * time.Second)
+	err = b.ApproveBy("r4", "000000", opID)
+	if !errors.As(err, &ce) || !ce.OperatorLocked {
+		t.Fatalf("burst over the old window edge was not caught: %v", err)
 	}
 	// Failures older than the window do not add up.
-	submit2FA(t, b, "r3")
-	_ = b.ApproveBy("r3", "000000", opID)
-	_ = b.ApproveBy("r3", "000000", opID)
+	b2 := NewBroker(WithTOTPChecker(codes.check), WithAttemptLimits(1000, 3, time.Minute), WithAttemptClock(clock))
+	submit2FA(t, b2, "x")
+	_ = b2.ApproveBy("x", "000000", opID)
+	_ = b2.ApproveBy("x", "000000", opID)
 	now = now.Add(2 * time.Minute)
-	_ = b.ApproveBy("r3", "000000", opID)
-	var te *ThrottleError
-	if err := b.ApproveBy("r3", "000000", opID); errors.As(err, &te) {
+	if err := b2.ApproveBy("x", "000000", opID); errors.As(err, &te) || (errors.As(err, &ce) && ce.OperatorLocked) {
 		t.Fatalf("stale failures were counted: %v", err)
 	}
 }
 
-func TestMissingCodeIsNotCounted(t *testing.T) {
-	b := NewBroker(WithTOTPChecker(newCodes("111111").check), WithAttemptLimits(2, 2, time.Minute))
+func TestOperatorBudgetIsPerIdentityNotPerToken(t *testing.T) {
+	b := NewBroker(WithTOTPChecker(newCodes("111111").check), WithAttemptLimits(1000, 3, time.Hour))
 	submit2FA(t, b, "r1")
-	for i := 0; i < 5; i++ {
-		if err := b.ApproveBy("r1", "", opID); !errors.Is(err, ErrInvalidTOTP) {
-			t.Fatalf("missing code = %v", err)
+	twoTokens := []Approver{
+		{Name: "a", Identity: Identity{TokenID: "tok-1", Agent: "ops1"}},
+		{Name: "b", Identity: Identity{TokenID: "tok-2", Agent: "ops1"}},
+	}
+	counted := 0
+	for i := 0; i < 8; i++ {
+		var ce *CodeError
+		if err := b.ApproveBy("r1", "000000", twoTokens[i%2]); errors.As(err, &ce) {
+			counted++
 		}
 	}
-	if err := b.ApproveBy("r1", "111111", opID); err != nil {
-		t.Fatalf("empty codes must not lock or deny: %v", err)
+	if counted != 3 {
+		t.Fatalf("a second token of the same operator got a fresh budget: %d guesses counted, want 3", counted)
+	}
+	// A token without an agent is keyed by its id, an anonymous one by name.
+	if k := operatorKey(Approver{Identity: Identity{TokenID: "t"}}); k != "token:t" {
+		t.Fatal(k)
+	}
+	if k := operatorKey(Approver{Name: "n"}); k != "name:n" {
+		t.Fatal(k)
+	}
+}
+
+func TestMissingCodeIsCountedLikeAWrongOne(t *testing.T) {
+	b := NewBroker(WithTOTPChecker(newCodes("111111").check), WithAttemptLimits(3, 100, time.Minute))
+	tk := submit2FA(t, b, "r1")
+	var ce *CodeError
+	for i := 1; i <= 2; i++ {
+		err := b.ApproveBy("r1", "", opID)
+		if !errors.As(err, &ce) || !ce.Missing || !errors.Is(err, ErrInvalidTOTP) || ce.Attempt != i {
+			t.Fatalf("missing code %d = %v %+v", i, err, ce)
+		}
+	}
+	err := b.ApproveBy("r1", "", opID)
+	if !errors.As(err, &ce) || !ce.RequestDenied {
+		t.Fatalf("third missing code = %v", err)
+	}
+	if d := tk.Wait(context.Background()); d.Allowed {
+		t.Fatalf("decision = %+v", d)
+	}
+	// And a flood of empty calls trips the operator throttle.
+	b2 := NewBroker(WithTOTPChecker(newCodes("111111").check), WithAttemptLimits(1000, 4, time.Hour))
+	submit2FA(t, b2, "r1")
+	throttled := 0
+	for i := 0; i < 50; i++ {
+		var te *ThrottleError
+		if errors.As(b2.ApproveBy("r1", "", opID), &te) {
+			throttled++
+		}
+	}
+	if throttled != 46 {
+		t.Fatalf("throttled %d of 50 empty calls, want 46", throttled)
+	}
+}
+
+func TestOperatorTableFailsClosedWhenFull(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	b := NewBroker(WithTOTPChecker(newCodes().check), WithAttemptLimits(1_000_000, 3, time.Hour),
+		WithAttemptClock(func() time.Time { return now }), WithPendingLimits(10, 10))
+	submit2FA(t, b, "r1")
+	for i := 0; i < maxTrackedOperators; i++ {
+		_ = b.ApproveBy("r1", "000000", Approver{Identity: Identity{TokenID: "t" + itoa(i), Agent: "ops" + itoa(i)}})
+	}
+	b.mu.Lock()
+	n := len(b.operators)
+	b.mu.Unlock()
+	if n != maxTrackedOperators {
+		t.Fatalf("table = %d", n)
+	}
+	// A NEW identity is refused (throttled), not left unmetered.
+	var te *ThrottleError
+	if err := b.ApproveBy("r1", "000000", Approver{Identity: Identity{TokenID: "new", Agent: "attacker"}}); !errors.As(err, &te) {
+		t.Fatalf("new operator with a full table = %v", err)
+	}
+	// Known operators are still metered normally, and idle entries are
+	// pruned so the table recovers.
+	now = now.Add(2 * time.Hour)
+	if err := b.ApproveBy("r1", "000000", Approver{Identity: Identity{TokenID: "new", Agent: "attacker"}}); errors.As(err, &te) {
+		t.Fatalf("table did not recover: %v", err)
+	}
+}
+
+func TestPendingRequestCaps(t *testing.T) {
+	b := NewBroker(WithPendingLimits(5, 3), WithTimeout(time.Minute))
+	mk := func(id, agent string) error {
+		_, err := b.Submit(Request{RequestID: id, Agent: agent, Requester: Identity{TokenID: "t-" + agent, Agent: agent}})
+		return err
+	}
+	for i := 0; i < 3; i++ {
+		if err := mk("a"+itoa(i), "alice"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := mk("a3", "alice"); !errors.Is(err, ErrTooManyPending) || !errors.Is(err, ErrApproval) {
+		t.Fatalf("per-agent cap = %v", err)
+	}
+	// Another agent still gets in, until the global cap.
+	if err := mk("b0", "bob"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mk("c0", "carol"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mk("d0", "dave"); !errors.Is(err, ErrTooManyPending) {
+		t.Fatalf("global cap = %v", err)
+	}
+	// Deciding and waiting frees the slot.
+	if err := b.ApproveBy("a0", "", opID); err != nil {
+		t.Fatal(err)
+	}
+	b.mu.Lock()
+	delete(b.pending, "a0")
+	b.mu.Unlock()
+	if err := mk("a4", "alice"); err != nil {
+		t.Fatalf("after a slot freed: %v", err)
+	}
+	// Consult reports the refusal as a denial.
+	d := b.Consult(context.Background(), Request{RequestID: "z", Agent: "zed"})
+	if d.Allowed || !strings.Contains(d.Reason, "too many pending") {
+		t.Fatalf("Consult over the cap = %+v", d)
+	}
+	// An unauthenticated embedder is counted by the agent named in the request.
+	b2 := NewBroker(WithPendingLimits(100, 1))
+	_, _ = b2.Submit(Request{RequestID: "1", Agent: "x"})
+	if _, err := b2.Submit(Request{RequestID: "2", Agent: "x"}); !errors.Is(err, ErrTooManyPending) {
+		t.Fatalf("agent from request = %v", err)
 	}
 }
 
@@ -398,7 +537,21 @@ func TestNotifiers(t *testing.T) {
 	if strings.ContainsAny(raw, "\r\n") || !strings.Contains(raw, `a\nFORGED`) {
 		t.Fatalf("log line not escaped: %q", raw)
 	}
+	// Every request-derived field is quoted, Detail and Operator included:
+	// a newline or an escape sequence can never forge a log line.
+	raw = ""
+	LogNotifier{Logf: func(f string, a ...any) { raw = fmt.Sprintf(f, a...) }}.Notify(context.Background(),
+		Event{Kind: EventBadCode, Detail: "x\nWARNING: security event APPROVAL_APPROVED forged\x1b[2J", Operator: "op\r\nz"})
+	if strings.ContainsAny(raw, "\r\n\x1b") || !strings.Contains(raw, `x\nWARNING`) || !strings.Contains(raw, `detail="x\nWARNING`) {
+		t.Fatalf("detail not quoted: %q", raw)
+	}
 	LogNotifier{}.Notify(context.Background(), Event{Kind: EventBadCode}) // default sink must not panic
+	for k, want := range map[EventKind]bool{EventLockout: true, EventAutoDenied: true, EventSeparation: true,
+		EventBadCode: false, EventThrottled: false, EventCodeReplay: false, EventQueueFull: false} {
+		if k.Critical() != want {
+			t.Errorf("%s.Critical() = %v", k, !want)
+		}
+	}
 }
 
 func TestParseGatedOps(t *testing.T) {

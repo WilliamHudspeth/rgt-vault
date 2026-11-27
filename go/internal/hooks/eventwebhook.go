@@ -15,9 +15,15 @@ import (
 	"rgt-vault-server/internal/netguard"
 )
 
-// maxEventsInFlight bounds concurrent webhook deliveries; further events
-// are dropped (and logged) rather than queued without limit.
-const maxEventsInFlight = 8
+// maxEventsInFlight bounds concurrent webhook deliveries of ordinary events;
+// further ones are dropped (and logged) rather than queued without limit.
+// maxCriticalInFlight is a SEPARATE budget for events that must not be lost
+// to flood noise (approval.EventKind.Critical): a lockout alert is delivered
+// even while the ordinary slots are all busy with a slow receiver.
+const (
+	maxEventsInFlight   = 8
+	maxCriticalInFlight = 4
+)
 
 // EventWebhook is an approval.Notifier that POSTs each security event to a
 // URL as JSON (bad / replayed TOTP codes, lockouts, self-approval attempts).
@@ -37,6 +43,7 @@ type EventWebhook struct {
 	client  *http.Client
 	timeout time.Duration
 	sem     chan struct{}
+	critSem chan struct{}
 	logf    func(format string, args ...any)
 	// done is signalled after each delivery attempt (tests).
 	done chan struct{}
@@ -63,7 +70,7 @@ func NewEventWebhook(rawURL string, allowRemote bool, opts ...EventWebhookOption
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, errors.New("security webhook url must be an absolute http(s) URL")
 	}
-	w := &EventWebhook{url: rawURL, timeout: DefaultWebhookTimeout, sem: make(chan struct{}, maxEventsInFlight), logf: log.Printf}
+	w := &EventWebhook{url: rawURL, timeout: DefaultWebhookTimeout, sem: make(chan struct{}, maxEventsInFlight), critSem: make(chan struct{}, maxCriticalInFlight), logf: log.Printf}
 	for _, o := range opts {
 		o(w)
 	}
@@ -94,8 +101,12 @@ type eventBody struct {
 
 // Notify implements approval.Notifier. It returns immediately.
 func (w *EventWebhook) Notify(_ context.Context, e approval.Event) {
+	sem := w.sem
+	if e.Kind.Critical() {
+		sem = w.critSem
+	}
 	select {
-	case w.sem <- struct{}{}:
+	case sem <- struct{}{}:
 	default:
 		w.logf("WARNING: security webhook busy, event %s dropped (it is still in the audit log)", string(e.Kind))
 		return
@@ -108,12 +119,12 @@ func (w *EventWebhook) Notify(_ context.Context, e approval.Event) {
 		Detail: e.Detail, Time: e.Time.UTC().Format(time.RFC3339),
 	})
 	if err != nil {
-		<-w.sem
+		<-sem
 		return
 	}
 	go func() {
 		defer func() {
-			<-w.sem
+			<-sem
 			if w.done != nil {
 				w.done <- struct{}{}
 			}

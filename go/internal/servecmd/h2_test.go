@@ -81,3 +81,11 @@ func TestH2FlagsRegistered(t *testing.T) {
 		}
 	}
 }
+
+func TestSecurityWebhookFlagIsDeprecated(t *testing.T) {
+	cmd := NewCommand(Env{}, nil)
+	f := cmd.Flags().Lookup("security-webhook-url")
+	if f == nil || f.Deprecated == "" || !strings.Contains(f.Deprecated, "RGT_VAULT_SECURITY_WEBHOOK_URL") || !f.Hidden {
+		t.Fatalf("flag = %+v", f)
+	}
+}

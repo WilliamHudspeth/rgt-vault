@@ -179,7 +179,17 @@ func (v *Vault) ExecuteCapability(ctx context.Context, req CapabilityRequest) (a
 	}
 
 	// 4. Signature, envelope and expiry.
-	tok, verr := v.tokenVerifier.Verify(token)
+	// A verifier that can split "authentic" from "consumed" (the replay
+	// guard) is consumed only after the request matched the token (step 6),
+	// so presenting someone else's token cannot burn it.
+	dc, deferred := v.tokenVerifier.(captoken.DeferredConsumer)
+	var tok *captoken.CapabilityV2Token
+	var verr error
+	if deferred {
+		tok, verr = dc.VerifyUnconsumed(token)
+	} else {
+		tok, verr = v.tokenVerifier.Verify(token)
+	}
 	if verr == nil && tok == nil {
 		return nil, deny(newErr([]error{ErrTokenVerifier, ErrPolicyDenied}, nil,
 			"capability token rejected: token verifier returned no token"), "token: TokenVerifierError")
@@ -221,6 +231,20 @@ func (v *Vault) ExecuteCapability(ctx context.Context, req CapabilityRequest) (a
 		// Python re-raises the TokenBindingError (which its server turns
 		// into a 500); Go classifies it as a policy denial (403).
 		return nil, deny(newErr([]error{ErrPolicyDenied}, berr, "%s", berr.Error()), "context binding: "+berr.Error())
+	}
+
+	// 6b. One-time use: consume the token now that it is known to be this
+	// agent's, for this capability, version and payload. A replay is not a
+	// failed credential (a harness may legitimately retry a lost response),
+	// so it is not counted against the agent's failure limit.
+	if deferred {
+		if cerr := dc.Consume(tok); cerr != nil {
+			class := "TokenError"
+			if errors.Is(cerr, captoken.ErrToken) {
+				class = pyfmt.TokenErrorClass(cerr)
+			}
+			return nil, deny(newErr([]error{ErrPolicyDenied}, nil, "capability token rejected: %s", pyfmt.TokenErrorMessage(cerr)), "token: "+class)
+		}
 	}
 
 	// 7. Hook on the capability path.

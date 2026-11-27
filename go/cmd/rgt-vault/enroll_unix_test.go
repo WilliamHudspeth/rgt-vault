@@ -23,6 +23,6 @@ func TestEnrollSecretCreatedPrivateUnderZeroUmask(t *testing.T) {
 		t.Fatalf("secret directory %v %v", fi, err)
 	}
 	// And the forced replacement keeps it private.
-	e.mustCLI("", "enroll-2fa", "--out", out, "--force")
+	e.mustCLI("", "enroll-2fa", "--out", out, "--force", "--i-am-offline-operator")
 	assertMode0600(t, out)
 }

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"rgt-vault-server/internal/approval"
@@ -98,6 +99,16 @@ func (h *Handlers) reportApprovalFailure(w http.ResponseWriter, r *http.Request,
 	ev := approval.Event{RequestID: safeID(id), Operator: p.TokenID}
 	row := func(kind approval.EventKind, extra string) {
 		ev.Kind, ev.Detail = kind, base+extra
+		// Repeats of the noisy kinds from one token are coalesced into one
+		// row + one notification per window with a count; the kinds that
+		// matter (lockout, auto-deny) are naturally rare and never coalesced.
+		if kind == approval.EventThrottled || kind == approval.EventSeparation {
+			emit, n := h.events.allow(p.TokenID + "|" + string(kind))
+			if !emit {
+				return
+			}
+			ev.Detail += suppressedSuffix(n)
+		}
 		h.auditEvent(r, string(kind), sql.NullString{}, ev.Detail, agentCol(p))
 		h.notify(context.WithoutCancel(r.Context()), ev)
 	}
@@ -150,11 +161,36 @@ func (h *Handlers) gate(w http.ResponseWriter, r *http.Request, op approval.Gate
 		writeError(w, r, err)
 		return false
 	}
+	// Rate limit BEFORE parking, like the read path does: one agent token
+	// must not be able to bury the operator's queue.
+	if err := h.Vault.AllowGated(r.Context(), name, agent); err != nil {
+		writeError(w, r, err)
+		return false
+	}
 	if abacAction != "" && !h.Vault.PolicyAllows(agent, namespace, abacPurpose, abacAction) {
 		return true // the vault refuses and audits it
 	}
-	d := h.Broker.Consult(r.Context(), approval.NewRequest(agent, namespace, name, purpose,
-		approval.WithAction(string(op)), approval.With2FA(require2FA)))
+	req := approval.NewRequest(agent, namespace, name, purpose,
+		approval.WithAction(string(op)), approval.With2FA(require2FA))
+	if id, ok := approval.RequesterFrom(r.Context()); ok {
+		req.Requester = id
+	}
+	ticket, err := h.Broker.Submit(req)
+	if err != nil {
+		if errors.Is(err, approval.ErrTooManyPending) {
+			p, _ := PrincipalFromContext(r.Context())
+			ev := approval.Event{Kind: approval.EventQueueFull, Agent: agent, Operator: p.TokenID,
+				Detail: "token=" + p.TokenID + " ip=" + ClientIP(r) + " op=" + string(op) + " reason=pending request cap reached"}
+			if emit, n := h.events.allow(p.TokenID + "|" + string(ev.Kind)); emit {
+				ev.Detail += suppressedSuffix(n)
+				h.auditEvent(r, string(ev.Kind), store.Name(name), ev.Detail, sql.NullString{String: agent, Valid: agent != ""})
+				h.notify(context.WithoutCancel(r.Context()), ev)
+			}
+		}
+		writeError(w, r, err)
+		return false
+	}
+	d := ticket.Wait(r.Context())
 	if d.Allowed {
 		return true
 	}
@@ -163,4 +199,66 @@ func (h *Handlers) gate(w http.ResponseWriter, r *http.Request, op approval.Gate
 	writeError(w, r, newAppError(http.StatusForbidden, "PolicyDeniedError",
 		fmt.Sprintf("approval denied for %s of '%s' (%s): %s", op, name, namespace, d.Reason)))
 	return false
+}
+
+// eventCoalesceWindow: at most one audit row and one notification per
+// (token, event kind) per window for the noisy kinds.
+const eventCoalesceWindow = 10 * time.Second
+
+const maxCoalesceKeys = 4096
+
+type coalesceEntry struct {
+	last       time.Time
+	suppressed int
+}
+
+// eventLimiter coalesces repeated events. The zero value is ready.
+type eventLimiter struct {
+	mu  sync.Mutex
+	m   map[string]*coalesceEntry
+	now func() time.Time // tests
+}
+
+// allow reports whether the event with this key should be emitted now, and
+// how many identical events were suppressed since the last emission.
+func (l *eventLimiter) allow(key string) (emit bool, suppressed int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now
+	if l.now != nil {
+		now = l.now
+	}
+	t := now()
+	if l.m == nil {
+		l.m = map[string]*coalesceEntry{}
+	}
+	e := l.m[key]
+	if e != nil && t.Sub(e.last) < eventCoalesceWindow {
+		e.suppressed++
+		return false, 0
+	}
+	if e == nil {
+		if len(l.m) >= maxCoalesceKeys {
+			for k, old := range l.m { // drop entries whose window passed
+				if t.Sub(old.last) >= eventCoalesceWindow {
+					delete(l.m, k)
+				}
+			}
+		}
+		if len(l.m) >= maxCoalesceKeys {
+			return true, 0 // table full of live keys: emit, never lose an alert
+		}
+		e = &coalesceEntry{}
+		l.m[key] = e
+	}
+	n := e.suppressed
+	e.last, e.suppressed = t, 0
+	return true, n
+}
+
+func suppressedSuffix(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return " suppressed=" + strconv.Itoa(n)
 }

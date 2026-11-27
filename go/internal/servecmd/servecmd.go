@@ -412,8 +412,11 @@ func NewCommand(env Env, vf *VaultFlags) *cobra.Command {
 	fs.StringVar(&f.TOTPSecretFile, "totp-secret-file", "", "base32 TOTP secret for 2FA approvals (env RGT_VAULT_TOTP_SECRET_FILE; see enroll-2fa)")
 	fs.DurationVar(&f.ApprovalTimeout, "approval-timeout", DefaultApprovalTimeout, "how long an approval request waits before it is denied")
 	fs.StringVar(&f.RequireApprovalFor, "require-approval-for", "", "also require live operator approval for these operations: comma list of set, rotate, revoke or all (env RGT_VAULT_REQUIRE_APPROVAL_FOR; default none; the approver must be another token than the requester)")
-	fs.StringVar(&f.SecurityWebhookURL, "security-webhook-url", "", "POST approval security events (bad/replayed TOTP codes, lockouts, self-approval) to this http(s) URL (env RGT_VAULT_SECURITY_WEBHOOK_URL; loopback only unless --security-webhook-allow-remote)")
-	fs.BoolVar(&f.SecurityWebhookAllowRemote, "security-webhook-allow-remote", false, "let --security-webhook-url reach a non-loopback host")
+	fs.StringVar(&f.SecurityWebhookURL, "security-webhook-url", "", "DEPRECATED, use env RGT_VAULT_SECURITY_WEBHOOK_URL: POST approval security events (bad/replayed TOTP codes, lockouts, self-approval) to this http(s) URL ( loopback only unless --security-webhook-allow-remote)")
+	fs.BoolVar(&f.SecurityWebhookAllowRemote, "security-webhook-allow-remote", false, "let the security webhook reach a non-loopback host")
+	// The URL may carry a credential and a command-line flag is visible in
+	// `ps`: the environment variable is the supported way.
+	_ = fs.MarkDeprecated("security-webhook-url", "put the URL in the environment variable RGT_VAULT_SECURITY_WEBHOOK_URL: a command line is visible to other users in `ps`")
 	fs.StringVar(&f.HarnessKeyFile, "harness-key-file", "", "HMAC key for v2 capability tokens (env RGT_VAULT_HARNESS_KEY_FILE)")
 	fs.BoolVar(&f.AllowPrivateNetwork, "allow-private-network", false, "let built-in HTTP actions reach loopback/private addresses (SSRF risk)")
 	return cmd

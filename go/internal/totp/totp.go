@@ -23,8 +23,14 @@ import (
 	"crypto/subtle"
 	"encoding/base32"
 	"encoding/binary"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
+	"io/fs"
+	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,6 +57,7 @@ type params struct {
 	algorithm string
 	window    int
 	issuer    string
+	stateFile string
 }
 
 func defaults() params {
@@ -76,6 +83,14 @@ func WithWindow(steps int) Option { return func(p *params) { p.window = steps } 
 
 // WithIssuer sets the issuer label used by ProvisioningURI (default "rgt-vault").
 func WithIssuer(issuer string) Option { return func(p *params) { p.issuer = issuer } }
+
+// WithStateFile makes a ReplayGuardedVerifier remember the last accepted time
+// step across restarts: the step is written (atomically, 0600) before a code
+// is accepted, and loaded at construction, so a restart cannot reopen the
+// replay window of a code that was already used (RGT-510). The file also
+// carries a fingerprint of the secret: state of a replaced secret is ignored.
+// If the state cannot be written, codes are refused (fail closed).
+func WithStateFile(path string) Option { return func(p *params) { p.stateFile = path } }
 
 func resolve(opts []Option) (params, error) {
 	p := defaults()
@@ -290,7 +305,71 @@ func NewReplayGuardedVerifier(secret string, opts ...Option) (*ReplayGuardedVeri
 	if err != nil {
 		return nil, err
 	}
-	return &ReplayGuardedVerifier{key: key, p: p, lastCounter: -1}, nil
+	v := &ReplayGuardedVerifier{key: key, p: p, lastCounter: -1}
+	if p.stateFile != "" {
+		if err := v.loadState(); err != nil {
+			return nil, err
+		}
+	}
+	return v, nil
+}
+
+// keyFingerprint ties the state file to this secret.
+func (v *ReplayGuardedVerifier) keyFingerprint() string {
+	sum := sha256.Sum256(v.key)
+	return hex.EncodeToString(sum[:4])
+}
+
+// loadState reads the persisted step (if any) and proves the state file is
+// writable by writing it back.
+func (v *ReplayGuardedVerifier) loadState() error {
+	b, err := os.ReadFile(v.p.stateFile)
+	switch {
+	case err == nil:
+		f := strings.Fields(string(b))
+		if len(f) != 3 || f[0] != "v1" {
+			return fmt.Errorf("totp: state file %s is corrupt (delete it only if you know no code was used in the last minute)", v.p.stateFile)
+		}
+		n, perr := strconv.ParseInt(f[2], 10, 64)
+		if perr != nil {
+			return fmt.Errorf("totp: state file %s is corrupt", v.p.stateFile)
+		}
+		if f[1] == v.keyFingerprint() {
+			v.lastCounter = n
+		}
+	case !errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("totp: read state file: %w", err)
+	}
+	return v.persist(v.lastCounter)
+}
+
+// persist writes the step atomically with mode 0600 (a private temp file in
+// the same directory, then a rename).
+func (v *ReplayGuardedVerifier) persist(counter int64) error {
+	if v.p.stateFile == "" {
+		return nil
+	}
+	dir := filepath.Dir(v.p.stateFile)
+	tmp, err := os.CreateTemp(dir, ".totp-state-*")
+	if err != nil {
+		return fmt.Errorf("totp: write state file: %w", err)
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	_, werr := fmt.Fprintf(tmp, "v1 %s %d\n", v.keyFingerprint(), counter)
+	if werr == nil {
+		werr = tmp.Sync()
+	}
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return fmt.Errorf("totp: write state file: %w", werr)
+	}
+	if err := os.Rename(name, v.p.stateFile); err != nil {
+		return fmt.Errorf("totp: write state file: %w", err)
+	}
+	return nil
 }
 
 // Verify checks code against the current time. It has the signature the
@@ -345,6 +424,12 @@ func (v *ReplayGuardedVerifier) VerifyResultAt(code string, t time.Time) Result 
 		if replayed {
 			return ResultReplay
 		}
+		return ResultInvalid
+	}
+	// Persist BEFORE accepting: if the step cannot be recorded, the code is
+	// refused rather than risk a replay after a restart.
+	if err := v.persist(matched); err != nil {
+		log.Printf("ERROR: %v: refusing the TOTP code (fail closed)", err)
 		return ResultInvalid
 	}
 	v.lastCounter = matched

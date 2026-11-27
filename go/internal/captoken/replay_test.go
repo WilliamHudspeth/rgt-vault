@@ -180,3 +180,46 @@ func TestReplayErrorKind(t *testing.T) {
 		t.Fatalf("Error() = %q", got)
 	}
 }
+
+func TestReplayGuardDeferredConsume(t *testing.T) {
+	g, _ := guardFixture(t)
+	tok, _ := g.Sign("agent", "cap", 1, nil, 60)
+	// VerifyUnconsumed any number of times: nothing is recorded.
+	var claims *CapabilityV2Token
+	for i := 0; i < 3; i++ {
+		c, err := g.VerifyUnconsumed(tok)
+		if err != nil {
+			t.Fatal(err)
+		}
+		claims = c
+	}
+	if g.Len() != 0 {
+		t.Fatalf("VerifyUnconsumed recorded the token: Len = %d", g.Len())
+	}
+	if err := g.Consume(claims); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Consume(claims); !errors.Is(err, ErrReplay) {
+		t.Fatalf("second Consume = %v", err)
+	}
+	// Verify is both steps, and sees the consumed token as a replay.
+	if _, err := g.Verify(tok); !errors.Is(err, ErrReplay) {
+		t.Fatalf("Verify of a consumed token = %v", err)
+	}
+	// Consume refuses a new token when the cache is full of live ids.
+	g2, _ := guardFixture(t, WithReplayCacheSize(1))
+	a, _ := g2.Sign("agent", "cap", 1, map[string]any{"i": 1}, 60)
+	b, _ := g2.Sign("agent", "cap", 1, map[string]any{"i": 2}, 60)
+	ca, _ := g2.VerifyUnconsumed(a)
+	cb, _ := g2.VerifyUnconsumed(b)
+	if err := g2.Consume(ca); err != nil {
+		t.Fatal(err)
+	}
+	if err := g2.Consume(cb); !errors.Is(err, ErrReplay) || !strings.Contains(err.Error(), "cache full") {
+		t.Fatalf("Consume on a full cache = %v", err)
+	}
+	// Inner errors pass through VerifyUnconsumed.
+	if _, err := g.VerifyUnconsumed("garbage"); !errors.Is(err, ErrMalformed) {
+		t.Fatalf("garbage = %v", err)
+	}
+}

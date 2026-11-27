@@ -1,6 +1,10 @@
 package vault
 
-import "context"
+import (
+	"context"
+
+	"rgt-vault-server/internal/store"
+)
 
 // Requires2FA reports whether the ACTIVE version of (namespace, name) is
 // flagged require_2fa. A missing secret reports false. The server uses it to
@@ -40,4 +44,20 @@ func (v *Vault) PolicyAllows(agent, namespace, purpose, action string) bool {
 // empty purpose is allowed.
 func ValidateRequestFields(namespace, name, agent, purpose string) error {
 	return validateParams(pName(name), pNamespace(namespace), pAgent(agent), pPurpose(purpose, true))
+}
+
+// AllowGated applies the per-agent rate limiter (the one leases use) to a
+// mutating operation that is about to park an approval request, before it is
+// parked, so a single agent cannot flood the operator's queue. A refusal
+// writes a RATE_LIMITED row and is ErrRateLimited (HTTP 429).
+func (v *Vault) AllowGated(ctx context.Context, name, agent string) error {
+	if v.rateLimiter.Allow(agent) {
+		return nil
+	}
+	if err := v.withR(func() error {
+		return v.logAudit(ctx, "RATE_LIMITED", store.Name(name), "Agent: "+agent)
+	}); err != nil {
+		return err
+	}
+	return rateLimitedErr(agent)
 }

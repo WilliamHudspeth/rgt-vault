@@ -123,29 +123,80 @@ func TestEnrollForceNeedsOperatorAndRecordsFingerprint(t *testing.T) {
 	}
 }
 
-func TestEnrollForceWithoutOperatorConfiguredWarns(t *testing.T) {
+func TestEnrollForceFailsClosedWithoutAnOperatorToCheck(t *testing.T) {
 	e := newVaultEnv(t)
 	e.seed("prod", "k", "v")
 	out := filepath.Join(e.dir, "totp.secret")
 	e.mustCLI("", "enroll-2fa", "--out", out)
-
-	// No token store at all.
-	t.Setenv("RGT_VAULT_TOKEN_STORE", filepath.Join(e.dir, "absent.json"))
-	code, _, stderr := e.cli("", "enroll-2fa", "--out", out, "--force")
-	if code != 0 || !strings.Contains(stderr, "cannot check that you are an operator") || !strings.Contains(stderr, "operator token none") {
-		t.Fatalf("no store: exit %d err %q", code, stderr)
+	old := string(mustRead(t, out))
+	unchanged := func(what string) {
+		t.Helper()
+		if string(mustRead(t, out)) != old {
+			t.Fatalf("%s: the secret was replaced", what)
+		}
 	}
-	// A store with agent tokens only.
-	storePath := filepath.Join(e.dir, "agents.json")
-	if _, _, err := auth.OpenStore(storePath).Mint(auth.MintOptions{Agent: "bot", Scopes: []auth.Scope{auth.ScopeAgent}}); err != nil {
+
+	// An explicitly named store that does not exist is an error, with or
+	// without the acknowledgement (the review's bypass: a path nobody checks).
+	for _, args := range [][]string{
+		{"--token-store", filepath.Join(e.dir, "nonexistent.json")},
+		{"--token-store", filepath.Join(e.dir, "nonexistent.json"), "--i-am-offline-operator"},
+	} {
+		code, _, stderr := e.cli("", append([]string{"enroll-2fa", "--out", out, "--force"}, args...)...)
+		if code != 1 || !strings.Contains(stderr, "does not exist") {
+			t.Fatalf("%v: exit %d err %q", args, code, stderr)
+		}
+		unchanged(strings.Join(args, " "))
+	}
+	t.Setenv("RGT_VAULT_TOKEN_STORE", filepath.Join(e.dir, "absent.json"))
+	if code, _, stderr := e.cli("", "enroll-2fa", "--out", out, "--force", "--i-am-offline-operator"); code != 1 || !strings.Contains(stderr, "does not exist") {
+		t.Fatalf("explicit env store: exit %d err %q", code, stderr)
+	}
+	unchanged("env store")
+
+	// The same bypass against a store that DOES hold an operator token.
+	storePath := filepath.Join(e.dir, "tokens.json")
+	mintTokens(t, storePath)
+	t.Setenv("RGT_VAULT_TOKEN_STORE", storePath)
+	for _, args := range [][]string{
+		{},
+		{"--i-am-offline-operator"}, // the acknowledgement never replaces a real operator check
+		{"--token-store", filepath.Join(e.dir, "nonexistent.json")},
+	} {
+		code, _, stderr := e.cli("", append([]string{"enroll-2fa", "--out", out, "--force"}, args...)...)
+		if code != 1 {
+			t.Fatalf("%v: exit %d err %q", args, code, stderr)
+		}
+		unchanged(strings.Join(args, " "))
+	}
+
+	// No store at the DEFAULT location: refused until acknowledged.
+	t.Setenv("RGT_VAULT_TOKEN_STORE", "")
+	code, _, stderr := e.cli("", "enroll-2fa", "--out", out, "--force")
+	if code != 1 || !strings.Contains(stderr, "--i-am-offline-operator") {
+		t.Fatalf("default store missing: exit %d err %q", code, stderr)
+	}
+	unchanged("default store missing")
+	code, _, stderr = e.cli("", "enroll-2fa", "--out", out, "--force", "--i-am-offline-operator")
+	if code != 0 || !strings.Contains(stderr, "on your own say-so") || !strings.Contains(stderr, "operator token offline-ack") {
+		t.Fatalf("acknowledged: exit %d err %q", code, stderr)
+	}
+	// A store holding agent tokens only: same rule.
+	agentsOnly := filepath.Join(e.dir, "agents.json")
+	if _, _, err := auth.OpenStore(agentsOnly).Mint(auth.MintOptions{Agent: "bot", Scopes: []auth.Scope{auth.ScopeAgent}}); err != nil {
 		t.Fatal(err)
 	}
-	code, _, stderr = e.cli("", "enroll-2fa", "--out", out, "--force", "--token-store", storePath)
-	if code != 0 || !strings.Contains(stderr, "has no operator token") {
+	code, _, stderr = e.cli("", "enroll-2fa", "--out", out, "--force", "--token-store", agentsOnly)
+	if code != 1 || !strings.Contains(stderr, "has no operator token") {
 		t.Fatalf("agent-only store: exit %d err %q", code, stderr)
 	}
-	if n := len(auditActions(t, e, auditTOTPReplaced)); n != 2 {
-		t.Fatalf("audit rows = %d, want 2", n)
+	code, _, stderr = e.cli("", "enroll-2fa", "--out", out, "--force", "--token-store", agentsOnly, "--i-am-offline-operator")
+	if code != 0 {
+		t.Fatalf("agent-only store, acknowledged: exit %d err %q", code, stderr)
+	}
+	rows := auditActions(t, e, auditTOTPReplaced)
+	if len(rows) != 2 || !strings.Contains(rows[0].Details.String, "operator_token=offline-ack") {
+		t.Fatalf("audit rows = %+v", rows)
 	}
 }
 
@@ -158,7 +209,7 @@ func TestEnrollForceCorruptStoreRefuses(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := mustRead(t, out)
-	code, _, stderr := e.cli("", "enroll-2fa", "--out", out, "--force", "--token-store", bad)
+	code, _, stderr := e.cli("", "enroll-2fa", "--out", out, "--force", "--i-am-offline-operator", "--token-store", bad)
 	if code != 1 || !strings.Contains(stderr, "token store") {
 		t.Fatalf("corrupt store: exit %d err %q", code, stderr)
 	}
@@ -309,7 +360,7 @@ func TestCLISecurityWebhookNotifiesTokenAndTOTPChanges(t *testing.T) {
 	secretOut := filepath.Join(e.dir, "totp.secret")
 	e.mustCLI("", "enroll-2fa", "--out", secretOut)
 	oldSecret := strings.TrimSpace(string(mustRead(t, secretOut)))
-	if code, _, stderr = e.cli("", "enroll-2fa", "--out", secretOut, "--force"); code != 0 {
+	if code, _, stderr = e.cli("", "enroll-2fa", "--out", secretOut, "--force", "--i-am-offline-operator"); code != 0 {
 		t.Fatalf("force: %d %s", code, stderr)
 	}
 	mu.Lock()

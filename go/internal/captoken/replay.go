@@ -15,10 +15,10 @@ const DefaultReplayCacheSize = 4096
 // is ErrReplay.
 //
 // Semantics, chosen to fail closed:
-//   - the token is consumed when it is VERIFIED, before any later check
-//     (agent binding, policy, rate limit, handler). A request that is then
-//     refused or fails has still used the token: the harness mints a new one.
-//     This leaves no window in which two concurrent requests both pass.
+//   - the token is consumed atomically (Consume), before the hook, policy,
+//     rate limit and handler run. A request that is then refused or fails
+//     has still used the token: the harness mints a new one. This leaves no
+//     window in which two concurrent requests both pass.
 //   - expired ids are purged on every accept, so the cache never keeps a
 //     dead id. An expired token is refused by the inner verifier before it
 //     reaches the cache, so forgetting it cannot enable a replay.
@@ -33,6 +33,13 @@ const DefaultReplayCacheSize = 4096
 //   - state is in memory: a restart forgets it (a token is then valid
 //     again until its expiry; keep TTLs short).
 //
+// A caller that wants to consume the token LATER (the vault does: only after
+// the token's agent, capability, version and context bindings matched the
+// request, so a bystander who merely sees a token cannot burn it by
+// presenting it as someone else) uses the DeferredConsumer methods:
+// VerifyUnconsumed checks without recording, Consume then records. Verify is
+// both in one step.
+//
 // Do not combine it with hooks.TwoFactorHook on the same tokens: both
 // remember ids, so the second would see the first's entry as a replay.
 type ReplayGuard struct {
@@ -45,6 +52,16 @@ type ReplayGuard struct {
 }
 
 var _ TokenVerifier = (*ReplayGuard)(nil)
+var _ DeferredConsumer = (*ReplayGuard)(nil)
+
+// DeferredConsumer is implemented by verifiers that can split "is this token
+// authentic" from "mark it used". A caller that sees it should call
+// VerifyUnconsumed first and Consume once the request is known to match the
+// token; a refusal from Consume is an ErrReplay.
+type DeferredConsumer interface {
+	VerifyUnconsumed(token string) (*CapabilityV2Token, error)
+	Consume(tok *CapabilityV2Token) error
+}
 
 // ReplayGuardOption configures NewReplayGuard.
 type ReplayGuardOption func(*ReplayGuard)
@@ -84,17 +101,28 @@ func (g *ReplayGuard) Sign(agentID, capability string, capabilityVersion int, co
 // Verify implements TokenVerifier: the inner verification first (signature,
 // envelope, expiry), then the one-time check.
 func (g *ReplayGuard) Verify(token string) (*CapabilityV2Token, error) {
-	tok, err := g.inner.Verify(token)
-	if err != nil {
+	tok, err := g.VerifyUnconsumed(token)
+	if err != nil || tok == nil {
+		return tok, err
+	}
+	if err := g.Consume(tok); err != nil {
 		return nil, err
 	}
-	if tok == nil {
-		return nil, nil // the caller reports "verifier returned no token"
-	}
+	return tok, nil
+}
+
+// VerifyUnconsumed is the inner verification only; nothing is recorded.
+func (g *ReplayGuard) VerifyUnconsumed(token string) (*CapabilityV2Token, error) {
+	return g.inner.Verify(token)
+}
+
+// Consume records tok as used. A token that was already consumed, or a
+// cache full of live ids, is ErrReplay.
+func (g *ReplayGuard) Consume(tok *CapabilityV2Token) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if _, dup := g.seen[tok.TokenID]; dup {
-		return nil, newErr(kindReplay, "capability token already used")
+		return newErr(kindReplay, "capability token already used")
 	}
 	now := g.now().Unix()
 	for id, exp := range g.seen {
@@ -103,10 +131,10 @@ func (g *ReplayGuard) Verify(token string) (*CapabilityV2Token, error) {
 		}
 	}
 	if len(g.seen) >= g.max {
-		return nil, newErr(kindReplay, "replay cache full; refusing a new token")
+		return newErr(kindReplay, "replay cache full; refusing a new token")
 	}
 	g.seen[tok.TokenID] = tok.ExpiresAt
-	return tok, nil
+	return nil
 }
 
 // Len returns the number of remembered token ids (tests, metrics).
