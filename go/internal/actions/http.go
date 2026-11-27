@@ -9,9 +9,9 @@ import (
 	"io"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"unicode/utf8"
 
@@ -149,13 +149,13 @@ func contentType(v string) string {
 // reasonOf classifies a transport error without echoing its text.
 func reasonOf(err error) string {
 	var (
-		unknownCA *x509.UnknownAuthorityError
+		unknownCA x509.UnknownAuthorityError
 		certInv   x509.CertificateInvalidError
 		hostErr   x509.HostnameError
 		verifyErr *tls.CertificateVerificationError
 	)
 	switch {
-	case errors.Is(err, context.DeadlineExceeded), os.IsTimeout(err):
+	case errors.Is(err, context.DeadlineExceeded), isTimeout(err):
 		return "timeout"
 	case errors.Is(err, context.Canceled):
 		return "canceled"
@@ -196,4 +196,9 @@ func (e *endpoint) mapErr(r *outReq, err error) error {
 		return m
 	}
 	return execErr("Upstream %s %s failed (%s).", r.method, redact(r.url), reasonOf(err))
+}
+
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }

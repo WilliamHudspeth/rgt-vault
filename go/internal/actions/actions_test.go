@@ -258,6 +258,8 @@ func TestOpenAIChat_Validation(t *testing.T) {
 		{"base_url int", map[string]any{"model": "m", "messages": msgs, "base_url": 5}, "'base_url' must be a string"},
 		{"base_url ssrf", map[string]any{"model": "m", "messages": msgs, "base_url": "https://169.254.169.254"}, "private/internal address"},
 		{"base_url query", map[string]any{"model": "m", "messages": msgs, "base_url": "https://api.example.com/?x=1"}, "must not contain a query"},
+		{"base_url empty fragment", map[string]any{"model": "m", "messages": msgs, "base_url": "https://api.example.com/v1/files#"}, "must not contain a query"},
+		{"base_url empty query", map[string]any{"model": "m", "messages": msgs, "base_url": "https://api.example.com/v1/files?"}, "must not contain a query"},
 	}
 	for _, c := range bad {
 		_, err := run(t, r, "openai_chat", c.params)
@@ -702,5 +704,27 @@ func TestRedactAndContentType(t *testing.T) {
 	}
 	if contentType("") != "text/plain" || contentType("text/HTML; charset=x") != "text/html" || contentType("nonsense") != "text/plain" {
 		t.Error("contentType")
+	}
+}
+
+func TestEmptyAllowlistDeniesAndWrappedErrorsAreMasked(t *testing.T) {
+	srv, cfg := tlsServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	cfg.HostAllowlist = map[string][]string{"*": {strings.TrimPrefix(srv.URL, "https://")}, "http_get_with_auth": {}}
+	r := registry(t, cfg)
+	_, err := run(t, r, "http_get_with_auth", map[string]any{"url": srv.URL})
+	if err == nil || !strings.Contains(err.Error(), "allow-list") {
+		t.Fatalf("an empty per-action list must deny everything: %v", err)
+	}
+	if _, err := run(t, r, "http_post_with_auth", map[string]any{"url": srv.URL}); err != nil {
+		t.Fatalf("other actions keep the * entry: %v", err)
+	}
+
+	reg := NewRegistry(nil)
+	_ = reg.Register(Spec{Name: "wrap", Fn: func(context.Context, []byte, map[string]any) (map[string]any, error) {
+		return nil, fmt.Errorf("db password hunter2: %w", execErr("clean message"))
+	}})
+	_, err = run(t, reg, "wrap", nil)
+	if err == nil || err.Error() != "clean message" {
+		t.Fatalf("wrapper text must not reach the caller: %v", err)
 	}
 }

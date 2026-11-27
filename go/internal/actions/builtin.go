@@ -35,7 +35,8 @@ type Config struct {
 	// HostAllowlist restricts targets per action: the key is an action name
 	// (or "*" for every HTTP action without its own entry), the value a list of
 	// "host", "host:port" or "*.suffix[:port]" entries. An action with no entry
-	// is limited only by the address policy.
+	// is limited only by the address policy; an entry with an EMPTY list denies
+	// every host (fail closed).
 	HostAllowlist map[string][]string
 	// HeaderAllowlist, when non-empty, limits which caller headers are accepted
 	// (case-insensitive names).
@@ -104,11 +105,13 @@ func (b *builtins) newEndpoint(name string) (*endpoint, error) {
 		netguard.WithMaxRedirects(b.cfg.MaxRedirects),
 		netguard.WithTimeout(b.cfg.Timeout),
 	}
+	// A present entry, even an empty one, restricts the action (an empty list
+	// denies every host); only an absent entry falls through to "*".
 	list, ok := b.cfg.HostAllowlist[name]
 	if !ok {
-		list = b.cfg.HostAllowlist["*"]
+		list, ok = b.cfg.HostAllowlist["*"]
 	}
-	if len(list) > 0 {
+	if ok {
 		opts = append(opts, netguard.WithAllowedHosts(list...))
 	}
 	if b.cfg.RootCAs != nil {
@@ -343,7 +346,7 @@ func (b *builtins) planOpenAI(params map[string]any) (*outReq, error) {
 	if err != nil {
 		return nil, guardOrGeneric(err)
 	}
-	if u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
+	if strings.ContainsAny(base, "?#") || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
 		return nil, execErr("'base_url' must not contain a query or fragment.")
 	}
 	full := strings.TrimRight(base, "/") + "/v1/chat/completions"

@@ -53,7 +53,7 @@ func NewDialer(allowRemote bool) *net.Dialer {
 			if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 				return fmt.Errorf("netguard: %s is a link-local/metadata address, forbidden", ip)
 			}
-			if ip.IsUnspecified() || ip.IsMulticast() {
+			if v4 := ip.To4(); ip.IsUnspecified() || ip.IsMulticast() || (v4 != nil && v4[0] == 0) {
 				return fmt.Errorf("netguard: %s is an unspecified/multicast address, forbidden", ip)
 			}
 			if !allowRemote && !ip.IsLoopback() {

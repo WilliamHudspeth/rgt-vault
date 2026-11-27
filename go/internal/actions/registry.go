@@ -130,7 +130,7 @@ func (r *Registry) Execute(ctx context.Context, name string, secret []byte, para
 	if err != nil {
 		var ae *Error
 		if asError(err, &ae) {
-			return nil, err
+			return nil, ae // not err: a wrapper around it could carry other text
 		}
 		r.log.Error("action failed; details suppressed", "action", name)
 		return nil, execErr("Action '%s' failed; see server logs for details.", name)

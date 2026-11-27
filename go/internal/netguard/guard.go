@@ -30,17 +30,17 @@ type DialFunc func(ctx context.Context, network, address string) (net.Conn, erro
 // the policy at dial time and on every redirect hop. A Guard is immutable
 // after NewGuard and safe for concurrent use.
 type Guard struct {
-	allowPrivate     bool
-	allowInsecure    bool
-	allow            []allowEntry
-	resolver         Resolver
-	rootCAs          *x509.CertPool
-	maxRedirects     int
-	timeout          time.Duration
-	dialTimeout      time.Duration
-	baseDial         DialFunc
-	maxHeaderBytes   int64
-	responseHdrLimit time.Duration
+	allowPrivate   bool
+	allowInsecure  bool
+	allow          []allowEntry
+	allowSet       bool // WithAllowedHosts was used (an empty list then denies everything)
+	resolver       Resolver
+	rootCAs        *x509.CertPool
+	maxRedirects   int
+	timeout        time.Duration
+	dialTimeout    time.Duration
+	baseDial       DialFunc
+	maxHeaderBytes int64
 }
 
 // Option configures NewGuard.
@@ -65,8 +65,12 @@ func WithAllowInsecureHTTP(v bool) Option {
 // wildcard (any subdomain, not the apex). IPv6 literals are bracketed:
 // "[2001:db8::1]:443". The allow-list narrows, it never widens: a listed host
 // that resolves to a forbidden range is still refused.
+//
+// Calling it with no entries installs an empty allow-list, which denies every
+// host (fail closed).
 func WithAllowedHosts(entries ...string) Option {
 	return func(g *Guard) error {
+		g.allowSet = true
 		for _, e := range entries {
 			ent, err := parseAllowEntry(e)
 			if err != nil {
@@ -129,11 +133,10 @@ func WithDialFunc(f DialFunc) Option {
 // only, public addresses only, no redirects, 15 s timeout, system roots.
 func NewGuard(opts ...Option) (*Guard, error) {
 	g := &Guard{
-		resolver:         net.DefaultResolver,
-		timeout:          15 * time.Second,
-		dialTimeout:      10 * time.Second,
-		maxHeaderBytes:   64 << 10,
-		responseHdrLimit: 15 * time.Second,
+		resolver:       net.DefaultResolver,
+		timeout:        15 * time.Second,
+		dialTimeout:    10 * time.Second,
+		maxHeaderBytes: 64 << 10,
 	}
 	for _, o := range opts {
 		if err := o(g); err != nil {
@@ -207,10 +210,21 @@ func (g *Guard) DialContext(ctx context.Context, network, address string) (net.C
 		}
 	}
 	if lastErr == nil {
-		lastErr = blocked(ReasonDNS, host, "no usable address")
+		return nil, blocked(ReasonDNS, host, "no usable address")
 	}
-	return nil, lastErr
+	return nil, &dialError{host: host, cause: lastErr}
 }
+
+// dialError reports a failed connect without the resolved address (its text
+// is safe to show a caller); the cause stays reachable through Unwrap so
+// callers can still tell a timeout from a refusal.
+type dialError struct {
+	host  string
+	cause error
+}
+
+func (e *dialError) Error() string { return "netguard: connecting to " + e.host + " failed" }
+func (e *dialError) Unwrap() error { return e.cause }
 
 // resolve returns the validated addresses for host. A literal IP is validated
 // without a lookup.

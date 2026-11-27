@@ -12,7 +12,7 @@ import (
 func TestLegacyDialer_UnspecifiedAndMulticastRefused(t *testing.T) {
 	for _, allowRemote := range []bool{false, true} {
 		d := NewDialer(allowRemote)
-		for _, addr := range []string{"0.0.0.0:80", "[::]:80", "224.0.0.1:80", "[ff02::1]:80"} {
+		for _, addr := range []string{"0.0.0.0:80", "0.1.2.3:80", "[::]:80", "224.0.0.1:80", "[ff02::1]:80"} {
 			_, err := d.DialContext(context.Background(), "tcp", addr)
 			if err == nil {
 				t.Fatalf("allowRemote=%v %s: expected refusal", allowRemote, addr)

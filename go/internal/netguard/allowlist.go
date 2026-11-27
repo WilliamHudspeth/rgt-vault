@@ -3,6 +3,7 @@ package netguard
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 )
@@ -53,7 +54,7 @@ func parseAllowEntry(e string) (allowEntry, error) {
 		ent.wildcard = true
 		host = host[2:]
 	}
-	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	host = canonicalHost(host)
 	if host == "" || strings.ContainsAny(host, "*/@%?# \t") {
 		return allowEntry{}, fmt.Errorf("netguard: bad allow-list entry %q", raw)
 	}
@@ -73,10 +74,10 @@ func parsePort(s string) (int, error) {
 // allow-list configured everything passes this check (the range policy still
 // applies).
 func (g *Guard) hostAllowed(host string, port int) bool {
-	if len(g.allow) == 0 {
+	if !g.allowSet {
 		return true
 	}
-	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	host = canonicalHost(host)
 	for _, e := range g.allow {
 		if e.port != 0 && e.port != port {
 			continue
@@ -92,4 +93,15 @@ func (g *Guard) hostAllowed(host string, port int) bool {
 		}
 	}
 	return false
+}
+
+// canonicalHost lower-cases a host, drops one trailing dot and writes IP
+// literals in canonical form, so "2001:4860:4860:0:0:0:0:8888" and
+// "2001:4860:4860::8888" compare equal.
+func canonicalHost(h string) string {
+	h = strings.ToLower(strings.TrimSuffix(h, "."))
+	if a, err := netip.ParseAddr(h); err == nil && a.Zone() == "" {
+		return a.String()
+	}
+	return h
 }

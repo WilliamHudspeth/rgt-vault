@@ -70,8 +70,10 @@ func mustPrefix(s string) netip.Prefix { return netip.MustParsePrefix(s) }
 var v4Rules = []rule{
 	{mustPrefix("0.0.0.0/8"), "unspecified/this-network", true},
 	{mustPrefix("10.0.0.0/8"), "RFC1918 private", false},
+	{mustPrefix("100.100.100.200/32"), "cloud metadata address (Alibaba)", true}, // inside CGNAT, so it must come first
 	{mustPrefix("100.64.0.0/10"), "CGNAT shared address space", false},
 	{mustPrefix("127.0.0.0/8"), "loopback", false},
+	{mustPrefix("168.63.129.16/32"), "cloud metadata address (Azure wireserver)", true},
 	{mustPrefix("169.254.0.0/16"), "link-local/metadata", true},
 	{mustPrefix("172.16.0.0/12"), "RFC1918 private", false},
 	{mustPrefix("192.0.0.0/24"), "IETF protocol assignments", false},
@@ -87,7 +89,7 @@ var v4Rules = []rule{
 
 var v6Rules = []rule{
 	{mustPrefix("::1/128"), "loopback", false},
-	{mustPrefix("64:ff9b:1::/48"), "local-use NAT64", false}, // inside ::/8, so it must come first
+	{mustPrefix("64:ff9b:1::/48"), "local-use NAT64 (may embed a metadata address)", true}, // inside ::/8, so it must come first
 	{mustPrefix("::/8"), "unspecified/reserved", true},
 	{mustPrefix("100::/64"), "discard-only", false},
 	{mustPrefix("2001::/23"), "IETF protocol/Teredo", false},
@@ -95,6 +97,7 @@ var v6Rules = []rule{
 	{mustPrefix("2002::/16"), "6to4", false},
 	{mustPrefix("3fff::/20"), "documentation", false},
 	{mustPrefix("5f00::/16"), "SRv6 SIDs", false},
+	{mustPrefix("fd00:ec2::/32"), "cloud metadata address (AWS IPv6)", true}, // inside ULA, so it must come first
 	{mustPrefix("fc00::/7"), "unique-local (ULA)", false},
 	{mustPrefix("fe80::/10"), "link-local", true},
 	{mustPrefix("fec0::/10"), "site-local", false},

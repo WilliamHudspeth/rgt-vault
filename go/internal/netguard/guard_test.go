@@ -198,8 +198,12 @@ func TestDial_FallsBackAcrossValidatedAddresses(t *testing.T) {
 	g2 := newTestGuard(t, WithResolver(res), WithDialFunc(func(context.Context, string, string) (net.Conn, error) {
 		return nil, errors.New("down")
 	}))
-	if _, err := g2.DialContext(context.Background(), "tcp", "two.example:443"); err == nil || err.Error() != "down" {
-		t.Fatalf("got %v", err)
+	_, err = g2.DialContext(context.Background(), "tcp", "two.example:443")
+	if err == nil || strings.Contains(err.Error(), "93.184") || !strings.Contains(err.Error(), "two.example") {
+		t.Fatalf("connect failure must name the host, not the resolved IP: %v", err)
+	}
+	if u := errors.Unwrap(err); u == nil || u.Error() != "down" {
+		t.Fatalf("cause must stay reachable via Unwrap: %v", u)
 	}
 	// a cancelled context stops the fallback loop
 	ctx, cancel := context.WithCancel(context.Background())

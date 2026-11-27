@@ -44,7 +44,12 @@ func TestCheckIP_Table(t *testing.T) {
 		{"2001::1", false, true, "Teredo"},
 		{"2002:7f00:1::", false, true, "6to4"},
 		{"100::1", false, true, "discard"},
-		{"64:ff9b:1::1", false, true, "NAT64"},
+		{"64:ff9b:1::1", false, false, "local NAT64 (may embed metadata)"},
+		{"100.100.100.200", false, false, "Alibaba metadata inside CGNAT"},
+		{"168.63.129.16", false, false, "Azure wireserver"},
+		{"fd00:ec2::254", false, false, "AWS IPv6 metadata inside ULA"},
+		{"64:ff9b:1::a9fe:a9fe", false, false, "local NAT64 embedding metadata"},
+		{"100.100.100.201", false, true, "other CGNAT stays liftable"},
 		// never allowed: link-local, metadata, multicast, unspecified, reserved
 		{"169.254.169.254", false, false, "metadata"},
 		{"169.254.0.1", false, false, "link-local"},

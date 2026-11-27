@@ -29,7 +29,7 @@ func (g *Guard) Client() *http.Client {
 			RootCAs:    g.rootCAs,
 		},
 		TLSHandshakeTimeout:    g.dialTimeout,
-		ResponseHeaderTimeout:  g.responseHdrLimit,
+		ResponseHeaderTimeout:  g.timeout,
 		MaxResponseHeaderBytes: g.maxHeaderBytes,
 		DisableKeepAlives:      true,
 		DisableCompression:     true,
@@ -62,13 +62,26 @@ func (g *Guard) checkRedirect(req *http.Request, via []*http.Request) error {
 		return blocked(ReasonRedirect, "", "too many redirects")
 	}
 	first := via[0].URL
-	if strings.EqualFold(first.Scheme, "https") && strings.EqualFold(req.URL.Scheme, "http") {
-		return blocked(ReasonDowngrade, "", "redirect from https to http refused")
+	// Judge the whole chain, not just this hop: Go re-copies the original
+	// request's headers on every hop, so once ANY hop has left the original
+	// origin (e.g. an untrusted subdomain or another port) the credentials must
+	// stay stripped even if a later hop returns to it.
+	leftOrigin := origin(req.URL) != origin(first)
+	for _, v := range via {
+		if strings.EqualFold(v.URL.Scheme, "https") && strings.EqualFold(req.URL.Scheme, "http") {
+			return blocked(ReasonDowngrade, "", "redirect from https to http refused")
+		}
+		if origin(v.URL) != origin(first) {
+			leftOrigin = true
+		}
 	}
-	if _, err := g.checkParsed(req.URL); err != nil {
+	// Full URL checks (length, characters, scheme, host, allow-list, range).
+	if _, err := g.CheckURL(req.URL.String()); err != nil {
 		return err
 	}
-	if origin(req.URL) != origin(first) {
+	// The previous URL (path and query may carry tokens) is never sent on.
+	req.Header.Del("Referer")
+	if leftOrigin {
 		req.Header.Del("Authorization")
 		req.Header.Del("Proxy-Authorization")
 		req.Header.Del("Cookie")
