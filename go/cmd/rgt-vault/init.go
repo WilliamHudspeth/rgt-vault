@@ -17,6 +17,9 @@ import (
 
 // initOptions are the flags of `rgt-vault init`.
 type initOptions struct {
+	tokenStore        string
+	operatorAgent     string
+	legacy            bool
 	tokenFile         string
 	operatorTokenFile string
 	harnessKeyFile    string
@@ -28,23 +31,31 @@ func newInitCmd(vf *servecmd.VaultFlags, stdout io.Writer) *cobra.Command {
 	var o initOptions
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Create the vault and the bearer/operator token files (idempotent, non-destructive)",
+		Short: "Create the vault, the token store and an operator token (idempotent, non-destructive)",
 		Long: "Create everything `rgt-vault serve` needs:\n\n" +
 			"  - the vault: vault.db and keychain.json at --db, and the master secret in the --provider\n" +
 			"    backend (the keyring by default). An existing vault is only opened, never reset.\n" +
-			"  - the agent bearer token file (--token-file) and the operator token file\n" +
-			"    (--operator-token-file, the approve/deny scope), 32 random bytes each, mode 0600,\n" +
-			"    written atomically. Tokens are never printed.\n" +
+			"  - the per-agent token store (--token-store, hashes only) with one OPERATOR token for\n" +
+			"    --operator-agent (scopes agent, lease, audit, operator), whose plaintext goes to\n" +
+			"    --operator-token-file (0600, written atomically) for the CLI and the TUI. An existing\n" +
+			"    operator token file that is not in the store yet is imported (migration). Tokens are\n" +
+			"    never printed. Mint one token per agent afterwards: rgt-vault token mint --agent NAME.\n" +
 			"  - with --harness-key-file, an HMAC key for v2 capability tokens.\n\n" +
+			"With --legacy-shared-token init instead creates the pre-H1 shared agent token file\n" +
+			"(--token-file) and a separate operator token file, for `serve --legacy-shared-token`.\n\n" +
 			"Running init again changes nothing: existing files are kept (a token that is too weak is\n" +
-			"an error). --force replaces the token files and the harness key with new ones; it never\n" +
-			"touches vault.db or keychain.json. --tokens-only skips the vault.",
+			"an error). --force replaces the operator token (revoking the old one in the store), the\n" +
+			"token files and the harness key; it never touches vault.db or keychain.json.\n" +
+			"--tokens-only skips the vault.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runInit(cmd, vf, o, stdout)
 		},
 	}
-	cmd.Flags().StringVar(&o.tokenFile, "token-file", servecmd.DefaultTokenPath(), "agent bearer token file (0600)")
+	cmd.Flags().StringVar(&o.tokenStore, "token-store", "", "per-agent token store (env RGT_VAULT_TOKEN_STORE, default ~/.config/rgt-vault/tokens.json)")
+	cmd.Flags().StringVar(&o.operatorAgent, "operator-agent", "operator", "agent id of the operator token")
+	cmd.Flags().BoolVar(&o.legacy, "legacy-shared-token", false, "DEPRECATED: create the pre-H1 shared token files instead of the token store")
+	cmd.Flags().StringVar(&o.tokenFile, "token-file", servecmd.DefaultTokenPath(), "legacy only: shared agent bearer token file (0600)")
 	cmd.Flags().StringVar(&o.operatorTokenFile, "operator-token-file", servecmd.DefaultOperatorTokenPath(), "operator token file (0600); \"-\" skips it")
 	cmd.Flags().StringVar(&o.harnessKeyFile, "harness-key-file", "", "also create an HMAC key for v2 capability tokens at this path (0600)")
 	cmd.Flags().BoolVar(&o.tokensOnly, "tokens-only", false, "create only the token files, not the vault")
@@ -121,6 +132,10 @@ func ensureSecretFile(path, what string, force, isToken bool, mint func() ([]byt
 func runInit(cmd *cobra.Command, vf *servecmd.VaultFlags, o initOptions, out io.Writer) error {
 	ctx := cmd.Context()
 	var lines []string
+	if !o.legacy && cmd.Flags().Changed("token-file") {
+		return errors.New("--token-file is the pre-H1 shared token: it needs --legacy-shared-token " +
+			"(the default is the per-agent token store)")
+	}
 
 	// The vault first: if the master-secret provider is unusable nothing
 	// else has been written yet.
@@ -150,9 +165,18 @@ func runInit(cmd *cobra.Command, vf *servecmd.VaultFlags, o initOptions, out io.
 		token      bool
 		mint       func() ([]byte, error)
 	}
-	targets := []target{{o.tokenFile, "agent token file", true, newRandomToken}}
-	if o.operatorTokenFile != "-" {
-		targets = append(targets, target{o.operatorTokenFile, "operator token file", true, newRandomToken})
+	var targets []target
+	if o.legacy {
+		targets = append(targets, target{o.tokenFile, "agent token file", true, newRandomToken})
+		if o.operatorTokenFile != "-" {
+			targets = append(targets, target{o.operatorTokenFile, "operator token file", true, newRandomToken})
+		}
+	} else {
+		storeLines, err := initTokenStore(o)
+		if err != nil {
+			return err
+		}
+		lines = append(lines, storeLines...)
 	}
 	if o.harnessKeyFile != "" {
 		targets = append(targets, target{o.harnessKeyFile, "harness key file", false, newHarnessKey})
@@ -170,6 +194,100 @@ func runInit(cmd *cobra.Command, vf *servecmd.VaultFlags, o initOptions, out io.
 		fmt.Fprintln(out, "  "+l)
 	}
 	fmt.Fprintln(out, "Tokens are never printed. Next: write a policy, then")
-	fmt.Fprintln(out, "  rgt-vault serve --policy policy.yaml --token-file <agent token> [--operator-token-file <operator token>]")
+	if o.legacy {
+		fmt.Fprintln(out, "  rgt-vault serve --legacy-shared-token --policy policy.yaml --token-file <agent token> [--operator-token-file <operator token>]")
+		return nil
+	}
+	fmt.Fprintln(out, "  rgt-vault token mint --agent <name> [--scope agent,lease] --out <file>   (one per agent)")
+	fmt.Fprintln(out, "  rgt-vault serve --policy policy.yaml")
 	return nil
+}
+
+// operatorScopes are the scopes of the operator token init creates.
+var operatorScopes = []auth.Scope{auth.ScopeAgent, auth.ScopeOperator, auth.ScopeAudit, auth.ScopeLease}
+
+// initTokenStore makes sure the store holds an operator token whose
+// plaintext is in the operator token file. It returns summary lines.
+func initTokenStore(o initOptions) ([]string, error) {
+	storePath, err := tokenStorePath(o.tokenStore)
+	if err != nil {
+		return nil, err
+	}
+	st := auth.OpenStore(storePath)
+	if _, err := st.List(); err != nil { // a corrupt store is an error, never overwritten
+		return nil, fmt.Errorf("token store %s: %w", storePath, err)
+	}
+	if o.operatorTokenFile == "-" {
+		if err := ensureStoreFile(st); err != nil {
+			return nil, err
+		}
+		return []string{fmt.Sprintf("%-16s %s  (no operator token: --operator-token-file -)", "token store:", storePath)}, nil
+	}
+	if o.operatorTokenFile == "" {
+		return nil, errors.New("no path for the operator token file: home directory unknown, pass --operator-token-file")
+	}
+	opPath, err := server.ExpandHome(o.operatorTokenFile)
+	if err != nil {
+		return nil, err
+	}
+	var old string
+	b, rerr := os.ReadFile(opPath)
+	switch {
+	case rerr == nil:
+		old = string(b)
+	case !errors.Is(rerr, os.ErrNotExist):
+		return nil, fmt.Errorf("operator token file %s: %w", opPath, rerr)
+	}
+	mintOpts := auth.MintOptions{Agent: o.operatorAgent, Scopes: operatorScopes}
+	storeLine := fmt.Sprintf("%-16s %s (0600, hashes only)", "token store:", storePath)
+
+	if old != "" && !o.force {
+		if err := servecmd.TightenFile(opPath); err != nil {
+			return nil, fmt.Errorf("restricting operator token file %s: %w", opPath, err)
+		}
+		if err := servecmd.ValidateToken(old); err != nil {
+			return nil, fmt.Errorf("existing operator token file %s: %w; pass --force to replace it", opPath, err)
+		}
+		info, found, err := st.Contains(old)
+		if err != nil {
+			return nil, err
+		}
+		state := "kept (in the store as " + info.ID + ")"
+		if !found {
+			if info, err = st.Import(old, mintOpts); err != nil {
+				return nil, err
+			}
+			state = "imported into the store as " + info.ID
+		}
+		return []string{storeLine, fmt.Sprintf("%-16s %s  %s", "operator token:", opPath, state)}, nil
+	}
+
+	tok, info, err := st.Mint(mintOpts)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := writeSecretFile(opPath, []byte(tok+"\n"), true); err != nil {
+		_, _ = st.Revoke(info.ID) // never leave a token whose plaintext nobody has
+		return nil, err
+	}
+	state := "created as " + info.ID
+	if old != "" { // --force: retire the replaced token
+		state = "replaced, now " + info.ID
+		if prev, found, err := st.Contains(old); err == nil && found {
+			if _, err := st.Revoke(prev.ID); err != nil {
+				return nil, fmt.Errorf("revoking the replaced operator token %s: %w", prev.ID, err)
+			}
+			state += " (" + prev.ID + " revoked)"
+		}
+	}
+	return []string{storeLine, fmt.Sprintf("%-16s %s  %s (0600)", "operator token:", opPath, state)}, nil
+}
+
+// ensureStoreFile creates an empty store file if there is none.
+func ensureStoreFile(st *auth.Store) error {
+	if st.Exists() {
+		return nil
+	}
+	_, err := writeSecretFile(st.Path(), []byte("{\n  \"version\": 1,\n  \"tokens\": []\n}\n"), false)
+	return err
 }

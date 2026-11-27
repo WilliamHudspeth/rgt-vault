@@ -10,7 +10,7 @@ import (
 )
 
 func (e *vaultEnv) initArgs(extra ...string) []string {
-	return append([]string{"init",
+	return append([]string{"init", "--legacy-shared-token",
 		"--token-file", filepath.Join(e.dir, "cfg", "server.token"),
 		"--operator-token-file", filepath.Join(e.dir, "cfg", "operator.token")}, extra...)
 }
@@ -122,7 +122,7 @@ func TestInitOptions(t *testing.T) {
 	e := newVaultEnv(t)
 	// --tokens-only creates no vault; "-" skips the operator token.
 	tok := filepath.Join(e.dir, "t", "server.token")
-	code, out, stderr := runCLI(t, "", e.args("init", "--tokens-only", "--token-file", tok, "--operator-token-file", "-")...)
+	code, out, stderr := runCLI(t, "", e.args("init", "--legacy-shared-token", "--tokens-only", "--token-file", tok, "--operator-token-file", "-")...)
 	if code != 0 || strings.Contains(out, "vault:") || strings.Contains(out, "operator token file") {
 		t.Fatalf("exit %d out %q err %q", code, out, stderr)
 	}
@@ -133,13 +133,13 @@ func TestInitOptions(t *testing.T) {
 	// Unwritable token location, unknown provider, no token path.
 	blocker := filepath.Join(e.dir, "file")
 	_ = os.WriteFile(blocker, nil, 0o600)
-	if code, _, _ := runCLI(t, "", e.args("init", "--tokens-only", "--token-file", filepath.Join(blocker, "server.token"), "--operator-token-file", "-")...); code != 1 {
+	if code, _, _ := runCLI(t, "", e.args("init", "--legacy-shared-token", "--tokens-only", "--token-file", filepath.Join(blocker, "server.token"), "--operator-token-file", "-")...); code != 1 {
 		t.Errorf("unwritable path: exit %d", code)
 	}
-	if code, _, stderr := runCLI(t, "", "--db", e.db, "--provider", "tpm", "init", "--token-file", tok); code != 1 || !strings.Contains(stderr, "unknown provider") {
+	if code, _, stderr := runCLI(t, "", "--db", e.db, "--provider", "tpm", "init", "--legacy-shared-token", "--token-file", tok); code != 1 || !strings.Contains(stderr, "unknown provider") {
 		t.Errorf("bad provider: exit %d err %q", code, stderr)
 	}
-	if code, _, _ := runCLI(t, "", e.args("init", "--tokens-only", "--token-file", "", "--operator-token-file", "-")...); code != 1 {
+	if code, _, _ := runCLI(t, "", e.args("init", "--legacy-shared-token", "--tokens-only", "--token-file", "", "--operator-token-file", "-")...); code != 1 {
 		t.Errorf("empty token path: exit %d", code)
 	}
 }
@@ -149,8 +149,13 @@ func TestInitDefaultPathsUnderHome(t *testing.T) {
 	if code, _, stderr := runCLI(t, "", "--db", e.db, "init"); code != 0 {
 		t.Fatalf("init: %s", stderr)
 	}
-	assertMode0600(t, filepath.Join(e.home, ".config", "rgt-vault", "server.token"))
+	// Per-agent mode (the default): the store and the operator token, no
+	// shared server.token.
+	assertMode0600(t, filepath.Join(e.home, ".config", "rgt-vault", "tokens.json"))
 	assertMode0600(t, filepath.Join(e.home, ".config", "rgt-vault", "operator.token"))
+	if _, err := os.Stat(filepath.Join(e.home, ".config", "rgt-vault", "server.token")); err == nil {
+		t.Error("init created the legacy shared token without --legacy-shared-token")
+	}
 }
 
 // writeSecretFile never clobbers without overwrite, even when racing.

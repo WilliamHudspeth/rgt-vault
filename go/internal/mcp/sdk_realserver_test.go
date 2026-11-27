@@ -59,7 +59,9 @@ type realBackend struct {
 	signer     *captoken.HMACTokenVerifier
 }
 
-// startRealBackend serves the real router over httptest.
+// startRealBackend serves the real router over httptest with the LEGACY
+// shared token (the label-driven tests below name several agents with one
+// token). sdk_identity_test.go runs MCP on the per-agent token store.
 func startRealBackend(t *testing.T) *realBackend {
 	t.Helper()
 	dir := t.TempDir()
@@ -217,6 +219,8 @@ func TestSDKClient_RealRouter(t *testing.T) {
 	rb.seed(t, "prod", "api-key", "s3cr3t-value")
 
 	s := rgtmcp.NewServer(rb.URL, rb.AgentToken)
+	// This backend runs the legacy shared token: the label is the subject.
+	_ = s.SetAgent(rgtmcp.DefaultAgent)
 	s.SetLogger(log.New(io.Discard, "", 0))
 	cs, ctx := sdkSession(t, s)
 	call := func(name string, args map[string]any) (string, bool) {
@@ -361,6 +365,7 @@ func TestSDKClient_ExecuteCapability_TokenFile(t *testing.T) {
 func TestSDKClient_ListCapabilities_RealRouter(t *testing.T) {
 	rb := startRealBackend(t)
 	s := rgtmcp.NewServer(rb.URL, rb.AgentToken)
+	_ = s.SetAgent(rgtmcp.DefaultAgent) // legacy shared-token backend
 	s.SetLogger(log.New(io.Discard, "", 0))
 	cs, ctx := sdkSession(t, s)
 	names := func(agent string) map[string]bool {

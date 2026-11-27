@@ -34,6 +34,8 @@ func isolateEnv(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("RGT_VAULT_TOKEN", "")
+	t.Setenv("RGT_VAULT_TOKEN_FILE", "")
+	t.Setenv("RGT_VAULT_TOKEN_STORE", "")
 	t.Setenv("RGT_VAULT_MCP_AGENT", "")
 }
 
@@ -95,26 +97,27 @@ func TestSubcommands(t *testing.T) {
 			wantStdout: "Secret stored.\n"},
 		{name: "set from value file", args: []string{"set", "k", "--value-file", valueFile}, status: 200, resp: `{}`,
 			wantMethod: "POST", wantPath: "/v1/secrets",
-			wantBody:   map[string]any{"name": "k", "namespace": "default", "value": "from-file", "agent": "system", "purpose": ""},
+			wantBody:   map[string]any{"name": "k", "namespace": "default", "value": "from-file", "purpose": ""},
 			wantStdout: "Secret stored.\n"},
 		{name: "set server error", args: []string{"set", "k"}, stdin: "v", status: 500, resp: `{"error":"x"}`,
 			wantMethod: "POST", wantPath: "/v1/secrets",
-			wantBody: map[string]any{"name": "k", "namespace": "default", "value": "v", "agent": "system", "purpose": ""},
+			wantBody: map[string]any{"name": "k", "namespace": "default", "value": "v", "purpose": ""},
 			wantCode: 1, wantErr: "set failed: HTTP 500"},
 		{name: "get", args: []string{"get", "api-key", "--namespace", "prod"}, status: 200,
-			resp:       `{"namespace":"prod","secrets":[{"name":"api-key","namespace":"prod","value":"s3cr3t"}]}`,
-			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=prod&name=api-key", wantStdout: "s3cr3t\n"},
-		{name: "get escapes query values", args: []string{"get", "a b&c", "--namespace", "n?s"}, status: 200,
-			resp:       `{"secrets":[{"name":"a b&c","value":"v"}]}`,
-			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=n%3Fs&name=a+b%26c", wantStdout: "v\n"},
-		{name: "get not found (empty list)", args: []string{"get", "nope"}, status: 200, resp: `{"namespace":"default","secrets":[]}`,
-			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=default&name=nope", wantCode: 1, wantErr: "secret \"nope\" not found in namespace \"default\""},
-		{name: "get ignores non-exact names", args: []string{"get", "k"}, status: 200, resp: `{"secrets":[{"name":"k2","value":"x"}]}`,
-			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=default&name=k", wantCode: 1, wantErr: "secret \"k\" not found"},
-		{name: "get without value", args: []string{"get", "k"}, status: 200, resp: `{"secrets":[{"name":"k"}]}`,
-			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=default&name=k", wantCode: 1, wantErr: "server did not return a secret value"},
+			resp:       `{"namespace":"prod","name":"api-key","value":"s3cr3t"}`,
+			wantMethod: "POST", wantPath: "/v1/secrets/prod/api-key/lease", wantBody: map[string]any{}, wantStdout: "s3cr3t\n"},
+		{name: "get sends agent and purpose when given", args: []string{"get", "k", "--agent", "bot", "--purpose", "ci"}, status: 200,
+			resp:       `{"value":"v"}`,
+			wantMethod: "POST", wantPath: "/v1/secrets/default/k/lease", wantBody: map[string]any{"agent": "bot", "purpose": "ci"}, wantStdout: "v\n"},
+		{name: "get escapes path values", args: []string{"get", "a b&c", "--namespace", "n?s"}, status: 200,
+			resp:       `{"value":"v"}`,
+			wantMethod: "POST", wantPath: "/v1/secrets/n%3Fs/a%20b&c/lease", wantBody: map[string]any{}, wantStdout: "v\n"},
+		{name: "get not found", args: []string{"get", "nope"}, status: 404, resp: `{"error":"NotFound"}`,
+			wantMethod: "POST", wantPath: "/v1/secrets/default/nope/lease", wantBody: map[string]any{}, wantCode: 1, wantErr: "secret \"nope\" not found in namespace \"default\""},
+		{name: "get without value", args: []string{"get", "k"}, status: 200, resp: `{"name":"k"}`,
+			wantMethod: "POST", wantPath: "/v1/secrets/default/k/lease", wantBody: map[string]any{}, wantCode: 1, wantErr: "server did not return a secret value"},
 		{name: "get server error", args: []string{"get", "k"}, status: 401, resp: `{}`,
-			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=default&name=k", wantCode: 1, wantErr: "get failed: HTTP 401"},
+			wantMethod: "POST", wantPath: "/v1/secrets/default/k/lease", wantBody: map[string]any{}, wantCode: 1, wantErr: "get failed: HTTP 401"},
 		{name: "list prints names, never values", args: []string{"list", "--namespace", "prod"}, status: 200,
 			resp:       `{"namespace":"prod","secrets":[{"name":"a","value":"PLAINTEXT","created_at":"t1"},{"name":"b","created_at":"t2"}]}`,
 			wantMethod: "GET", wantPath: "/v1/secrets", wantQuery: "namespace=prod", wantStdout: "a\tt1\nb\tt2\n"},
@@ -354,7 +357,7 @@ func TestMCPSubcommandUsesInjectedStreams(t *testing.T) {
 
 func TestMCPAgentFlagAndEnv(t *testing.T) {
 	isolateEnv(t)
-	if got := mcpAgentLabel(""); got != "mcp-client" {
+	if got := mcpAgentLabel(""); got != "" { // none: the token decides (H1)
 		t.Errorf("default agent = %q", got)
 	}
 	t.Setenv("RGT_VAULT_MCP_AGENT", "env-bot")

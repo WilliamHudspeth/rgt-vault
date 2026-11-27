@@ -19,23 +19,25 @@ import (
 //	  GET  /healthz
 //	  GET  /crossdomain.xml, /clientaccesspolicy.xml   (restrictive 404)
 //
-//	Agent token:
+//	Scope agent (the subject is the token's agent; see authz.go):
 //	  POST /v1/secrets                              set a secret
-//	  GET  /v1/secrets?namespace=&agent=            list (never values)
-//	  GET  /v1/secrets?namespace=&name=             TODO(D5/H1) transitional plaintext lease
+//	  GET  /v1/secrets?namespace=                   list (never values)
 //	* GET  /v1/secrets/{namespace}/{name}           ciphertext fingerprint (RGT-502)
 //	  POST /v1/secrets/{namespace}/{name}/use       lease + run an action
-//	  POST /v1/secrets/{namespace}/{name}/revoke    revoke (?agent=)
-//	  POST /v1/rotate                               {"target": "master"|"dek"}
-//	  GET  /v1/audit?limit=&capability=             audit rows (RGT-166 filter)
-//	  POST /v1/audit/verify                         verify the hash chain
+//	  POST /v1/secrets/{namespace}/{name}/revoke    revoke
+//	* POST /v1/secrets/{namespace}/{name}/lease     plaintext value (agent AND lease scope; RGT-504)
 //	  POST /v1/policy/simulate                      ABAC decision
 //	  POST /v1/capabilities/execute                 run a capability (v2 token)
 //	  GET  /v1/capabilities                         registered capabilities
 //	  GET  /v1/capabilities/list?agent=             capabilities the agent may run
 //	* GET  /v1/actions                              registered actions
 //
-//	Operator token:
+//	Scope audit (or operator):
+//	  GET  /v1/audit?limit=&capability=             audit rows (RGT-166 filter)
+//	  POST /v1/audit/verify                         verify the hash chain
+//
+//	Scope operator:
+//	  POST /v1/rotate                               {"target": "master"|"dek"}
 //	  GET  /v1/requests                             pending approvals
 //	  POST /v1/requests/{id}/approve                {"totp_code", "operator"}
 //	  POST /v1/requests/{id}/deny                   {"reason", "operator"}
@@ -79,6 +81,7 @@ func NewRouter(h *handlers.Handlers, mw *Middleware) chi.Router {
 			r.Get("/", h.GetSecret)
 			r.Post("/use", h.UseSecret)
 			r.Post("/revoke", h.RevokeSecret)
+			r.Post("/lease", h.LeaseSecret)
 		})
 
 		r.Post("/rotate", h.Rotate)

@@ -500,8 +500,7 @@ func TestRotateEndpoints(t *testing.T) {
 		t.Fatalf("rotate master: %v", m)
 	}
 	// still readable through the vault after both rotations
-	if m := e.mustOK("GET", "/v1/secrets?namespace=default&name=k", nil); fmt.Sprint(m["secrets"]) == "[]" ||
-		m["secrets"].([]any)[0].(map[string]any)["value"] != "before-rotation" {
+	if m := e.mustOK("POST", "/v1/secrets/default/k/lease", map[string]any{"agent": "bot", "purpose": "ci"}); m["value"] != "before-rotation" {
 		t.Errorf("after rotation: %v", m)
 	}
 	if m := e.mustOK("POST", "/v1/audit/verify", nil); m["ok"] != true {
@@ -667,17 +666,19 @@ func TestApprovalOperatorFallbackAndNo2FA(t *testing.T) {
 	}
 }
 
-// --- D5 transitional plaintext route --------------------------------------
+// --- plaintext lease route (RGT-504; legacy mode here, scopes in authz_test) --
 
-func TestD5PlaintextLeaseRoute(t *testing.T) {
+func TestLeaseRoute(t *testing.T) {
 	e := newEnv(t, envOpts{})
 	e.set("ns", "k", "v1-value", nil)
 	e.set("ns", "other", "v2-value", nil)
 
-	m := e.mustOK("GET", "/v1/secrets?namespace=ns&name=k", nil)
-	s := m["secrets"].([]any)
-	if len(s) != 1 || s[0].(map[string]any)["value"] != "v1-value" || strings.Contains(fmt.Sprint(m), "v2-value") {
-		t.Fatalf("lookup = %v", m)
+	code, m, rec := e.call("POST", "/v1/secrets/ns/k/lease", e.agentTok, map[string]any{"agent": "bot", "purpose": "ci"})
+	if code != 200 || m["value"] != "v1-value" || strings.Contains(fmt.Sprint(m), "v2-value") {
+		t.Fatalf("lease = %d %v", code, m)
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Error("lease response is cacheable")
 	}
 	// audited as a lease and as an HTTP plaintext read
 	rows := e.auditRows("")
@@ -688,20 +689,24 @@ func TestD5PlaintextLeaseRoute(t *testing.T) {
 			break
 		}
 	}
-	if read == nil || read["secret_name"] != "k" || read["agent_id"] != "cli" ||
-		!strings.Contains(fmt.Sprint(read["details"]), "Purpose: cli get") {
+	if read == nil || read["secret_name"] != "k" || read["agent_id"] != "bot" ||
+		!strings.Contains(fmt.Sprint(read["details"]), "Purpose: ci") {
 		t.Errorf("SECRET_READ row = %v", read)
 	}
 	if !hasAction(rows, "LEASE_GRANTED") {
 		t.Error("no LEASE_GRANTED")
 	}
-	// ABAC applies (agent / purpose from the query)
-	if code, m := e.agent("GET", "/v1/secrets?namespace=ns&name=k&agent=intruder", nil); code != 403 {
+	// ABAC applies
+	if code, m := e.agent("POST", "/v1/secrets/ns/k/lease", map[string]any{"agent": "intruder"}); code != 403 {
 		t.Errorf("intruder: %d %v", code, m)
 	}
-	// missing: empty list
-	if m := e.mustOK("GET", "/v1/secrets?namespace=ns&name=missing", nil); fmt.Sprint(m["secrets"]) != "[]" {
-		t.Errorf("missing = %v", m)
+	// missing: 404
+	if code, m := e.agent("POST", "/v1/secrets/ns/missing/lease", map[string]any{"agent": "bot", "purpose": "ci"}); code != 404 {
+		t.Errorf("missing = %d %v", code, m)
+	}
+	// unknown body fields are refused (mass assignment, RGT-352)
+	if code, _ := e.agent("POST", "/v1/secrets/ns/k/lease", map[string]any{"agent": "bot", "admin": true}); code != 400 {
+		t.Errorf("unknown field: %d", code)
 	}
 	// a non-UTF-8 value cannot be returned as JSON
 	if err := e.stack.Vault.SetSecret(context.Background(), vault.SetSecretRequest{
@@ -709,8 +714,12 @@ func TestD5PlaintextLeaseRoute(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if code, m := e.agent("GET", "/v1/secrets?namespace=ns&name=bin", nil); code != 400 {
+	if code, m := e.agent("POST", "/v1/secrets/ns/bin/lease", map[string]any{"agent": "bot", "purpose": "ci"}); code != 400 {
 		t.Errorf("binary value: %d %v", code, m)
+	}
+	// the removed ?name= lookup answers 400 and never a value
+	if code, m := e.agent("GET", "/v1/secrets?namespace=ns&name=k", nil); code != 400 || strings.Contains(fmt.Sprint(m), "v1-value") {
+		t.Errorf("?name= = %d %v", code, m)
 	}
 }
 

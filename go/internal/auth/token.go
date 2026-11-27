@@ -100,17 +100,9 @@ func constantTimeCompare(a, b string) bool {
 // It accepts both "Bearer <token>" and raw token formats.
 // Returns the token ID (safe to log) on success, or an error on failure.
 func (ts *TokenStore) Verify(authHeader string) (string, error) {
-	if authHeader == "" {
-		return "", ErrMissingAuth
-	}
-
-	presented := strings.TrimSpace(authHeader)
-	if strings.HasPrefix(strings.ToLower(presented), "bearer ") {
-		presented = strings.TrimSpace(presented[7:])
-	}
-
-	if presented == "" {
-		return "", ErrEmptyToken
+	presented, err := presentedToken(authHeader)
+	if err != nil {
+		return "", err
 	}
 
 	stored, err := ts.Read()

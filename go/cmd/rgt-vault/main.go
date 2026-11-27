@@ -50,7 +50,10 @@ func serveEnv(stdout io.Writer) servecmd.Env {
 	return servecmd.Env{Stdout: stdout, NewProvider: newProvider, KDFParams: kdfParams, Ready: serveReady}
 }
 
-// resolveToken returns the bearer token from flag > env > token file.
+// resolveToken returns the bearer token from flag > $RGT_VAULT_TOKEN >
+// the file $RGT_VAULT_TOKEN_FILE > ~/.config/rgt-vault/operator.token (the
+// operator token `rgt-vault init` mints into the token store) >
+// ~/.config/rgt-vault/server.token (the legacy shared token).
 func resolveToken(flagVal string) string {
 	if flagVal != "" {
 		return flagVal
@@ -58,19 +61,31 @@ func resolveToken(flagVal string) string {
 	if v := os.Getenv("RGT_VAULT_TOKEN"); v != "" {
 		return v
 	}
+	if p := os.Getenv("RGT_VAULT_TOKEN_FILE"); p != "" {
+		return readTokenFile(p)
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	b, err := os.ReadFile(filepath.Join(home, ".config", "rgt-vault", "server.token"))
+	for _, name := range []string{"operator.token", "server.token"} {
+		if t := readTokenFile(filepath.Join(home, ".config", "rgt-vault", name)); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+func readTokenFile(path string) string {
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
 }
 
-// mcpAgentLabel resolves the MCP agent label: flag > $RGT_VAULT_MCP_AGENT >
-// mcp.DefaultAgent.
+// mcpAgentLabel resolves the optional MCP agent label: flag >
+// $RGT_VAULT_MCP_AGENT > "" (none: the server uses the token's agent).
 func mcpAgentLabel(flagVal string) string {
 	if flagVal != "" {
 		return flagVal
@@ -78,7 +93,7 @@ func mcpAgentLabel(flagVal string) string {
 	if v := os.Getenv("RGT_VAULT_MCP_AGENT"); v != "" {
 		return v
 	}
-	return mcp.DefaultAgent
+	return ""
 }
 
 // Build metadata, injected at release time via -ldflags by GoReleaser
@@ -131,7 +146,7 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 	}
 
 	rootCmd.PersistentFlags().StringVar(&host, "host", defaultHost, "server base URL (client subcommands)")
-	rootCmd.PersistentFlags().StringVar(&token, "token", "", "bearer token (overrides env RGT_VAULT_TOKEN and ~/.config/rgt-vault/server.token)")
+	rootCmd.PersistentFlags().StringVar(&token, "token", "", "bearer token (overrides env RGT_VAULT_TOKEN, $RGT_VAULT_TOKEN_FILE, ~/.config/rgt-vault/operator.token and the legacy server.token)")
 
 	// --db / --policy / --provider select the vault for every subcommand that
 	// opens the vault files (Python's global options).
@@ -158,7 +173,7 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 		},
 	}
 	setCmd.Flags().StringVar(&setNamespace, "namespace", "default", "secret namespace")
-	setCmd.Flags().StringVar(&setAgent, "agent", "system", "agent identity")
+	setCmd.Flags().StringVar(&setAgent, "agent", "", "agent label: with per-agent tokens the server uses the token's agent and refuses a different one (only legacy shared-token servers use it)")
 	setCmd.Flags().StringVar(&setPurpose, "purpose", "", "purpose label")
 	setCmd.Flags().StringVar(&setValueFile, "value-file", "", "read secret from file instead of stdin")
 
@@ -171,20 +186,25 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 		Use:   "get <name>",
 		Short: "Retrieve a secret value",
 		Long: "Print a secret's plaintext.\n\n" +
-			"By default the value comes from the running server (GET /v1/secrets?name=, a lease\n" +
-			"performed server-side; transitional, decision D5). With --offline (or an explicit --db) the\n" +
-			"vault files are opened locally instead: operator-only, no server involved, same ABAC\n" +
-			"policy (--policy) and the same audit rows. --purpose is required offline.",
+			"By default the value comes from the running server (POST /v1/secrets/{ns}/{name}/lease, a\n" +
+			"lease performed server-side as the token's agent; the token needs the agent AND lease\n" +
+			"scopes). With --offline (or an explicit --db) the vault files are opened locally instead:\n" +
+			"operator-only, no server involved, same ABAC policy (--policy) and the same audit rows.\n" +
+			"--purpose is required offline; --agent defaults to \"system\" offline.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if getOffline || cmd.Flags().Changed("db") {
-				return runGetOffline(cmd.Context(), &vf, args[0], getNamespace, getAgent, getPurpose, stdout)
+				agent := getAgent
+				if agent == "" {
+					agent = "system"
+				}
+				return runGetOffline(cmd.Context(), &vf, args[0], getNamespace, agent, getPurpose, stdout)
 			}
-			return newCLI().runGet(args[0], getNamespace)
+			return newCLI().runGet(args[0], getNamespace, getAgent, getPurpose)
 		},
 	}
 	getCmd.Flags().StringVar(&getNamespace, "namespace", "default", "secret namespace")
-	getCmd.Flags().StringVar(&getAgent, "agent", "system", "agent identity")
+	getCmd.Flags().StringVar(&getAgent, "agent", "", "agent label: with per-agent tokens the server uses the token's agent and refuses a different one (only legacy shared-token servers use it)")
 	getCmd.Flags().StringVar(&getPurpose, "purpose", "", "purpose label (required with --offline)")
 	getCmd.Flags().BoolVar(&getOffline, "offline", false, "open the vault files locally instead of asking a server (operator only)")
 
@@ -223,7 +243,7 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 			return newCLI().runSimulate(simAgent, simNamespace, simPurpose, simAction)
 		},
 	}
-	simulateCmd.Flags().StringVar(&simAgent, "agent", "system", "agent identity")
+	simulateCmd.Flags().StringVar(&simAgent, "agent", "", "agent to simulate (default: the token's agent; another agent needs the operator scope)")
 	simulateCmd.Flags().StringVar(&simNamespace, "namespace", "default", "secret namespace")
 	simulateCmd.Flags().StringVar(&simPurpose, "purpose", "", "purpose label")
 	simulateCmd.Flags().StringVar(&simAction, "action", "read", "action to simulate (read|write)")
@@ -317,7 +337,7 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 		},
 	}
 
-	mcpCmd.Flags().StringVar(&mcpAgent, "agent", "", "agent label sent with execute_secret (default $RGT_VAULT_MCP_AGENT, else \""+mcp.DefaultAgent+"\"); not an authenticated identity")
+	mcpCmd.Flags().StringVar(&mcpAgent, "agent", "", "agent label (default $RGT_VAULT_MCP_AGENT, else none): the server takes the agent from the token and refuses a different label; set it only for a legacy shared-token server (e.g. \""+mcp.DefaultAgent+"\")")
 
 	// -----------------------------------------------------------------------
 	// tui  — interactive Bubble Tea dashboard
@@ -337,6 +357,6 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 		initCmd, serveCmd, statusCmd, mcpCmd, tuiCmd,
 		newEnroll2FACmd(&vf, stdout), newExportCmd(&vf, stdout), newImportCmd(&vf, stdin, stdout),
 		newMigrateCmd(&vf, stdout), newProviderCmd(stdin, stdout),
-		newCryptoAuditCmd(stdout))
+		newCryptoAuditCmd(stdout), newTokenCmd(stdin, stdout))
 	return rootCmd
 }

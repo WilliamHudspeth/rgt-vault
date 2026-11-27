@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -243,12 +244,13 @@ func TestHandle_InvalidRequests(t *testing.T) {
 
 func TestCallTool_LeaseSecret_Found(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		if r.Method != http.MethodGet || r.URL.Path != "/v1/secrets" || q.Get("namespace") != "ns1" || q.Get("name") != "mykey" {
-			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		raw, _ := io.ReadAll(r.Body)
+		// RGT-504: POST .../lease, no self-asserted agent by default.
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/secrets/ns1/mykey/lease" || r.URL.RawQuery != "" || string(raw) != "{}" {
+			t.Errorf("unexpected request %s %s?%s %s", r.Method, r.URL.Path, r.URL.RawQuery, raw)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"namespace":"ns1","secrets":[{"name":"mykey","value":"s3cr3t"}]}`)
+		fmt.Fprint(w, `{"namespace":"ns1","name":"mykey","value":"s3cr3t"}`)
 	}))
 	defer ts.Close()
 	s := newTestServer(ts)
@@ -266,8 +268,8 @@ func TestCallTool_LeaseSecret_Found(t *testing.T) {
 
 func TestCallTool_LeaseSecret_NotFound(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The server answers an unknown exact name with an empty list.
-		fmt.Fprint(w, `{"namespace":"ns1","secrets":[]}`)
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, `{"error":"NotFound","detail":"secret ns1/missing not found at /var/lib/vault"}`)
 	}))
 	defer ts.Close()
 	s := newTestServer(ts)
@@ -280,21 +282,20 @@ func TestCallTool_LeaseSecret_NotFound(t *testing.T) {
 
 func TestCallTool_LeaseSecret_BackendErrorSanitized(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprint(w, `{"error":"NotFound","detail":"secret ns1/missing not found at /var/lib/vault"}`)
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"error":"AuthorizationError","detail":"insufficient scope at /var/lib/vault"}`)
 	}))
 	defer ts.Close()
 	text, isError := newTestServer(ts).callTool("lease_secret", map[string]any{"namespace": "ns1", "name": "missing"})
-	if !isError || text != "backend error: 404 Not Found" {
-		t.Errorf("expected sanitized 404, got (%q, %v)", text, isError)
+	if !isError || text != "backend error: 403 Forbidden" {
+		t.Errorf("expected sanitized 403, got (%q, %v)", text, isError)
 	}
 }
 
 func TestCallTool_LeaseSecret_NoValueOrBadJSON(t *testing.T) {
 	for body, want := range map[string]string{
-		`{"secrets":[{"name":"k"}]}`:                 "backend did not return a secret value",
-		`{"secrets":[{"name":"other","value":"x"}]}`: "secret not found",
-		`not json`: "backend returned an invalid response",
+		`{"name":"k"}`: "backend did not return a secret value",
+		`not json`:     "backend returned an invalid response",
 	} {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, body)
@@ -353,8 +354,8 @@ func TestCallTool_ExecuteSecret_OK(t *testing.T) {
 		if body["action"] != "echo" {
 			t.Errorf("expected action 'echo', got %v", body["action"])
 		}
-		if body["agent"] != "mcp-client" {
-			t.Errorf("expected agent 'mcp-client', got %v", body["agent"])
+		if _, has := body["agent"]; has {
+			t.Errorf("an agent label was sent by default (the token decides): %v", body["agent"])
 		}
 
 		params, ok := body["params"].(map[string]any)
@@ -707,15 +708,16 @@ func TestExecuteSecret_AgentAndPurpose(t *testing.T) {
 		t.Fatal("custom purpose failed")
 	}
 	want := [][2]string{
-		{DefaultAgent, defaultPurpose},
-		{DefaultAgent, defaultPurpose},
+		{"", defaultPurpose}, // no label: the server uses the token's agent
+		{"", defaultPurpose},
 		{"deploy-bot@ci", "rotate caf\u00e9 creds"}, // NFD in, NFC out
 	}
 	if len(got) != len(want) {
 		t.Fatalf("backend saw %d calls", len(got))
 	}
 	for i, w := range want {
-		if got[i]["agent"] != w[0] || got[i]["purpose"] != w[1] {
+		gotAgent, _ := got[i]["agent"].(string)
+		if gotAgent != w[0] || got[i]["purpose"] != w[1] {
 			t.Errorf("call %d: agent=%v purpose=%v, want %v", i, got[i]["agent"], got[i]["purpose"], w)
 		}
 	}
@@ -734,13 +736,17 @@ func TestExecuteSecret_AgentAndPurpose(t *testing.T) {
 	}
 
 	// Invalid agent labels are refused and leave the current one in place.
-	for _, bad := range []string{"", "has space", strings.Repeat("a", 129), "semi;colon"} {
+	for _, bad := range []string{"has space", strings.Repeat("a", 129), "semi;colon"} {
 		if err := s.SetAgent(bad); err == nil {
 			t.Errorf("SetAgent(%q) accepted", bad)
 		}
 	}
 	if s.agent != "deploy-bot@ci" {
 		t.Errorf("agent changed to %q", s.agent)
+	}
+	// "" clears the label.
+	if err := s.SetAgent(""); err != nil || s.agent != "" {
+		t.Errorf("SetAgent(\"\"): %v %q", err, s.agent)
 	}
 }
 

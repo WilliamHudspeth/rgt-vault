@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"rgt-vault-server/internal/auth"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -99,7 +100,7 @@ func TestClassifyAndAppError(t *testing.T) {
 // does not carry the operator scope, even if routing let it through.
 func TestOperatorHandlersRequireOperatorScope(t *testing.T) {
 	h := &Handlers{Broker: approval.NewBroker()}
-	for _, ctx := range []context.Context{context.Background(), WithAuth(context.Background(), "id", ScopeAgent)} {
+	for _, ctx := range []context.Context{context.Background(), WithPrincipal(context.Background(), auth.Principal{TokenID: "id", Agent: "a", Scopes: []auth.Scope{auth.ScopeAgent, auth.ScopeAudit}})} {
 		rec := httptest.NewRecorder()
 		h.ListRequests(rec, httptest.NewRequest("GET", "/v1/requests", nil).WithContext(ctx))
 		if rec.Code != http.StatusForbidden {
@@ -107,7 +108,7 @@ func TestOperatorHandlersRequireOperatorScope(t *testing.T) {
 		}
 	}
 	rec := httptest.NewRecorder()
-	h.ListRequests(rec, httptest.NewRequest("GET", "/v1/requests", nil).WithContext(WithAuth(context.Background(), "id", ScopeOperator)))
+	h.ListRequests(rec, httptest.NewRequest("GET", "/v1/requests", nil).WithContext(WithPrincipal(context.Background(), auth.Principal{TokenID: "id", Agent: "op", Scopes: []auth.Scope{auth.ScopeOperator}})))
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"requests":[]`) {
 		t.Errorf("operator: %d %s", rec.Code, rec.Body.String())
 	}

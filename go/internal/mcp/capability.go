@@ -180,9 +180,11 @@ func (s *Server) executeCapability(args map[string]any) (string, bool) {
 	if agent == "" {
 		agent = s.agent
 	}
-	agent, err := validation.ValidateAgent(agent)
-	if err != nil {
-		return "invalid agent_id: " + cleanText(err.Error(), maxErrorDetailRunes), true
+	if agent != "" { // "" = the token's agent (server-side)
+		var err error
+		if agent, err = validation.ValidateAgent(agent); err != nil {
+			return "invalid agent_id: " + cleanText(err.Error(), maxErrorDetailRunes), true
+		}
 	}
 	token, ok := stringArg(args, "capability_token")
 	if !ok {
@@ -211,13 +213,16 @@ func (s *Server) executeCapability(args map[string]any) (string, bool) {
 		payload = pm
 	}
 
-	body, err := json.Marshal(map[string]any{
+	req := map[string]any{
 		"capability":         capability,
-		"agent_id":           agent,
 		"capability_token":   token,
 		"capability_version": version,
 		"payload":            payload,
-	})
+	}
+	if agent != "" {
+		req["agent_id"] = agent
+	}
+	body, err := json.Marshal(req)
 	if err != nil {
 		return "encode error", true
 	}
@@ -294,11 +299,15 @@ func (s *Server) listCapabilities(args map[string]any) (string, bool) {
 	if agent == "" {
 		agent = s.agent
 	}
-	agent, err := validation.ValidateAgent(agent)
-	if err != nil {
-		return "invalid agent: " + cleanText(err.Error(), maxErrorDetailRunes), true
+	listURL := s.backendURL + "/v1/capabilities/list"
+	if agent != "" { // "" = the token's agent (server-side)
+		var err error
+		if agent, err = validation.ValidateAgent(agent); err != nil {
+			return "invalid agent: " + cleanText(err.Error(), maxErrorDetailRunes), true
+		}
+		listURL += "?agent=" + url.QueryEscape(agent)
 	}
-	resp, body, err := s.do("GET", s.backendURL+"/v1/capabilities/list?agent="+url.QueryEscape(agent), nil)
+	resp, body, err := s.do("GET", listURL, nil)
 	if err != nil {
 		return s.unreachable(tool, err)
 	}

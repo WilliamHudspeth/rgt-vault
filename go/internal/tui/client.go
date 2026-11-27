@@ -20,14 +20,11 @@ import (
 // server's default listen address (cmd/server: 127.0.0.1:8765).
 const DefaultBaseURL = "http://127.0.0.1:8765"
 
-// DefaultAgent is the agent label the TUI sends on list calls (python
-// tui_client: agent="operator"). It is a label for policy and audit, not an
-// authenticated identity.
+// DefaultAgent was the agent label the TUI sent on list calls before H1
+// (python tui_client: agent="operator"). It is no longer sent by default:
+// the server takes the agent from the bearer token (batch H1). SetAgent sets
+// a label for a legacy shared-token server.
 const DefaultAgent = "operator"
-
-// operatorLabel is the operator name recorded on approve/deny decisions
-// (python tui: operator="tui").
-const operatorLabel = "tui"
 
 // maxResponseBytes bounds how much of any server response is read.
 const maxResponseBytes = 4 << 20
@@ -71,7 +68,6 @@ func NewHTTPClient(baseURL, token string) *HTTPClient {
 	return &HTTPClient{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
-		agent:   DefaultAgent,
 		hc: &http.Client{
 			Timeout:   5 * time.Second,
 			Transport: &http.Transport{DialContext: netguard.NewDialer(true).DialContext},
@@ -84,8 +80,14 @@ func NewHTTPClient(baseURL, token string) *HTTPClient {
 // (and refuses it everywhere else).
 func (c *HTTPClient) SetOperatorToken(token string) { c.operatorToken = token }
 
-// SetAgent sets the agent label sent on list calls.
+// SetAgent sets the agent label sent on list calls and as the operator name
+// on approve/deny (legacy shared-token servers; with per-agent tokens it must
+// equal the token's agent). "" clears it.
 func (c *HTTPClient) SetAgent(agent string) error {
+	if agent == "" {
+		c.agent = ""
+		return nil
+	}
 	a, err := validation.ValidateAgent(agent)
 	if err != nil {
 		return err
@@ -189,7 +191,10 @@ func (c *HTTPClient) ListSecrets(namespace string) ([]SecretInfo, error) {
 	var lr struct {
 		Secrets []secretListItem `json:"secrets"`
 	}
-	q := url.Values{"namespace": {namespace}, "agent": {c.agent}}
+	q := url.Values{"namespace": {namespace}}
+	if c.agent != "" {
+		q.Set("agent", c.agent)
+	}
 	if err := c.request("list secrets", http.MethodGet, "/v1/secrets", q, c.token, nil, &lr); err != nil {
 		return nil, err
 	}
@@ -303,7 +308,10 @@ func (c *HTTPClient) Approve(requestID, totpCode string) error {
 	if totpCode != "" {
 		code = &totpCode
 	}
-	body := map[string]any{"totp_code": code, "operator": operatorLabel}
+	body := map[string]any{"totp_code": code}
+	if c.agent != "" {
+		body["operator"] = c.agent
+	}
 	return c.decide("approve", requestID, body)
 }
 
@@ -312,7 +320,11 @@ func (c *HTTPClient) Deny(requestID, reason string) error {
 	if reason == "" {
 		reason = "denied by operator"
 	}
-	return c.decide("deny", requestID, map[string]any{"reason": reason, "operator": operatorLabel})
+	body := map[string]any{"reason": reason}
+	if c.agent != "" {
+		body["operator"] = c.agent
+	}
+	return c.decide("deny", requestID, body)
 }
 
 func (c *HTTPClient) decide(verb, requestID string, body map[string]any) error {

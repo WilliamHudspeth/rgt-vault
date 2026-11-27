@@ -13,10 +13,15 @@
 //	--host / RGT_VAULT_HOST               listen address, default 127.0.0.1
 //	--port / RGT_VAULT_PORT               listen port, default 8765
 //	--allow-non-loopback                  permit a non-loopback --host
-//	--token-file / RGT_VAULT_TOKEN_FILE   agent bearer token, default
+//	--token-store / RGT_VAULT_TOKEN_STORE per-agent token store (hashes only), default
+//	                                      ~/.config/rgt-vault/tokens.json (batch H1;
+//	                                      manage it with `rgt-vault token`)
+//	--legacy-shared-token                 DEPRECATED: authenticate with the single shared
+//	                                      token file instead (self-asserted agent field)
+//	--token-file / RGT_VAULT_TOKEN_FILE   legacy only: shared agent token, default
 //	                                      ~/.config/rgt-vault/server.token
 //	--operator-token-file / RGT_VAULT_OPERATOR_TOKEN_FILE
-//	                                      token for /v1/requests* (approve/deny)
+//	                                      legacy only: token for /v1/requests*
 //	--require-approval                    live approval of every unseal
 //	--totp-secret-file / RGT_VAULT_TOTP_SECRET_FILE   base32 secret (2FA approvals)
 //	--approval-timeout                    default 120s
@@ -71,6 +76,10 @@ const (
 // DefaultTokenPath is ~/.config/rgt-vault/server.token ("" if there is no
 // home directory).
 func DefaultTokenPath() string { return configPath("server.token") }
+
+// DefaultTokenStorePath is ~/.config/rgt-vault/tokens.json, the per-agent
+// token store (hashes only).
+func DefaultTokenStorePath() string { return configPath("tokens.json") }
 
 // DefaultOperatorTokenPath is ~/.config/rgt-vault/operator.token.
 func DefaultOperatorTokenPath() string { return configPath("operator.token") }
@@ -186,6 +195,8 @@ type Flags struct {
 	Host                string
 	Port                string
 	AllowNonLoopback    bool
+	TokenStore          string
+	LegacySharedToken   bool
 	TokenFile           string
 	OperatorTokenFile   string
 	RequireApproval     bool
@@ -201,9 +212,13 @@ type config struct {
 	port      string
 	allowNonL bool
 	tokenFile string
-	origins   []string
-	rejected  []string
-	maxBody   int64
+	// tokenStore is the per-agent store; legacy selects the shared token
+	// files (tokenFile / operatorTokenFile) instead.
+	tokenStore string
+	legacy     bool
+	origins    []string
+	rejected   []string
+	maxBody    int64
 
 	vault               Resolved
 	operatorTokenFile   string
@@ -236,21 +251,37 @@ func parseConfig(f Flags, vf *VaultFlags, getenv func(string) string) (config, e
 		host:      firstNonEmpty(f.Host, getenv("RGT_VAULT_HOST"), DefaultHost),
 		port:      firstNonEmpty(f.Port, getenv("RGT_VAULT_PORT"), DefaultPort),
 		allowNonL: f.AllowNonLoopback,
-		tokenFile: firstNonEmpty(f.TokenFile, getenv("RGT_VAULT_TOKEN_FILE"), DefaultTokenPath()),
 		maxBody:   server.DefaultMaxBodyBytes,
+		legacy:    f.LegacySharedToken,
 
 		vault:               res,
-		operatorTokenFile:   firstNonEmpty(f.OperatorTokenFile, getenv("RGT_VAULT_OPERATOR_TOKEN_FILE")),
 		requireApproval:     f.RequireApproval,
 		totpSecretFile:      firstNonEmpty(f.TOTPSecretFile, getenv("RGT_VAULT_TOTP_SECRET_FILE")),
 		approvalTimeout:     f.ApprovalTimeout,
 		harnessKeyFile:      firstNonEmpty(f.HarnessKeyFile, getenv("RGT_VAULT_HARNESS_KEY_FILE")),
 		allowPrivateNetwork: f.AllowPrivateNetwork,
 	}
-	if cfg.tokenFile == "" {
-		return cfg, errors.New("no token path: home directory unknown, pass --token-file")
+	if cfg.legacy {
+		cfg.tokenFile = firstNonEmpty(f.TokenFile, getenv("RGT_VAULT_TOKEN_FILE"), DefaultTokenPath())
+		cfg.operatorTokenFile = firstNonEmpty(f.OperatorTokenFile, getenv("RGT_VAULT_OPERATOR_TOKEN_FILE"))
+		if f.TokenStore != "" {
+			return config{}, errors.New("--token-store does not apply with --legacy-shared-token")
+		}
+		if cfg.tokenFile == "" {
+			return cfg, errors.New("no token path: home directory unknown, pass --token-file")
+		}
+	} else {
+		if f.TokenFile != "" || f.OperatorTokenFile != "" {
+			return config{}, errors.New("--token-file and --operator-token-file are the pre-H1 shared tokens: they need " +
+				"--legacy-shared-token. The default is the per-agent token store (--token-store); move an existing " +
+				"token file into it with `rgt-vault token import --file FILE --agent NAME --scope ...`")
+		}
+		cfg.tokenStore = firstNonEmpty(f.TokenStore, getenv("RGT_VAULT_TOKEN_STORE"), DefaultTokenStorePath())
+		if cfg.tokenStore == "" {
+			return cfg, errors.New("no token store path: home directory unknown, pass --token-store")
+		}
 	}
-	if cfg.requireApproval && cfg.operatorTokenFile == "" {
+	if cfg.legacy && cfg.requireApproval && cfg.operatorTokenFile == "" {
 		// Without a separate operator token the approve/deny endpoints would
 		// accept the AGENT token, so any agent could approve its own request.
 		return config{}, errors.New("--require-approval needs --operator-token-file (or RGT_VAULT_OPERATOR_TOKEN_FILE): " +
@@ -335,8 +366,10 @@ func NewCommand(env Env, vf *VaultFlags) *cobra.Command {
 	fs.StringVar(&f.Host, "host", "", "listen address (env RGT_VAULT_HOST, default "+DefaultHost+")")
 	fs.StringVar(&f.Port, "port", "", "listen port (env RGT_VAULT_PORT, default "+DefaultPort+")")
 	fs.BoolVar(&f.AllowNonLoopback, "allow-non-loopback", false, "permit a non-loopback --host (plain HTTP: put a TLS reverse proxy in front)")
-	fs.StringVar(&f.TokenFile, "token-file", "", "agent bearer token file (env RGT_VAULT_TOKEN_FILE, default ~/.config/rgt-vault/server.token; created 0600 if missing)")
-	fs.StringVar(&f.OperatorTokenFile, "operator-token-file", "", "operator token for approve/deny (env RGT_VAULT_OPERATOR_TOKEN_FILE)")
+	fs.StringVar(&f.TokenStore, "token-store", "", "per-agent token store (env RGT_VAULT_TOKEN_STORE, default ~/.config/rgt-vault/tokens.json; see `rgt-vault token`)")
+	fs.BoolVar(&f.LegacySharedToken, "legacy-shared-token", false, "DEPRECATED: authenticate with one shared token file and the self-asserted agent field (pre-H1 behaviour)")
+	fs.StringVar(&f.TokenFile, "token-file", "", "legacy only: shared agent token file (env RGT_VAULT_TOKEN_FILE, default ~/.config/rgt-vault/server.token; created 0600 if missing)")
+	fs.StringVar(&f.OperatorTokenFile, "operator-token-file", "", "legacy only: operator token for approve/deny (env RGT_VAULT_OPERATOR_TOKEN_FILE)")
 	fs.BoolVar(&f.RequireApproval, "require-approval", false, "require live operator approval for every unseal")
 	fs.StringVar(&f.TOTPSecretFile, "totp-secret-file", "", "base32 TOTP secret for 2FA approvals (env RGT_VAULT_TOTP_SECRET_FILE; see enroll-2fa)")
 	fs.DurationVar(&f.ApprovalTimeout, "approval-timeout", DefaultApprovalTimeout, "how long an approval request waits before it is denied")
@@ -379,6 +412,75 @@ func loadToken(path, what string) (string, string, error) {
 	return p, token, nil
 }
 
+// authSetup is what loadAuth resolved: the per-agent store, or the legacy
+// shared token files.
+type authSetup struct {
+	store           *auth.Store
+	agent, operator *auth.TokenStore
+}
+
+// LegacyWarning is logged at startup with --legacy-shared-token.
+const LegacyWarning = "WARNING: --legacy-shared-token is DEPRECATED and insecure for more than one agent: every " +
+	"client holds the same token and the ABAC subject is the self-asserted \"agent\" field, so any agent can " +
+	"act as any other. Mint per-agent tokens (`rgt-vault token mint --agent NAME`) and drop the flag; see " +
+	"docs/guides/agent-identity-migration.md"
+
+// loadAuth prepares authentication. The tokens themselves are never printed.
+func loadAuth(cfg config, logger *log.Logger) (authSetup, string, error) {
+	if !cfg.legacy {
+		p, err := server.ExpandHome(cfg.tokenStore)
+		if err != nil {
+			return authSetup{}, "", err
+		}
+		st := auth.OpenStore(p)
+		infos, err := st.List()
+		if err != nil {
+			return authSetup{}, "", fmt.Errorf("token store %s: %w", p, err)
+		}
+		if len(infos) == 0 {
+			return authSetup{}, "", fmt.Errorf("token store %s has no tokens: run `rgt-vault init` (creates an operator "+
+				"token) and `rgt-vault token mint --agent NAME` for each agent", p)
+		}
+		if err := TightenFile(p); err != nil {
+			return authSetup{}, "", fmt.Errorf("restricting token store: %w", err)
+		}
+		ops := 0
+		for _, in := range infos {
+			if !in.Expired(time.Now()) && (auth.Principal{Scopes: in.Scopes}).Has(auth.ScopeOperator) {
+				ops++
+			}
+		}
+		if cfg.requireApproval && ops == 0 {
+			logger.Printf("WARNING: --require-approval but the token store has no live operator-scoped token: " +
+				"nobody can approve until one is minted (rgt-vault token mint --agent NAME --scope operator)")
+		}
+		logger.Printf("Token store: %s (%d tokens, %d with operator scope)", handlers.LogSafe(p), len(infos), ops)
+		return authSetup{store: st}, fmt.Sprintf("per-agent tokens from %s (%d)", p, len(infos)), nil
+	}
+
+	logger.Print(LegacyWarning)
+	path, token, err := loadToken(cfg.tokenFile, "agent token")
+	if err != nil {
+		return authSetup{}, "", err
+	}
+	tokenID := auth.TokenID(token)
+	logger.Printf("Token file: %s", handlers.LogSafe(path))
+	logger.Printf("Token ID: %s", tokenID)
+	setup := authSetup{agent: auth.NewTokenStore(path)}
+	if cfg.operatorTokenFile != "" {
+		opPath, opToken, err := loadToken(cfg.operatorTokenFile, "operator token")
+		if err != nil {
+			return authSetup{}, "", err
+		}
+		if tokensEqual(opToken, token) {
+			return authSetup{}, "", errors.New("the operator token must differ from the agent token")
+		}
+		setup.operator = auth.NewTokenStore(opPath)
+		logger.Printf("Operator token file: %s (id %s)", handlers.LogSafe(opPath), auth.TokenID(opToken))
+	}
+	return setup, fmt.Sprintf("LEGACY shared bearer token from %s (id %s)", path, tokenID), nil
+}
+
 // Run opens the vault described by cfg and serves until ctx is cancelled.
 func Run(ctx context.Context, cfg config, env Env) error {
 	if ctx == nil {
@@ -391,31 +493,12 @@ func Run(ctx context.Context, cfg config, env Env) error {
 		return fmt.Errorf("refusing to bind %s: not a loopback address (pass --allow-non-loopback to override)", cfg.host)
 	}
 
-	// Load or create the bearer token. The token itself is never printed.
-	path, token, err := loadToken(cfg.tokenFile, "agent token")
-	if err != nil {
-		return err
-	}
-	tokenID := auth.TokenID(token)
-	logger.Printf("Token file: %s", handlers.LogSafe(path))
-	logger.Printf("Token ID: %s", tokenID)
 	for _, bad := range cfg.rejected {
 		logger.Printf("WARNING: ignoring CORS origin %q (wildcards and \"null\" are not accepted)", handlers.LogSafe(bad))
 	}
-
-	tokenStore := auth.NewTokenStore(path)
-
-	var operatorStore *auth.TokenStore
-	if cfg.operatorTokenFile != "" {
-		opPath, opToken, err := loadToken(cfg.operatorTokenFile, "operator token")
-		if err != nil {
-			return err
-		}
-		if tokensEqual(opToken, token) {
-			return errors.New("the operator token must differ from the agent token")
-		}
-		operatorStore = auth.NewTokenStore(opPath)
-		logger.Printf("Operator token file: %s (id %s)", handlers.LogSafe(opPath), auth.TokenID(opToken))
+	authn, authLine, err := loadAuth(cfg, logger)
+	if err != nil {
+		return err
 	}
 	if cfg.allowPrivateNetwork {
 		logger.Printf("WARNING: --allow-private-network enables the built-in HTTP actions to call " +
@@ -455,8 +538,9 @@ func Run(ctx context.Context, cfg config, env Env) error {
 
 	router, err := server.New(server.Config{
 		Vault:          stack.Vault,
-		AgentTokens:    tokenStore,
-		OperatorTokens: operatorStore,
+		Tokens:         authn.store,
+		AgentTokens:    authn.agent,
+		OperatorTokens: authn.operator,
 		Broker:         stack.Broker,
 		Actions:        stack.Actions,
 		Capabilities:   stack.Capabilities,
@@ -483,7 +567,7 @@ func Run(ctx context.Context, cfg config, env Env) error {
 	fmt.Fprintf(stdout, "  Listening on %s\n", addr)
 	fmt.Fprintf(stdout, "  Vault: %s (id %s, epoch %d)\n", stack.DBPath, stack.Vault.VaultID(), stack.Vault.KeyEpoch())
 	fmt.Fprintf(stdout, "  Health check: http://%s/healthz\n", addr)
-	fmt.Fprintf(stdout, "  Auth: Bearer token from %s (id %s)\n", path, tokenID)
+	fmt.Fprintf(stdout, "  Auth: %s\n", authLine)
 	fmt.Fprintln(stdout, "==============================================")
 
 	srv := &http.Server{

@@ -118,7 +118,7 @@ func (c *cli) runSet(name, namespace, agent, purpose, valueFile string) error {
 		Name      string `json:"name"`
 		Namespace string `json:"namespace"`
 		Value     string `json:"value"`
-		Agent     string `json:"agent"`
+		Agent     string `json:"agent,omitempty"`
 		Purpose   string `json:"purpose"`
 	}{Name: name, Namespace: namespace, Value: value, Agent: agent, Purpose: purpose}
 
@@ -133,43 +133,38 @@ func (c *cli) runSet(name, namespace, agent, purpose, valueFile string) error {
 	return nil
 }
 
-// runGet fetches the plaintext through the server's transitional D5 route:
-// the exact-name filter GET /v1/secrets?namespace=&name= returns that one
-// secret with its value (audited). Unfiltered lists and the single-secret GET
-// are metadata only. TODO(D5/G10): becomes an offline, operator-only read.
-func (c *cli) runGet(name, namespace string) error {
-	// An empty name would turn the exact-name filter into an unfiltered list.
+// runGet fetches the plaintext through POST /v1/secrets/{ns}/{name}/lease
+// (RGT-504): a server-side lease as the token's agent, which needs a token
+// with the agent and lease scopes. agent and purpose are sent only when set.
+func (c *cli) runGet(name, namespace, agent, purpose string) error {
 	if name == "" {
 		return errors.New("secret name must not be empty")
 	}
-	reqURL := c.host + "/v1/secrets?namespace=" + url.QueryEscape(namespace) + "&name=" + url.QueryEscape(name)
-	body, status, err := c.do(http.MethodGet, reqURL, nil)
+	reqBody := struct {
+		Agent   string `json:"agent,omitempty"`
+		Purpose string `json:"purpose,omitempty"`
+	}{Agent: agent, Purpose: purpose}
+	body, status, err := c.do(http.MethodPost, c.secretURL(namespace, name, "lease"), reqBody)
 	if err != nil {
 		return err
+	}
+	if status == http.StatusNotFound {
+		return fmt.Errorf("secret %q not found in namespace %q", name, namespace)
 	}
 	if status != http.StatusOK {
 		return fmt.Errorf("get failed: HTTP %d", status)
 	}
 	var resp struct {
-		Secrets []struct {
-			Name  string  `json:"name"`
-			Value *string `json:"value"`
-		} `json:"secrets"`
+		Value *string `json:"value"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return fmt.Errorf("parsing response: %w", err)
 	}
-	for _, s := range resp.Secrets {
-		if s.Name != name {
-			continue
-		}
-		if s.Value == nil {
-			return errors.New("server did not return a secret value")
-		}
-		fmt.Fprintln(c.stdout, *s.Value)
-		return nil
+	if resp.Value == nil {
+		return errors.New("server did not return a secret value")
 	}
-	return fmt.Errorf("secret %q not found in namespace %q", name, namespace)
+	fmt.Fprintln(c.stdout, *resp.Value)
+	return nil
 }
 
 // listResponse matches {"namespace":"...","secrets":[...]} from GET /v1/secrets.
@@ -213,7 +208,7 @@ func (c *cli) runRevoke(name, namespace string) error {
 
 func (c *cli) runSimulate(agent, namespace, purpose, action string) error {
 	reqBody := struct {
-		Agent     string `json:"agent"`
+		Agent     string `json:"agent,omitempty"`
 		Namespace string `json:"namespace"`
 		Purpose   string `json:"purpose"`
 		Action    string `json:"action"`

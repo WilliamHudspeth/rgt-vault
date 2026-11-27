@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"rgt-vault-server/internal/actions"
 	"rgt-vault-server/internal/approval"
@@ -17,13 +18,24 @@ type Config struct {
 	// Vault is the open vault the server fronts. Required. The server does
 	// not close it.
 	Vault *vault.Vault
-	// AgentTokens holds the agent bearer token (every /v1 route except
-	// /v1/requests*). Required.
+	// Tokens is the per-agent token store (batch H1): every token maps to
+	// one agent_id and a scope set, and the ABAC subject of a request is
+	// the token's agent. Exactly one of Tokens and AgentTokens is required.
+	Tokens *auth.Store
+	// AgentTokens is the DEPRECATED legacy shared bearer token file
+	// (--legacy-shared-token): every caller holds the same token and the
+	// subject is the self-asserted "agent" field, as in Python.
 	AgentTokens *auth.TokenStore
-	// OperatorTokens holds the operator token for /v1/requests*. Nil means
-	// the approval endpoints accept the agent token (Python's behaviour
-	// without --operator-token-file; an agent could then self-approve).
+	// OperatorTokens is the legacy operator token for /v1/requests* (legacy
+	// mode only). Nil means the approval endpoints accept the agent token
+	// (Python's behaviour without --operator-token-file; an agent could
+	// then self-approve).
 	OperatorTokens *auth.TokenStore
+	// AuthFailureLimit / AuthFailureWindow bound audited authentication
+	// failures per source address (zero = DefaultAuthFailureLimit per
+	// DefaultAuthFailureWindow); beyond them failures get 429.
+	AuthFailureLimit  int
+	AuthFailureWindow time.Duration
 	// Broker serves /v1/requests*. It should be the vault's approval gate.
 	// Nil means those endpoints answer 409.
 	Broker *approval.Broker
@@ -42,14 +54,18 @@ type Config struct {
 // the full hardened middleware stack (loopback binding is the caller's job:
 // see cmd/server).
 //
-// Identity is the shared agent bearer token plus the self-asserted "agent"
-// field of each request, as in Python; per-agent identity is batch H1.
+// Identity is the per-agent token store (cfg.Tokens): the token decides the
+// agent and the scopes. cfg.AgentTokens selects the deprecated legacy shared
+// token instead (the caller warns about it).
 func New(cfg Config) (http.Handler, error) {
 	if cfg.Vault == nil {
 		return nil, errors.New("server: Config.Vault is required")
 	}
-	if cfg.AgentTokens == nil {
-		return nil, errors.New("server: Config.AgentTokens is required")
+	if (cfg.Tokens == nil) == (cfg.AgentTokens == nil) {
+		return nil, errors.New("server: exactly one of Config.Tokens and Config.AgentTokens (legacy) is required")
+	}
+	if cfg.Tokens != nil && cfg.OperatorTokens != nil {
+		return nil, errors.New("server: Config.OperatorTokens applies to the legacy shared token only; use an operator-scoped token")
 	}
 	h := &handlers.Handlers{
 		Vault:        cfg.Vault,
@@ -57,8 +73,15 @@ func New(cfg Config) (http.Handler, error) {
 		Capabilities: cfg.Capabilities,
 		Broker:       cfg.Broker,
 	}
-	mw := NewMiddleware(cfg.AgentTokens)
-	mw.OperatorTokenStore = cfg.OperatorTokens
+	var mw *Middleware
+	if cfg.Tokens != nil {
+		mw = NewStoreMiddleware(cfg.Tokens)
+	} else {
+		mw = NewMiddleware(cfg.AgentTokens)
+		mw.OperatorTokenStore = cfg.OperatorTokens
+	}
+	mw.Auditor = h
+	mw.SetAuthFailureLimit(cfg.AuthFailureLimit, cfg.AuthFailureWindow)
 	mw.AllowedOrigins = cfg.AllowedOrigins
 	if cfg.MaxBodyBytes > 0 {
 		mw.MaxBodyBytes = cfg.MaxBodyBytes

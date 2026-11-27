@@ -6,21 +6,21 @@
 // policy, the rate limiter, honeytokens, the approval gate and the
 // hash-chained audit log apply exactly as they do for in-process callers.
 // Secret values never cross the HTTP boundary, with ONE documented
-// exception: the transitional exact-name lookup on GET /v1/secrets
-// (decision D5, see listSecretWithValue).
+// exception: POST /v1/secrets/{ns}/{name}/lease, which needs a token with
+// both the agent and the lease scope (RGT-504; see LeaseSecret).
 //
-// Identity is still the shared bearer token plus a self-asserted "agent"
-// field, as in Python. Per-agent identity is batch H1.
+// Identity (batch H1, identity.go): the ABAC subject is the agent bound to
+// the caller's token in the per-agent token store; a request naming another
+// agent is refused. Only the deprecated --legacy-shared-token mode keeps
+// Python's self-asserted "agent" field.
 package handlers
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"reflect"
@@ -31,6 +31,7 @@ import (
 
 	"rgt-vault-server/internal/actions"
 	"rgt-vault-server/internal/approval"
+	"rgt-vault-server/internal/auth"
 	"rgt-vault-server/internal/capabilities"
 	"rgt-vault-server/internal/hooks/pyfmt"
 	"rgt-vault-server/internal/store"
@@ -67,61 +68,31 @@ func (h *Handlers) capabilityList() []*capabilities.Spec {
 }
 
 // ---------------------------------------------------------------------------
-// Authentication context (set by the server's auth middleware)
+// HTTP audit row (set by the server's auth middleware)
 // ---------------------------------------------------------------------------
 
-// Scope is the token scope a request authenticated with.
-type Scope int
-
-const (
-	// ScopeNone: the request did not authenticate (public route).
-	ScopeNone Scope = iota
-	// ScopeAgent: the agent bearer token (every /v1 route but /v1/requests*).
-	ScopeAgent
-	// ScopeOperator: the operator token (/v1/requests* only).
-	ScopeOperator
-)
-
-type authKey struct{}
-
-type authInfo struct {
-	tokenID string
-	scope   Scope
-}
-
-// WithAuth returns ctx carrying the authenticated token id and scope.
-func WithAuth(ctx context.Context, tokenID string, scope Scope) context.Context {
-	return context.WithValue(ctx, authKey{}, authInfo{tokenID: tokenID, scope: scope})
-}
-
-// AuthFromContext returns the token id and scope stored by WithAuth.
-func AuthFromContext(ctx context.Context) (tokenID string, scope Scope) {
-	a, _ := ctx.Value(authKey{}).(authInfo)
-	return a.tokenID, a.scope
-}
-
-// AuditHTTP writes one HTTP_API (agent scope) or HTTP_OPERATOR (operator
-// scope) row per authenticated request, before the handler runs: token id,
-// client IP, method and path (python require_token / require_operator_token).
-// The token itself is never recorded. A failed audit write fails the request
-// closed with a 500.
+// AuditHTTP writes one HTTP_API (or HTTP_OPERATOR for /v1/requests*) row per
+// authenticated request, before the handler runs: token id, client IP,
+// method and path, with the token's agent in the agent_id column (python
+// require_token / require_operator_token). The token itself is never
+// recorded. A failed audit write fails the request closed with a 500.
 func (h *Handlers) AuditHTTP(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tokenID, scope := AuthFromContext(r.Context())
-		if scope == ScopeNone || h.Vault == nil {
+		p, ok := PrincipalFromContext(r.Context())
+		if !ok || h.Vault == nil {
 			next.ServeHTTP(w, r)
 			return
 		}
 		event := "HTTP_API"
-		if scope == ScopeOperator {
+		if isOperatorRoute(r.URL.Path) {
 			event = "HTTP_OPERATOR"
 		}
-		client, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil || client == "" {
-			client = "?"
+		agent := sql.NullString{}
+		if p.Agent != "" {
+			agent = sql.NullString{String: p.Agent, Valid: true}
 		}
-		details := "token=" + tokenID + " ip=" + client + " " + r.Method + " " + r.URL.Path
-		if err := h.Vault.Audit(r.Context(), event, sql.NullString{}, details, sql.NullString{}); err != nil {
+		details := "token=" + p.TokenID + " ip=" + ClientIP(r) + " " + r.Method + " " + r.URL.Path
+		if err := h.Vault.Audit(r.Context(), event, sql.NullString{}, details, agent); err != nil {
 			writeError(w, r, err)
 			return
 		}
@@ -321,12 +292,16 @@ func (h *Handlers) SetSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, e)
 		return
 	}
+	agent, ok := h.subject(w, r, req.Agent, "cli", false)
+	if !ok {
+		return
+	}
 	ns := deref(req.Namespace, vault.DefaultNamespace)
 	value := []byte(*req.Value)
 	err := h.Vault.SetSecret(r.Context(), vault.SetSecretRequest{
 		Name:       *req.Name,
 		Namespace:  ns,
-		Agent:      deref(req.Agent, "cli"),
+		Agent:      agent,
 		Purpose:    deref(req.Purpose, ""),
 		Value:      value,
 		Note:       deref(req.Note, ""),
@@ -349,16 +324,21 @@ func (h *Handlers) SetSecret(w http.ResponseWriter, r *http.Request) {
 // ListSecrets handles GET /v1/secrets?namespace=&agent=&purpose=&limit=&offset=
 // (python list_secrets). The list never contains secret values.
 //
-// Go clients (CLI list, TUI, MCP) do not send agent; it defaults to "cli",
-// the Python CLI's default agent, and namespace defaults to "default".
-// Both are still subject to the ABAC policy.
+// The subject is the token's agent (?agent= may only repeat it); with the
+// legacy shared token it is ?agent=, default "cli" (the Python CLI's
+// default). namespace defaults to "default". ABAC "list" applies.
+//
+// The transitional ?name= plaintext lookup (decision D5) is gone (RGT-504):
+// it answers 400 and points at the lease endpoint.
 func (h *Handlers) ListSecrets(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	namespace := queryDefault(r, "namespace", vault.DefaultNamespace)
-	agent := queryDefault(r, "agent", "cli")
-
 	if _, ok := q["name"]; ok {
-		h.listSecretWithValue(w, r, namespace, q.Get("name"), agent)
+		writeError(w, r, badRequest("the name= filter was removed: read a value with POST /v1/secrets/{namespace}/{name}/lease (lease scope)"))
+		return
+	}
+	agent, ok := h.querySubject(w, r, "agent", "cli", false)
+	if !ok {
 		return
 	}
 
@@ -391,27 +371,44 @@ func (h *Handlers) ListSecrets(w http.ResponseWriter, r *http.Request) {
 	writeError(w, r, e)
 }
 
-// D5PurposeDefault is the purpose recorded for the transitional plaintext
-// lookup when the caller gives none.
-const D5PurposeDefault = "cli get"
+// ---------------------------------------------------------------------------
+// POST /v1/secrets/{namespace}/{name}/lease  (plaintext; lease scope)
+// ---------------------------------------------------------------------------
 
-// listSecretWithValue serves GET /v1/secrets?name=<exact>.
+// LeasePurposeDefault is the purpose recorded for a lease when the caller
+// gives none.
+const LeasePurposeDefault = "cli get"
+
+// LeaseRequest is the JSON body of the lease endpoint (all optional).
+type LeaseRequest struct {
+	Agent   *string `json:"agent"`
+	Purpose *string `json:"purpose"`
+}
+
+// LeaseSecret handles POST /v1/secrets/{namespace}/{name}/lease: the one
+// route that returns a secret value (Go CLI `get`, MCP `lease_secret`).
 //
-// TODO(D5/H1): transitional plaintext path. The Go CLI `get` and the MCP
-// `lease_secret` tool read a value through this route (go/cmd/rgt-vault
-// commands.go runGet, go/internal/mcp lease_secret). It is NOT a raw read:
-// it goes through vault.Lease, so the hook, rate limit, honeytokens, ABAC
-// "read" for (agent, namespace, purpose), the approval gate (and its 2FA)
-// and the LEASE_GRANTED/LEASE_RETURNED audit rows all apply, and a
-// SECRET_READ row records that the value left the process over HTTP. It is
-// still a plaintext-returning route behind the shared agent token, so it is
-// removed once an operator scope exists (H1) and `get` becomes an offline,
-// operator-only read (G10).
+// It replaces the transitional GET /v1/secrets?name= (RGT-504): a POST, so
+// the value is never tied to a cacheable or logged URL; it requires a token
+// with BOTH the agent and the lease scope (enforced by the auth
+// middleware), so an ordinary agent token can use secrets server-side but
+// never read them; the subject is the token's agent. It goes through
+// vault.Lease, so the hook, rate limit, honeytokens, ABAC "read", the
+// approval gate (and its 2FA) and the LEASE_* audit rows all apply, and a
+// SECRET_READ row records that the value left the process over HTTP.
 //
-// A secret that does not exist (or was revoked) is an empty list, not an
-// error, so the CLI prints its own "not found".
-func (h *Handlers) listSecretWithValue(w http.ResponseWriter, r *http.Request, namespace, name, agent string) {
-	purpose := queryDefault(r, "purpose", D5PurposeDefault)
+// A secret that does not exist (or was revoked) is a 404.
+func (h *Handlers) LeaseSecret(w http.ResponseWriter, r *http.Request) {
+	namespace, name := r.PathValue("namespace"), r.PathValue("name")
+	var req LeaseRequest
+	if !decodeOptionalJSON(w, r, &req) {
+		return
+	}
+	agent, ok := h.subject(w, r, req.Agent, "cli", false)
+	if !ok {
+		return
+	}
+	purpose := deref(req.Purpose, LeasePurposeDefault)
 	var value string
 	var notUTF8 bool
 	err := h.Vault.Lease(r.Context(), vault.LeaseRequest{
@@ -424,10 +421,6 @@ func (h *Handlers) listSecretWithValue(w http.ResponseWriter, r *http.Request, n
 		value = string(secret)
 		return nil
 	})
-	if errors.Is(err, vault.ErrNotFound) {
-		writeJSON(w, http.StatusOK, map[string]any{"namespace": namespace, "secrets": []any{}})
-		return
-	}
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -436,17 +429,16 @@ func (h *Handlers) listSecretWithValue(w http.ResponseWriter, r *http.Request, n
 		writeError(w, r, badRequest("secret value is not valid UTF-8 and cannot be returned as JSON"))
 		return
 	}
-	tokenID, _ := AuthFromContext(r.Context())
+	p, _ := PrincipalFromContext(r.Context())
 	details := "Agent: " + agent + ", Namespace: " + namespace + ", Purpose: " + purpose +
-		", Route: GET /v1/secrets?name= (D5 plaintext), token=" + tokenID
+		", Route: POST /v1/secrets/{ns}/{name}/lease, token=" + p.TokenID
 	if err := h.Vault.Audit(r.Context(), "SECRET_READ", store.Name(name), details, sql.NullString{String: agent, Valid: true}); err != nil {
 		writeError(w, r, err) // fail closed: no audit row, no value
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"namespace": namespace,
-		"secrets":   []map[string]string{{"name": name, "namespace": namespace, "value": value}},
-	})
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	writeJSON(w, http.StatusOK, map[string]any{"namespace": namespace, "name": name, "value": value})
 }
 
 // ---------------------------------------------------------------------------
@@ -496,8 +488,18 @@ func (h *Handlers) UseSecret(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if e := required(field("action", req.Action), field("agent", req.Agent)); e != nil {
+	if e := required(field("action", req.Action)); e != nil {
 		writeError(w, r, e)
+		return
+	}
+	// Python requires "agent"; the legacy mode keeps that. With per-agent
+	// tokens it is optional and may only repeat the token's agent.
+	if p, _ := PrincipalFromContext(r.Context()); p.Legacy && req.Agent == nil {
+		writeError(w, r, required(field("agent", req.Agent)))
+		return
+	}
+	agent, ok := h.subject(w, r, req.Agent, "", false)
+	if !ok {
 		return
 	}
 	if h.Actions == nil {
@@ -519,7 +521,7 @@ func (h *Handlers) UseSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	var result map[string]any
 	err = h.Vault.Lease(r.Context(), vault.LeaseRequest{
-		Name: name, Namespace: namespace, Agent: *req.Agent, Purpose: deref(req.Purpose, ""),
+		Name: name, Namespace: namespace, Agent: agent, Purpose: deref(req.Purpose, ""),
 	}, func(secret []byte) error {
 		var aerr error
 		result, aerr = h.Actions.Execute(r.Context(), *req.Action, secret, req.Params)
@@ -540,7 +542,10 @@ func (h *Handlers) UseSecret(w http.ResponseWriter, r *http.Request) {
 // (python revoke; agent defaults to "system"). Any request body is ignored.
 func (h *Handlers) RevokeSecret(w http.ResponseWriter, r *http.Request) {
 	namespace, name := r.PathValue("namespace"), r.PathValue("name")
-	agent := queryDefault(r, "agent", vault.SystemAgent)
+	agent, ok := h.querySubject(w, r, "agent", vault.SystemAgent, false)
+	if !ok {
+		return
+	}
 	if err := h.Vault.RevokeSecret(r.Context(), namespace, name, agent); err != nil {
 		writeError(w, r, err)
 		return
@@ -705,11 +710,20 @@ func (h *Handlers) PolicySimulate(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if e := required(field("agent", req.Agent), field("namespace", req.Namespace)); e != nil {
+	if p, _ := PrincipalFromContext(r.Context()); p.Legacy && req.Agent == nil {
+		writeError(w, r, required(field("agent", req.Agent)))
+		return
+	}
+	if e := required(field("namespace", req.Namespace)); e != nil {
 		writeError(w, r, e)
 		return
 	}
-	d, err := h.Vault.Simulate(r.Context(), *req.Agent, *req.Namespace, deref(req.Purpose, ""), deref(req.Action, "read"))
+	// An operator may simulate any agent; an agent only itself.
+	agent, ok := h.subject(w, r, req.Agent, "", true)
+	if !ok {
+		return
+	}
+	d, err := h.Vault.Simulate(r.Context(), agent, *req.Namespace, deref(req.Purpose, ""), deref(req.Action, "read"))
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -725,7 +739,7 @@ func (h *Handlers) PolicySimulate(w http.ResponseWriter, r *http.Request) {
 // operator scope (defence in depth behind the auth middleware) and one made
 // while no broker is active (409, as in Python).
 func (h *Handlers) requireOperator(w http.ResponseWriter, r *http.Request) bool {
-	if _, scope := AuthFromContext(r.Context()); scope != ScopeOperator {
+	if p, ok := PrincipalFromContext(r.Context()); !ok || !p.Has(auth.ScopeOperator) {
 		writeError(w, r, newAppError(http.StatusForbidden, "ServerAuthError", "operator token required"))
 		return false
 	}
@@ -790,8 +804,12 @@ func (h *Handlers) Approve(w http.ResponseWriter, r *http.Request) {
 	if !decodeOptionalJSON(w, r, &req) {
 		return
 	}
+	operator, ok := h.subject(w, r, req.Operator, "operator", false)
+	if !ok {
+		return
+	}
 	id := r.PathValue("id")
-	if err := h.Broker.Approve(id, deref(req.TOTPCode, ""), deref(req.Operator, "operator")); err != nil {
+	if err := h.Broker.Approve(id, deref(req.TOTPCode, ""), operator); err != nil {
 		writeError(w, r, err) // ApprovalError -> 400
 		return
 	}
@@ -807,8 +825,12 @@ func (h *Handlers) Deny(w http.ResponseWriter, r *http.Request) {
 	if !decodeOptionalJSON(w, r, &req) {
 		return
 	}
+	operator, ok := h.subject(w, r, req.Operator, "operator", false)
+	if !ok {
+		return
+	}
 	id := r.PathValue("id")
-	if err := h.Broker.Deny(id, deref(req.Reason, "denied by operator"), deref(req.Operator, "operator")); err != nil {
+	if err := h.Broker.Deny(id, deref(req.Reason, "denied by operator"), operator); err != nil {
 		writeError(w, r, err)
 		return
 	}
@@ -842,9 +864,18 @@ func (h *Handlers) ExecuteCapability(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if e := required(field("capability", req.Capability), field("agent_id", req.AgentID),
-		field("capability_token", req.CapabilityToken)); e != nil {
+	if p, _ := PrincipalFromContext(r.Context()); p.Legacy && req.AgentID == nil {
+		writeError(w, r, required(field("agent_id", req.AgentID)))
+		return
+	}
+	if e := required(field("capability", req.Capability), field("capability_token", req.CapabilityToken)); e != nil {
 		writeError(w, r, e)
+		return
+	}
+	// The capability token is also bound to an agent; the vault checks it
+	// against this subject.
+	agent, ok := h.subject(w, r, req.AgentID, "", false)
+	if !ok {
 		return
 	}
 	version := deref(req.CapabilityVersion, 1)
@@ -856,7 +887,7 @@ func (h *Handlers) ExecuteCapability(w http.ResponseWriter, r *http.Request) {
 	result, err := h.Vault.ExecuteCapability(r.Context(), vault.CapabilityRequest{
 		Capability: *req.Capability,
 		Version:    version,
-		Agent:      *req.AgentID,
+		Agent:      agent,
 		Token:      *req.CapabilityToken,
 		Payload:    req.Payload,
 	})
@@ -932,11 +963,14 @@ func (h *Handlers) ListCapabilities(w http.ResponseWriter, r *http.Request) {
 // agent to execute (action = capability name).
 func (h *Handlers) ListAuthorizedCapabilities(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	if !q.Has("agent") {
+	if p, _ := PrincipalFromContext(r.Context()); p.Legacy && !q.Has("agent") {
 		writeError(w, r, unprocessable("query parameter 'agent' is required"))
 		return
 	}
-	agent := q.Get("agent")
+	agent, ok := h.querySubject(w, r, "agent", "", true)
+	if !ok {
+		return
+	}
 	namespace := queryDefault(r, "namespace", "*")
 	purpose := queryDefault(r, "purpose", "*")
 	engine := h.Vault.Policy()

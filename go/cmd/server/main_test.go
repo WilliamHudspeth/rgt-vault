@@ -79,13 +79,13 @@ func TestSystemdUnitIsSandboxed(t *testing.T) {
 	}
 	for _, want := range []string{
 		"/rgt-vault serve", "--db /var/lib/rgt-vault/vault.db", "--policy /etc/rgt-vault/policy.yaml",
-		"--provider platform", "--port 8765", "--token-file /var/lib/rgt-vault/server.token",
+		"--provider platform", "--port 8765", "--token-store /var/lib/rgt-vault/tokens.json", // per-agent tokens (H1)
 	} {
 		if !strings.Contains(exec, want) {
 			t.Errorf("ExecStart lacks %q:\n%s", want, exec)
 		}
 	}
-	if strings.Contains(exec, "8080") || strings.Contains(exec, "rgt-vault-server") {
+	if strings.Contains(exec, "8080") || strings.Contains(exec, "rgt-vault-server") || strings.Contains(exec, "--token-file") {
 		t.Errorf("ExecStart still uses the old port/binary:\n%s", exec)
 	}
 	if !bytes.Contains(raw, []byte("VAULT_TPM_PRIV=")) {
