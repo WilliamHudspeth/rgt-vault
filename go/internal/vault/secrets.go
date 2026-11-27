@@ -256,10 +256,17 @@ func (v *Vault) unseal(ctx context.Context, req LeaseRequest) ([]byte, error) {
 		if err := v.checkHoneytoken(ctx, ns, name, agent, req.Purpose); err != nil {
 			return err
 		}
+		ct, dekVersion, err := v.fetch(ctx, ns, name, req.Version)
+		if err != nil {
+			return err
+		}
+		// Checked AFTER the fetch: a write that flagged 2FA and landed
+		// before it is seen here (fail closed), one after it did not
+		// produce the row we hold.
 		if !require2FA {
-			now, err := v.require2FA(ctx, ns, name, req.Version)
-			if err != nil {
-				return err
+			now, rerr := v.require2FA(ctx, ns, name, req.Version)
+			if rerr != nil {
+				return rerr
 			}
 			if now {
 				reason := "second factor required (flag changed during approval)"
@@ -269,10 +276,6 @@ func (v *Vault) unseal(ctx context.Context, req LeaseRequest) ([]byte, error) {
 				}
 				return deniedErr("Agent '%s' approval denied for '%s' (%s/%s): %s", agent, name, ns, req.Purpose, reason)
 			}
-		}
-		ct, dekVersion, err := v.fetch(ctx, ns, name, req.Version)
-		if err != nil {
-			return err
 		}
 		if dekVersion != 1 {
 			return unsupportedDEKErr(dekVersion)
