@@ -320,7 +320,7 @@ func TestCapabilityExecuteEndToEnd(t *testing.T) {
 
 	// A token is bound to its capability.
 	code, m = e.agent("POST", "/v1/capabilities/execute", map[string]any{
-		"capability": "secrets.use", "agent_id": "bot", "capability_token": tok,
+		"capability": "secrets.use", "agent_id": "bot", "capability_token": e.sign("bot", "secrets.echo", 1),
 	})
 	if code != 403 || !strings.Contains(fmt.Sprint(m["detail"]), "token authorizes") {
 		t.Errorf("capability mismatch: %d %v", code, m)
@@ -647,7 +647,9 @@ func TestApprovalFlowWithTOTP(t *testing.T) {
 	}
 }
 
-// Without --operator-token-file the agent token reaches /v1/requests (Python).
+// Without --operator-token-file the agent token still reaches /v1/requests
+// (Python), but since H2 it can no longer approve its OWN request:
+// separation of duties refuses it, and the request stays pending.
 func TestApprovalOperatorFallbackAndNo2FA(t *testing.T) {
 	e := newEnv(t, envOpts{approval: true, approvalTTL: 30})
 	e.set("prod", "plain", "v", nil)
@@ -658,10 +660,15 @@ func TestApprovalOperatorFallbackAndNo2FA(t *testing.T) {
 		done <- code
 	}()
 	id := waitPending(t, e, 1)[0].(map[string]any)["request_id"].(string)
-	if code, m, _ := e.call("POST", "/v1/requests/"+id+"/approve", e.agentTok, nil); code != 200 {
-		t.Fatalf("approve without 2FA: %d %v", code, m)
+	code, m, _ := e.call("POST", "/v1/requests/"+id+"/approve", e.agentTok, nil)
+	if code != 403 || m["error"] != "SeparationOfDutiesError" {
+		t.Fatalf("self-approval: %d %v", code, m)
 	}
-	if code := <-done; code != 200 {
+	// Refusing is always allowed: the agent's request is denied.
+	if code, _, _ := e.call("POST", "/v1/requests/"+id+"/deny", e.agentTok, nil); code != 200 {
+		t.Fatalf("deny: %d", code)
+	}
+	if code := <-done; code != 403 {
 		t.Fatalf("use: %d", code)
 	}
 }

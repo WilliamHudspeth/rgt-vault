@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -51,6 +52,19 @@ type StackOptions struct {
 
 	// RequireApproval puts a live approval broker in front of every unseal.
 	RequireApproval bool
+	// RequireApprovalFor additionally makes set, rotate and/or revoke wait
+	// for operator approval (--require-approval-for; default none). It
+	// creates the broker even without RequireApproval, which then still
+	// gates only these operations, not reads.
+	RequireApprovalFor []approval.GatedOp
+	// Notifier receives approval security events. Nil logs a warning line.
+	Notifier approval.Notifier
+	// ApprovalCodeAttempts / ApprovalOperatorFails / ApprovalLockout tune the
+	// bad-TOTP-code caps (zero = approval.DefaultMaxCodeAttempts / ...Fails /
+	// ...Lockout).
+	ApprovalCodeAttempts  int
+	ApprovalOperatorFails int
+	ApprovalLockout       time.Duration
 	// TOTPSecretFile is the base32 TOTP secret (rgt-vault enroll-2fa) that
 	// approving a require_2fa secret needs. Optional.
 	TOTPSecretFile string
@@ -78,8 +92,11 @@ type StackOptions struct {
 
 // Stack is an open vault and everything the server needs around it.
 type Stack struct {
-	Vault        *vault.Vault
-	Broker       *approval.Broker // nil unless RequireApproval
+	Vault  *vault.Vault
+	Broker *approval.Broker // nil unless RequireApproval / RequireApprovalFor
+	// GatedOps and Notifier are passed on to server.Config.
+	GatedOps     []approval.GatedOp
+	Notifier     approval.Notifier
 	Actions      *actions.Registry
 	Capabilities *capabilities.Registry
 	// DBPath is the resolved database path.
@@ -159,21 +176,31 @@ func OpenStack(ctx context.Context, o StackOptions) (*Stack, error) {
 	}
 
 	var broker *approval.Broker
-	if o.RequireApproval {
-		opts := []approval.BrokerOption{}
+	if o.RequireApproval || len(o.RequireApprovalFor) > 0 {
+		opts := []approval.BrokerOption{approval.WithAttemptLimits(o.ApprovalCodeAttempts, o.ApprovalOperatorFails, o.ApprovalLockout)}
 		if o.ApprovalTimeout > 0 {
 			opts = append(opts, approval.WithTimeout(o.ApprovalTimeout))
 		}
 		if o.TOTPSecretFile != "" {
-			secret, err := readTrimmed(o.TOTPSecretFile, "TOTP secret file")
+			secret, err := readTOTPSecret(o.TOTPSecretFile)
 			if err != nil {
 				return nil, err
 			}
+			// Always the replay-guarded verifier: a code is accepted once,
+			// and a reuse is reported (audited and notified) as a replay.
 			v, err := totp.NewReplayGuardedVerifier(string(secret))
 			if err != nil {
 				return nil, fmt.Errorf("TOTP secret: %w", err)
 			}
-			opts = append(opts, approval.WithTOTPVerifier(v.Verify))
+			opts = append(opts, approval.WithTOTPChecker(func(code string) approval.CodeResult {
+				switch v.VerifyResult(code) {
+				case totp.ResultOK:
+					return approval.CodeOK
+				case totp.ResultReplay:
+					return approval.CodeReplay
+				}
+				return approval.CodeInvalid
+			}))
 		}
 		broker = approval.NewBroker(opts...)
 	} else if o.TOTPSecretFile != "" {
@@ -190,7 +217,9 @@ func OpenStack(ctx context.Context, o StackOptions) (*Stack, error) {
 		if err != nil {
 			return nil, fmt.Errorf("harness key: %w", err)
 		}
-		verifier = hv
+		// Capability tokens are single-use by default: the guard remembers
+		// each token id until the token expires (batch H2, RGT-338).
+		verifier = captoken.NewReplayGuard(hv)
 	}
 
 	acts, err := actions.NewBuiltinRegistry(actions.Config{AllowPrivateNetwork: o.AllowPrivateNetwork})
@@ -209,14 +238,36 @@ func OpenStack(ctx context.Context, o StackOptions) (*Stack, error) {
 		RateLimit:     o.RateLimit,
 		RateWindow:    o.RateWindow,
 	}
-	if broker != nil {
-		cfg.Approval = broker
+	if broker != nil && o.RequireApproval {
+		cfg.Approval = broker // reads; --require-approval-for alone gates only the listed operations
 	}
 	v, err := vault.Open(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return &Stack{Vault: v, Broker: broker, Actions: acts, Capabilities: caps, DBPath: dbPath}, nil
+	return &Stack{Vault: v, Broker: broker, GatedOps: o.RequireApprovalFor, Notifier: o.Notifier,
+		Actions: acts, Capabilities: caps, DBPath: dbPath}, nil
+}
+
+// readTOTPSecret reads the TOTP secret file. On POSIX systems it refuses a
+// file that group or others can read: the secret is the second factor, and a
+// loose mode usually means it was copied or created carelessly. (Windows has
+// no POSIX mode bits to check; protect the file with its ACL.)
+func readTOTPSecret(path string) ([]byte, error) {
+	p, err := ExpandHome(path)
+	if err != nil {
+		return nil, err
+	}
+	if runtime.GOOS != "windows" {
+		fi, err := os.Stat(p)
+		if err != nil {
+			return nil, fmt.Errorf("read TOTP secret file: %w", err)
+		}
+		if fi.Mode().Perm()&0o077 != 0 {
+			return nil, fmt.Errorf("TOTP secret file %s has mode %04o: it must not be accessible by group or others (chmod 600)", p, fi.Mode().Perm())
+		}
+	}
+	return readTrimmed(path, "TOTP secret file")
 }
 
 func firstNonEmpty(vals ...string) string {

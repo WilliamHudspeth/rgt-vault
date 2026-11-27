@@ -43,6 +43,13 @@ type Config struct {
 	// Broker serves /v1/requests*. It should be the vault's approval gate.
 	// Nil means those endpoints answer 409.
 	Broker *approval.Broker
+	// GatedOps are the mutating operations (set, rotate, revoke) that wait
+	// for operator approval before they run (--require-approval-for). Needs
+	// a Broker.
+	GatedOps []approval.GatedOp
+	// Notifier receives approval security events (bad / replayed TOTP codes,
+	// lockouts, self-approval attempts). Nil logs a warning line.
+	Notifier approval.Notifier
 	// Actions backs /use and /v1/actions. Nil means none registered.
 	Actions *actions.Registry
 	// Capabilities is what /v1/capabilities* lists. Nil means the vault's
@@ -74,12 +81,17 @@ func New(cfg Config) (http.Handler, error) {
 	if cfg.Tokens != nil && cfg.LegacyPrivilegedRoutes {
 		return nil, errors.New("server: Config.LegacyPrivilegedRoutes applies to the legacy shared token only")
 	}
+	if len(cfg.GatedOps) > 0 && cfg.Broker == nil {
+		return nil, errors.New("server: Config.GatedOps needs an approval Broker")
+	}
 	h := &handlers.Handlers{
 		Vault:        cfg.Vault,
 		Actions:      cfg.Actions,
 		Capabilities: cfg.Capabilities,
 		Broker:       cfg.Broker,
+		Notifier:     cfg.Notifier,
 	}
+	h.SetGatedOps(cfg.GatedOps)
 	var mw *Middleware
 	if cfg.Tokens != nil {
 		mw = NewStoreMiddleware(cfg.Tokens)

@@ -17,6 +17,7 @@ const (
 	kindAudience
 	kindNotImplemented
 	kindValidation
+	kindReplay
 )
 
 // Error is the error type returned by this package. Use errors.Is with
@@ -44,7 +45,7 @@ func (e *Error) Is(target error) bool {
 	}
 	if t.kind == kindAny {
 		switch e.kind {
-		case kindExpired, kindSignature, kindMalformed, kindVersion, kindBinding, kindAudience:
+		case kindExpired, kindSignature, kindMalformed, kindVersion, kindBinding, kindAudience, kindReplay:
 			return true
 		}
 		return false
@@ -70,6 +71,8 @@ func (k Kind) String() string {
 		return "not implemented"
 	case kindValidation:
 		return "invalid argument"
+	case kindReplay:
+		return "token replay"
 	}
 	return "token error"
 }
@@ -93,6 +96,10 @@ var (
 	// capability version than the request. Go-only; Python's
 	// TwoFactorHook performs these comparisons inline.
 	ErrAudience = &Error{kind: kindAudience}
+	// ErrReplay: the token was already presented (a capability token is
+	// single-use) or the replay cache cannot take another one (it fails
+	// closed). Go-only (batch H2).
+	ErrReplay = &Error{kind: kindReplay}
 	// ErrNotImplemented: the Ed25519 placeholder (RGT-35 / RGT-46).
 	ErrNotImplemented = &Error{kind: kindNotImplemented}
 	// ErrValidation: invalid caller input to Sign / constructors

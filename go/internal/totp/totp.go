@@ -241,6 +241,32 @@ func Verify(secret, code string, t time.Time, opts ...Option) bool {
 	return match == 1
 }
 
+// Result is the outcome of a replay-guarded verification. Telling a
+// replayed code from a wrong one lets the caller audit and notify a reuse
+// (ASVS 2.8.4 / RGT-312) instead of treating it as an ordinary typo.
+type Result int
+
+const (
+	// ResultInvalid: the code is malformed or matches no step in the window.
+	ResultInvalid Result = iota
+	// ResultOK: the code was valid and its step is now consumed.
+	ResultOK
+	// ResultReplay: the code matches a step in the window that was already
+	// consumed (or is older than the last accepted step): a reuse.
+	ResultReplay
+)
+
+// String returns "ok", "invalid" or "replay".
+func (r Result) String() string {
+	switch r {
+	case ResultOK:
+		return "ok"
+	case ResultReplay:
+		return "replay"
+	}
+	return "invalid"
+}
+
 // ReplayGuardedVerifier verifies TOTP codes and accepts each time step at
 // most once: it remembers the counter of the last accepted code and rejects
 // any code whose counter is <= that, so one observed code cannot approve
@@ -273,32 +299,56 @@ func (v *ReplayGuardedVerifier) Verify(code string) bool { return v.VerifyAt(cod
 
 // VerifyAt checks code against time t and, on success, consumes its step.
 func (v *ReplayGuardedVerifier) VerifyAt(code string, t time.Time) bool {
+	return v.VerifyResultAt(code, t) == ResultOK
+}
+
+// VerifyResult is Verify returning the distinguishing Result.
+func (v *ReplayGuardedVerifier) VerifyResult(code string) Result {
+	return v.VerifyResultAt(code, time.Now())
+}
+
+// VerifyResultAt checks code against time t. On ResultOK the step is
+// consumed; ResultReplay means the code is genuine for a step that was
+// already used (or is older than the last accepted step) and is refused.
+func (v *ReplayGuardedVerifier) VerifyResultAt(code string, t time.Time) Result {
 	code, ok := normalizeCode(code)
 	if !ok {
-		return false
+		return ResultInvalid
 	}
 	base := stepAt(t, v.p.period)
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	matched := int64(-1)
+	replayed := false
 	for off := -v.p.window; off <= v.p.window; off++ {
 		c := base + int64(off)
-		if c < 0 || c <= v.lastCounter {
-			continue // negative, already consumed or older: no replay
+		if c < 0 {
+			continue
 		}
 		cand, err := HOTP(v.key, uint64(c), v.p.digits, v.p.algorithm)
 		if err != nil {
-			return false
+			return ResultInvalid
 		}
-		if subtle.ConstantTimeCompare([]byte(cand), []byte(code)) == 1 && matched < 0 {
-			matched = c // keep scanning: no early exit on the secret-dependent branch
+		// Every candidate is compared, in constant time, whether or not its
+		// step was already consumed: no early exit on a secret-dependent
+		// branch.
+		if subtle.ConstantTimeCompare([]byte(cand), []byte(code)) != 1 {
+			continue
+		}
+		if c <= v.lastCounter {
+			replayed = true
+		} else if matched < 0 {
+			matched = c
 		}
 	}
 	if matched < 0 {
-		return false
+		if replayed {
+			return ResultReplay
+		}
+		return ResultInvalid
 	}
 	v.lastCounter = matched
-	return true
+	return ResultOK
 }
 
 // pyQuote mirrors urllib.parse.quote(s) with its default safe="/":
