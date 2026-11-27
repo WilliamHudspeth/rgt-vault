@@ -120,8 +120,11 @@ func runServe(addr, tokenPath string, allowNonLoopback bool, out io.Writer) erro
 
 // runMCP serves MCP on in/out. out is the protocol channel; backend error
 // details go to errOut (the command's stderr), never to out.
-func runMCP(host, token string, in io.Reader, out, errOut io.Writer) error {
+func runMCP(host, token, agent string, in io.Reader, out, errOut io.Writer) error {
 	s := mcp.NewServer(host, token)
+	if err := s.SetAgent(agent); err != nil {
+		return fmt.Errorf("--agent: %w", err)
+	}
 	s.SetLogger(log.New(errOut, "rgt-vault mcp: ", log.LstdFlags))
 	return s.Serve(in, out)
 }

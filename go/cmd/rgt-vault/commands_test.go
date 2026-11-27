@@ -499,6 +499,37 @@ func TestMCPSubcommandUsesInjectedStreams(t *testing.T) {
 	}
 }
 
+func TestMCPAgentFlagAndEnv(t *testing.T) {
+	isolateEnv(t)
+	if got := mcpAgentLabel(""); got != "mcp-client" {
+		t.Errorf("default agent = %q", got)
+	}
+	t.Setenv("RGT_VAULT_MCP_AGENT", "env-bot")
+	if got := mcpAgentLabel(""); got != "env-bot" {
+		t.Errorf("env agent = %q", got)
+	}
+	if got := mcpAgentLabel("flag-bot"); got != "flag-bot" {
+		t.Errorf("flag agent = %q", got)
+	}
+
+	// The flag reaches execute_secret's request body.
+	srv, seen := recordingServer(t, 200, `{"ok":true}`)
+	call := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"execute_secret","arguments":{"namespace":"ns","name":"n","action":"a"}}}` + "\n"
+	var out bytes.Buffer
+	if code := run([]string{"--host", srv.URL, "--token", "x", "mcp", "--agent", "flag-bot"}, strings.NewReader(call), &out, io.Discard); code != 0 {
+		t.Fatalf("exit %d out %q", code, out.String())
+	}
+	if len(*seen) != 1 || (*seen)[0].Body["agent"] != "flag-bot" {
+		t.Fatalf("backend saw %+v", *seen)
+	}
+
+	// An invalid label is refused before serving.
+	var errOut bytes.Buffer
+	if code := run([]string{"--host", srv.URL, "mcp", "--agent", "bad agent"}, strings.NewReader(""), io.Discard, &errOut); code != 1 || !strings.Contains(errOut.String(), "--agent") {
+		t.Errorf("bad agent: exit %d stderr %q", code, errOut.String())
+	}
+}
+
 func TestServeDefaultsToLoopback(t *testing.T) {
 	root := newRootCmd(strings.NewReader(""), io.Discard)
 	serve, _, err := root.Find([]string{"serve"})

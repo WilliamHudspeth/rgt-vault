@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"rgt-vault-server/internal/netguard"
+	"rgt-vault-server/internal/validation"
 )
 
 type rpcRequest struct {
@@ -43,6 +44,10 @@ type Server struct {
 	httpClient    *http.Client
 	serverName    string
 	serverVersion string
+	// agent is the agent label sent on execute_secret. It is operator
+	// configuration, not an authenticated identity: per-agent identity
+	// (token-derived agent) arrives with H1.
+	agent string
 	// logger receives backend error details; stdout is the protocol channel,
 	// so it must never point there. Defaults to the standard logger (stderr).
 	logger *log.Logger
@@ -60,6 +65,7 @@ func NewServer(backendURL, token string) *Server {
 		},
 		serverName:    "rgt-vault-mcp",
 		serverVersion: "0.3.0",
+		agent:         DefaultAgent,
 		logger:        log.Default(),
 	}
 }
@@ -126,6 +132,84 @@ func (s *Server) Serve(in io.Reader, out io.Writer) error {
 	return nil
 }
 
+// toolSpec is the single source of truth for a tool: tools/list publishes it
+// and callTool enforces its required string arguments, so they cannot drift.
+type toolSpec struct {
+	Name        string
+	Description string
+	Properties  map[string]any
+	Required    []string // required non-empty string arguments
+}
+
+var stringProp = map[string]any{"type": "string"}
+
+var toolSpecs = []toolSpec{
+	{
+		Name:        "list_secrets",
+		Description: "List secret names in a namespace (no plaintext).",
+		Properties:  map[string]any{"namespace": stringProp},
+		Required:    []string{"namespace"},
+	},
+	{
+		Name:        "lease_secret",
+		Description: "Lease a secret: return its plaintext value for use by the agent.",
+		Properties:  map[string]any{"namespace": stringProp, "name": stringProp},
+		Required:    []string{"namespace", "name"},
+	},
+	{
+		Name:        "revoke_secret",
+		Description: "Revoke (soft-delete) a secret.",
+		Properties:  map[string]any{"namespace": stringProp, "name": stringProp},
+		Required:    []string{"namespace", "name"},
+	},
+	{
+		Name:        "execute_secret",
+		Description: "Execute a bounded action using a secret without returning the plaintext.",
+		Properties: map[string]any{
+			"namespace": stringProp,
+			"name":      stringProp,
+			"action":    stringProp,
+			"purpose": map[string]any{
+				"type":        "string",
+				"maxLength":   maxPurposeLen,
+				"description": "Why the secret is used (audited). Defaults to \"" + defaultPurpose + "\".",
+			},
+			"params": map[string]any{"type": "object", "additionalProperties": true},
+		},
+		Required: []string{"namespace", "name", "action"},
+	},
+}
+
+func lookupTool(name string) (toolSpec, bool) {
+	for _, t := range toolSpecs {
+		if t.Name == name {
+			return t, true
+		}
+	}
+	return toolSpec{}, false
+}
+
+// toolListing renders toolSpecs as the tools/list result.
+func toolListing() []any {
+	out := make([]any, 0, len(toolSpecs))
+	for _, t := range toolSpecs {
+		req := make([]any, len(t.Required))
+		for i, r := range t.Required {
+			req[i] = r
+		}
+		out = append(out, map[string]any{
+			"name":        t.Name,
+			"description": t.Description,
+			"inputSchema": map[string]any{
+				"type":       "object",
+				"properties": t.Properties,
+				"required":   req,
+			},
+		})
+	}
+	return out
+}
+
 // supportedProtocolVersions lists the MCP protocol revisions this server can
 // speak, newest first. The tool surface is identical across all of them, so
 // the server echoes the client's requested revision when it is listed and
@@ -187,82 +271,10 @@ func (s *Server) handle(req rpcRequest) *rpcResponse {
 		}
 
 	case "tools/list":
-		result := map[string]any{
-			"tools": []any{
-				map[string]any{
-					"name":        "list_secrets",
-					"description": "List secret names in a namespace (no plaintext).",
-					"inputSchema": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"namespace": map[string]any{
-								"type": "string",
-							},
-						},
-						"required": []any{"namespace"},
-					},
-				},
-				map[string]any{
-					"name":        "lease_secret",
-					"description": "Lease a secret: return its plaintext value for use by the agent.",
-					"inputSchema": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"namespace": map[string]any{
-								"type": "string",
-							},
-							"name": map[string]any{
-								"type": "string",
-							},
-						},
-						"required": []any{"namespace", "name"},
-					},
-				},
-				map[string]any{
-					"name":        "revoke_secret",
-					"description": "Revoke (soft-delete) a secret.",
-					"inputSchema": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"namespace": map[string]any{
-								"type": "string",
-							},
-							"name": map[string]any{
-								"type": "string",
-							},
-						},
-						"required": []any{"namespace", "name"},
-					},
-				},
-				map[string]any{
-					"name":        "execute_secret",
-					"description": "Execute a bounded action using a secret without returning the plaintext.",
-					"inputSchema": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"namespace": map[string]any{
-								"type": "string",
-							},
-							"name": map[string]any{
-								"type": "string",
-							},
-							"action": map[string]any{
-								"type": "string",
-							},
-							"params": map[string]any{
-								"type":                 "object",
-								"additionalProperties": true,
-							},
-						},
-						"required": []any{"namespace", "name", "action"},
-					},
-				},
-			},
-		}
 		return &rpcResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Result:  result,
+			Result:  map[string]any{"tools": toolListing()},
 		}
 
 	case "tools/call":
@@ -322,15 +334,12 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 		return str
 	}
 
-	// Every tool needs a namespace; all but list_secrets need a name, and
-	// execute_secret an action. Reject early rather than build "//" paths.
-	required := map[string][]string{
-		"list_secrets":   {"namespace"},
-		"lease_secret":   {"namespace", "name"},
-		"revoke_secret":  {"namespace", "name"},
-		"execute_secret": {"namespace", "name", "action"},
+	// Reject missing required args early rather than build "//" paths.
+	spec, ok := lookupTool(name)
+	if !ok {
+		return "unknown tool: " + name, true
 	}
-	for _, key := range required[name] {
+	for _, key := range spec.Required {
 		if getStr(key) == "" {
 			return "missing required string argument: " + key, true
 		}
@@ -427,11 +436,26 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 			}
 		}
 
+		purpose := defaultPurpose
+		if raw, present := args["purpose"]; present {
+			p, isStr := raw.(string)
+			if !isStr {
+				return "invalid purpose: must be a string", true
+			}
+			if strings.TrimSpace(p) != "" {
+				clean, err := validation.ValidateFreeText(p, maxPurposeLen)
+				if err != nil {
+					return "invalid purpose: " + err.Error(), true
+				}
+				purpose = clean
+			}
+		}
+
 		reqURL := s.backendURL + "/v1/secrets/" + url.PathEscape(ns) + "/" + url.PathEscape(nm) + "/use"
 		reqBody := map[string]any{
 			"action":  act,
-			"agent":   "mcp-client",
-			"purpose": "execute_secret tool call",
+			"agent":   s.agent,
+			"purpose": purpose,
 			"params":  actionParams,
 		}
 		bodyBytes, err := json.Marshal(reqBody)
@@ -470,6 +494,25 @@ func (s *Server) backendError(tool string, resp *http.Response, body []byte) (st
 	}
 	s.logf("%s backend error: %s - %q", tool, resp.Status, logged)
 	return "backend error: " + resp.Status, true
+}
+
+// DefaultAgent is the agent label used when none is configured.
+const DefaultAgent = "mcp-client"
+
+const (
+	defaultPurpose = "execute_secret tool call"
+	maxPurposeLen  = 256
+)
+
+// SetAgent sets the agent label sent with execute_secret, validated with
+// the vault's agent rules (1-128 chars of [A-Za-z0-9_.@-]).
+func (s *Server) SetAgent(agent string) error {
+	a, err := validation.ValidateAgent(agent)
+	if err != nil {
+		return err
+	}
+	s.agent = a
+	return nil
 }
 
 // SetLogger redirects backend error logging (nil disables it). Never pass a

@@ -39,7 +39,8 @@ func TestSDKClient_RealRouter(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, backend.URL+"/v1/secrets", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+testToken)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	seedClient := &http.Client{Timeout: 5 * time.Second}
+	resp, err := seedClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

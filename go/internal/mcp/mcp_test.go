@@ -597,3 +597,146 @@ func TestCallTool_BackendErrorsSanitizedAndUnreachable(t *testing.T) {
 		t.Errorf("non-string arg: got (%q, %v)", text, isErr)
 	}
 }
+
+// ---- tool table: tools/list schema and callTool enforcement agree ------
+
+func TestToolsListRequiredMatchesCallToolEnforcement(t *testing.T) {
+	hit := false
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit = true }))
+	defer ts.Close()
+	s := newTestServer(ts)
+
+	raw, _ := json.Marshal(s.handle(makeReq(1, "tools/list", nil)).Result)
+	var listed struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties map[string]any `json:"properties"`
+				Required   []string       `json:"required"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(raw, &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Tools) != len(toolSpecs) {
+		t.Fatalf("tools/list has %d tools, table has %d", len(listed.Tools), len(toolSpecs))
+	}
+	for _, tool := range listed.Tools {
+		spec, ok := lookupTool(tool.Name)
+		if !ok {
+			t.Fatalf("listed tool %q is not callable", tool.Name)
+		}
+		if fmt.Sprint(tool.InputSchema.Required) != fmt.Sprint(spec.Required) {
+			t.Errorf("%s: listed required %v != enforced %v", tool.Name, tool.InputSchema.Required, spec.Required)
+		}
+		// Enforcement: dropping any one required arg is rejected, naming it.
+		for _, drop := range tool.InputSchema.Required {
+			if _, ok := tool.InputSchema.Properties[drop]; !ok {
+				t.Errorf("%s: required %q missing from properties", tool.Name, drop)
+			}
+			args := map[string]any{}
+			for _, k := range tool.InputSchema.Required {
+				if k != drop {
+					args[k] = "x"
+				}
+			}
+			text, isErr := s.callTool(tool.Name, args)
+			if !isErr || text != "missing required string argument: "+drop {
+				t.Errorf("%s without %s: got (%q, %v)", tool.Name, drop, text, isErr)
+			}
+		}
+	}
+	if hit {
+		t.Error("backend called despite missing required args")
+	}
+}
+
+// ---- execute_secret agent / purpose ------------------------------------
+
+func TestExecuteSecret_AgentAndPurpose(t *testing.T) {
+	var got []map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		got = append(got, b)
+		fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer ts.Close()
+	s := newTestServer(ts)
+	base := map[string]any{"namespace": "ns", "name": "n", "action": "a"}
+	with := func(extra map[string]any) map[string]any {
+		m := map[string]any{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+
+	// Defaults.
+	if _, isErr := s.callTool("execute_secret", base); isErr {
+		t.Fatal("default call failed")
+	}
+	// Whitespace-only purpose falls back to the default.
+	if _, isErr := s.callTool("execute_secret", with(map[string]any{"purpose": "   "})); isErr {
+		t.Fatal("blank purpose failed")
+	}
+	// Configured agent + custom purpose (NFC-normalised by validation).
+	if err := s.SetAgent("deploy-bot@ci"); err != nil {
+		t.Fatal(err)
+	}
+	if _, isErr := s.callTool("execute_secret", with(map[string]any{"purpose": "rotate prod DB creds"})); isErr {
+		t.Fatal("custom purpose failed")
+	}
+	want := [][2]string{
+		{DefaultAgent, defaultPurpose},
+		{DefaultAgent, defaultPurpose},
+		{"deploy-bot@ci", "rotate prod DB creds"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("backend saw %d calls", len(got))
+	}
+	for i, w := range want {
+		if got[i]["agent"] != w[0] || got[i]["purpose"] != w[1] {
+			t.Errorf("call %d: agent=%v purpose=%v, want %v", i, got[i]["agent"], got[i]["purpose"], w)
+		}
+	}
+
+	// Invalid purposes are rejected before any backend call.
+	n := len(got)
+	for _, bad := range []any{7, strings.Repeat("p", maxPurposeLen+1), "bad\x00purpose"} {
+		text, isErr := s.callTool("execute_secret", with(map[string]any{"purpose": bad}))
+		if !isErr || !strings.HasPrefix(text, "invalid purpose") {
+			t.Errorf("purpose %q: got (%q, %v)", bad, text, isErr)
+		}
+	}
+	if len(got) != n {
+		t.Error("invalid purpose reached the backend")
+	}
+
+	// Invalid agent labels are refused and leave the current one in place.
+	for _, bad := range []string{"", "has space", strings.Repeat("a", 129), "semi;colon"} {
+		if err := s.SetAgent(bad); err == nil {
+			t.Errorf("SetAgent(%q) accepted", bad)
+		}
+	}
+	if s.agent != "deploy-bot@ci" {
+		t.Errorf("agent changed to %q", s.agent)
+	}
+}
+
+func TestToolsListAdvertisesPurposeBound(t *testing.T) {
+	spec, _ := lookupTool("execute_secret")
+	p := spec.Properties["purpose"].(map[string]any)
+	if p["maxLength"] != maxPurposeLen {
+		t.Errorf("purpose maxLength = %v", p["maxLength"])
+	}
+	for _, r := range spec.Required {
+		if r == "purpose" {
+			t.Error("purpose must stay optional")
+		}
+	}
+}
