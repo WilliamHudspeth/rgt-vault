@@ -130,14 +130,14 @@ func newRequestID() string {
 // preOpCheck is AuditHook.pre_op_check: frozen -> FREEZE; an error or a
 // panic from Consult -> DENY; an unknown decision -> DENY (fail closed).
 func (v *Vault) preOpCheck(ctx context.Context, req HookRequest) (resp HookResponse) {
-	if v.hook.Frozen() {
-		return HookResponse{Decision: HookFreeze, Reason: "vault frozen by hook"}
-	}
 	defer func() {
 		if p := recover(); p != nil {
 			resp = HookResponse{Decision: HookDeny, Reason: fmt.Sprintf("hook raised panic: %v", p)}
 		}
 	}()
+	if v.hook.Frozen() {
+		return HookResponse{Decision: HookFreeze, Reason: "vault frozen by hook"}
+	}
 	r, err := v.hook.Consult(ctx, req)
 	if err != nil {
 		return HookResponse{Decision: HookDeny, Reason: fmt.Sprintf("hook raised error: %v", err)}
@@ -152,6 +152,8 @@ func (v *Vault) preOpCheck(ctx context.Context, req HookRequest) (resp HookRespo
 
 // hookConsult is VaultManager._hook_consult: consult the hook, record
 // HOOK_<OP> in the audit chain, and return ErrPolicyDenied unless allowed.
+// The caller must NOT hold v.mu: the hook runs unlocked (it may be slow or
+// call back into the vault) and only the audit write takes the lock.
 func (v *Vault) hookConsult(ctx context.Context, operation, agent, namespace, purpose string, secretName *string) error {
 	req := HookRequest{
 		Operation:  operation,
@@ -167,7 +169,9 @@ func (v *Vault) hookConsult(ctx context.Context, operation, agent, namespace, pu
 	if secretName != nil {
 		name = sql.NullString{String: *secretName, Valid: true}
 	}
-	if err := v.logAudit(ctx, "HOOK_"+strings.ToUpper(operation), name, pyDumps(details)); err != nil {
+	if err := v.withR(func() error {
+		return v.logAudit(ctx, "HOOK_"+strings.ToUpper(operation), name, pyDumps(details))
+	}); err != nil {
 		return err
 	}
 	if resp.Decision != HookAllow {

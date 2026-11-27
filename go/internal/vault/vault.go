@@ -90,10 +90,19 @@ type Vault struct {
 	vaultID            string
 	keychainPath       string
 
-	// mu guards the key material and lifecycle state below. Operations
-	// hold it shared; rotations, import and Close hold it exclusively, so no
-	// row can be written under a DEK that is being replaced, and no store
-	// write ever waits on SQLite's busy timeout behind a rotation.
+	// aux is the vault's own connection to vault.db, for the rotation
+	// transaction and the few reads the store has no method for.
+	aux *sql.DB
+
+	// rotMu serialises rotations (held across their hook consultation).
+	rotMu sync.Mutex
+	// mu guards the key material and lifecycle state below. Store and
+	// crypto work holds it shared; the key swap of a rotation, import and
+	// Close hold it exclusively, so no row is written under a DEK that is
+	// being replaced and no store write waits on SQLite's busy timeout
+	// behind a rotation. Hooks and the approval gate are consulted WITHOUT
+	// it, so a slow approval never stalls the vault and a hook may call back
+	// into the vault.
 	mu       sync.RWMutex
 	km       *keychain.Manager
 	dek      []byte
@@ -106,9 +115,10 @@ type Vault struct {
 	dekMaxBytes       int64
 
 	// Test seams for the rotation atomicity tests. nil in production.
-	testRewriteRow  func(n int) error // called before each row is rewritten
-	testBeforeSwap  func() error      // called after commit, before the rename
-	testAfterCommit func()
+	testRewriteRow      func(n int) error // called before each row is rewritten
+	testBeforeSwap      func() error      // called after commit, before the rename
+	testAfterCommit     func()
+	testMasterPreCommit func() error // RotateMaster: after the re-wrap, before the commit
 }
 
 // Open runs the cryptographic self-test, opens (creating if needed) the
@@ -134,13 +144,22 @@ func Open(ctx context.Context, cfg Config) (*Vault, error) {
 			return nil, err
 		}
 	}
+	if cfg.RateLimit < 0 || cfg.RateWindow < 0 {
+		return nil, errors.New("vault: RateLimit and RateWindow must not be negative")
+	}
 	st, err := store.Open(ctx, dbPath)
 	if err != nil {
+		return nil, err
+	}
+	aux, err := openAux(st.Path())
+	if err != nil {
+		_ = st.Close()
 		return nil, err
 	}
 
 	v := &Vault{
 		store:              st,
+		aux:                aux,
 		engine:             engine,
 		policyHash:         policy.HashPolicy(cfg.PolicyYAML),
 		authFailureLimiter: NewRateLimiter(AuthFailureLimit, AuthFailureWindow),
@@ -171,6 +190,7 @@ func Open(ctx context.Context, cfg Config) (*Vault, error) {
 	}
 
 	if err := v.load(ctx); err != nil {
+		_ = aux.Close()
 		_ = st.Close()
 		return nil, err
 	}
@@ -199,26 +219,26 @@ func (v *Vault) load(ctx context.Context) error {
 	}
 
 	_, statErr := os.Stat(v.keychainPath)
+	fresh := false
 	switch {
 	case statErr == nil:
 	case errors.Is(statErr, fs.ErrNotExist):
-		counts, err := v.store.ActiveSecretCounts(ctx)
-		if err != nil {
-			return err
+		if _, err := os.Stat(v.keychainPath + ".new"); err == nil {
+			break // a rotation died mid-rename: recover below
 		}
 		var n int64
-		for _, c := range counts {
-			n += c.Count
+		if err := v.aux.QueryRowContext(ctx, "SELECT COUNT(*) FROM secrets").Scan(&n); err != nil {
+			return fmt.Errorf("vault: count secrets: %w", err)
 		}
 		if n > 0 {
 			return newErr([]error{ErrKeychainMissing}, nil,
-				"%s is missing but the vault holds %d active secrets; restore keychain.json from a backup "+
+				"%s is missing but the vault holds %d secret versions; restore keychain.json from a backup "+
 					"(creating a new key would make them permanently unreadable)", v.keychainPath, n)
 		}
+		fresh = true
 	default:
 		return fmt.Errorf("vault: stat keychain: %w", statErr)
 	}
-	fresh := statErr != nil
 
 	if fresh {
 		if b, ok := v.provider.(Bootstrapper); ok {
@@ -239,11 +259,9 @@ func (v *Vault) load(ctx context.Context) error {
 		dek, err = km.Initialize(master, v.vaultID, v.keyEpoch, v.kdfParams)
 	} else {
 		dek, err = km.Load(master, v.vaultID, v.keyEpoch)
-		if errors.Is(err, keychain.ErrRollback) {
-			km, dek, err = v.recoverRotation(master, err)
-		} else if err == nil {
-			// A leftover .new from a rotation that never committed.
-			_ = os.Remove(v.keychainPath + ".new")
+		if err != nil && (errors.Is(err, keychain.ErrRollback) || errors.Is(err, keychain.ErrUnwrapFailed) ||
+			errors.Is(err, fs.ErrNotExist)) {
+			km, dek, err = v.recoverRotation(ctx, master, err)
 		}
 	}
 	if err != nil {
@@ -253,26 +271,48 @@ func (v *Vault) load(ctx context.Context) error {
 	return nil
 }
 
-// recoverRotation completes a RotateDEK that committed its database
-// transaction but died before renaming keychain.json.new into place: the
-// database epoch is then one ahead of keychain.json and equal to the .new
-// file's. Anything else returns the original rollback error.
-func (v *Vault) recoverRotation(master []byte, rollbackErr error) (*keychain.Manager, []byte, error) {
+// recoverRotation completes a rotation that was interrupted around the
+// replacement of keychain.json by keychain.json.new:
+//
+//   - RotateDEK or RotateMaster committed the epoch bump but died before the
+//     rename: the database epoch equals the .new file's -> rename it.
+//   - RotateMaster died after the provider switched to the new master but
+//     before the epoch commit: keychain.json no longer unwraps and .new is
+//     at the next epoch under the current master -> commit the epoch, rename.
+//
+// Anything else returns the original error. A .new file is trusted only if
+// it unwraps under the provider's current master for this vault id, which
+// only the holder of that master can produce.
+func (v *Vault) recoverRotation(ctx context.Context, master []byte, orig error) (*keychain.Manager, []byte, error) {
 	newPath := v.keychainPath + ".new"
+	if _, err := os.Stat(newPath); err != nil {
+		return nil, nil, orig
+	}
 	pending := keychain.New(newPath)
-	dek, err := pending.Load(master, v.vaultID, v.keyEpoch)
+	defer func() { _ = pending.Close() }()
+	epoch := v.keyEpoch
+	dek, err := pending.Load(master, v.vaultID, epoch)
+	if err != nil && errors.Is(orig, keychain.ErrUnwrapFailed) {
+		if dek, err = pending.Load(master, v.vaultID, epoch+1); err == nil {
+			got, ierr := v.store.IncrementKeyEpoch(ctx)
+			if ierr == nil && got != epoch+1 {
+				ierr = fmt.Errorf("vault: key_epoch moved to %d during recovery", got)
+			}
+			if ierr != nil {
+				keychain.Wipe(dek)
+				return nil, nil, ierr
+			}
+			epoch = got
+		}
+	}
 	if err != nil {
-		return nil, nil, rollbackErr
+		return nil, nil, orig
 	}
 	keychain.Wipe(dek)
-	_ = pending.Close()
-	if err := os.Rename(newPath, v.keychainPath); err != nil {
-		return nil, nil, fmt.Errorf("vault: complete interrupted DEK rotation: %w", err)
-	}
-	km := keychain.New(v.keychainPath)
-	dek, err = km.Load(master, v.vaultID, v.keyEpoch)
+	v.keyEpoch = epoch
+	km, dek, err := v.installPending(master, epoch)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("vault: complete interrupted rotation: %w", err)
 	}
 	return km, dek, nil
 }
@@ -290,6 +330,7 @@ func (v *Vault) Close() error {
 	if v.km != nil {
 		_ = v.km.Close()
 	}
+	_ = v.aux.Close()
 	return v.store.Close()
 }
 
@@ -312,6 +353,15 @@ func (v *Vault) rlock() error {
 		return err
 	}
 	return nil
+}
+
+// withR runs fn holding the shared lock on a usable vault.
+func (v *Vault) withR(fn func() error) error {
+	if err := v.rlock(); err != nil {
+		return err
+	}
+	defer v.mu.RUnlock()
+	return fn()
 }
 
 // VaultID returns the vault's UUID.

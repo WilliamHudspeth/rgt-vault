@@ -48,8 +48,10 @@ func pyB64Decode(s []byte) ([]byte, error) {
 	// Python stops at the first complete padded quantum; anything after it
 	// is ignored. Trim trailing data after the padding the same way.
 	if i := bytes.IndexByte(clean, '='); i >= 0 {
+		// Keep only the padding that completes the 4-character quantum.
+		pad := (4 - i%4) % 4
 		end := i
-		for end < len(clean) && clean[end] == '=' {
+		for end < len(clean) && end < i+pad && clean[end] == '=' {
 			end++
 		}
 		clean = clean[:end]

@@ -28,13 +28,20 @@
 //     decrypt under the current DEK (for example versions a Python
 //     rotate_dek already orphaned) are left unchanged; an ACTIVE row that does
 //     not decrypt aborts the rotation, as in Python.
-//   - RotateDEK bumps the key epoch inside the same transaction as the
-//     rewrite, so an interrupted rotation leaves the old keychain and the old
-//     database state in effect. If the process dies after the commit but
-//     before keychain.json.new is renamed into place, Open completes the
-//     rename (the epochs prove which file is current).
+//   - RotateDEK bumps the key epoch and resets the usage counters inside
+//     the same transaction as the rewrite (synchronous=FULL), so an
+//     interrupted rotation leaves the old keychain and the old database
+//     state in effect. RotateMaster stages its re-wrap in keychain.json.new
+//     too. If the process dies after the commit but before keychain.json.new
+//     is renamed into place (or, for RotateMaster, after the provider
+//     switched masters but before the commit), Open completes the rotation;
+//     the .new file is trusted only if it unwraps under the provider's
+//     current master and its epoch proves which state is current.
+//   - Hooks and the approval gate are consulted without holding the vault
+//     lock, and a version-specific lease also honours that version's own
+//     require_2fa flag (Python checks only the ACTIVE row).
 //   - Open refuses to create a new DEK when keychain.json is missing but the
-//     database already holds active secrets (they would become unreadable).
+//     database already holds secret versions (they would become unreadable).
 //   - Name, namespace, agent and purpose are validated with
 //     internal/validation (stricter: a trailing newline is rejected), and the
 //     purpose of SetSecret is validated too.

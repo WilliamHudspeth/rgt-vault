@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"rgt-vault-server/internal/policy"
+	"rgt-vault-server/internal/validation"
 )
 
 // Simulate evaluates the ABAC policy without touching any secret (python
@@ -18,15 +19,19 @@ func (v *Vault) Simulate(ctx context.Context, agent, namespace, purpose, action 
 	if action == "" {
 		action = "read"
 	}
-	if err := v.rlock(); err != nil {
+	if err := validateParam("action", action, MaxPurposeChars, false); err != nil {
 		return policy.Decision{}, err
 	}
-	defer v.mu.RUnlock()
+	if _, err := validation.ValidateFreeText(action, MaxPurposeChars); err != nil {
+		return policy.Decision{}, err
+	}
 	if err := v.hookConsult(ctx, OpSimulate, agent, namespace, purpose, nil); err != nil {
 		return policy.Decision{}, err
 	}
-	if err := v.logAudit(ctx, "SIMULATION_RUN", sql.NullString{},
-		fmt.Sprintf("Agent: %s, Namespace: %s, Action: %s", agent, namespace, action)); err != nil {
+	if err := v.withR(func() error {
+		return v.logAudit(ctx, "SIMULATION_RUN", sql.NullString{},
+			fmt.Sprintf("Agent: %s, Namespace: %s, Action: %s", agent, namespace, action))
+	}); err != nil {
 		return policy.Decision{}, err
 	}
 	return v.engine.Evaluate(agent, namespace, purpose, action), nil

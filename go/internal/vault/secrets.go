@@ -95,44 +95,47 @@ func (v *Vault) SetSecret(ctx context.Context, req SetSecretRequest) error {
 }
 
 func (v *Vault) setSecret(ctx context.Context, req SetSecretRequest) (needRotate bool, err error) {
-	if err := v.rlock(); err != nil {
-		return false, err
-	}
-	defer v.mu.RUnlock()
-
 	name := req.Name
 	if err := v.hookConsult(ctx, OpWrite, req.Agent, req.Namespace, req.Purpose, &name); err != nil {
 		return false, err
 	}
 	d := v.engine.Evaluate(req.Agent, req.Namespace, req.Purpose, "write")
 	if !d.Allowed {
-		if err := v.logAudit(ctx, "POLICY_DENIED", store.Name(name),
-			fmt.Sprintf("Action: write, Agent: %s, Namespace: %s, Reason: %s", req.Agent, req.Namespace, d.Reason)); err != nil {
+		if err := v.withR(func() error {
+			return v.logAudit(ctx, "POLICY_DENIED", store.Name(name),
+				fmt.Sprintf("Action: write, Agent: %s, Namespace: %s, Reason: %s", req.Agent, req.Namespace, d.Reason))
+		}); err != nil {
 			return false, err
 		}
 		return false, deniedErr("Agent '%s' denied write access to '%s' (%s/%s)", req.Agent, name, req.Namespace, req.Purpose)
 	}
 
-	ct, err := crypto.Encrypt(req.Value, v.dek, v.aad(req.Namespace, name))
-	if err != nil {
-		return false, err
-	}
-	if _, err := v.store.SetSecret(ctx, store.SetSecretParams{
-		Namespace:  req.Namespace,
-		Name:       name,
-		Ciphertext: ct,
-		DEKVersion: 1,
-		PolicyHash: v.policyHash,
-		Note:       req.Note,
-		Require2FA: req.Require2FA,
-	}); err != nil {
-		return false, err
-	}
-	count, nbytes, err := v.store.IncrementDEKUsage(ctx, int64(len(req.Value)))
-	if err != nil {
-		return false, err
-	}
-	return count >= v.dekMaxEncryptions || nbytes >= v.dekMaxBytes, nil
+	// Encrypt and store under one shared-lock hold, so the row is written
+	// under the DEK that is current when it lands.
+	err = v.withR(func() error {
+		ct, err := crypto.Encrypt(req.Value, v.dek, v.aad(req.Namespace, name))
+		if err != nil {
+			return err
+		}
+		if _, err := v.store.SetSecret(ctx, store.SetSecretParams{
+			Namespace:  req.Namespace,
+			Name:       name,
+			Ciphertext: ct,
+			DEKVersion: 1,
+			PolicyHash: v.policyHash,
+			Note:       req.Note,
+			Require2FA: req.Require2FA,
+		}); err != nil {
+			return err
+		}
+		count, nbytes, err := v.store.IncrementDEKUsage(ctx, int64(len(req.Value)))
+		if err != nil {
+			return err
+		}
+		needRotate = count >= v.dekMaxEncryptions || nbytes >= v.dekMaxBytes
+		return nil
+	})
+	return needRotate, err
 }
 
 // Lease unseals a secret and passes the plaintext to fn (python
@@ -155,6 +158,9 @@ func (v *Vault) Lease(ctx context.Context, req LeaseRequest, fn func(secret []by
 	); err != nil {
 		return err
 	}
+	if req.Version < 0 {
+		return validationErr("'version' must be >= 1.")
+	}
 
 	buf, err := v.unseal(ctx, req)
 	if err != nil {
@@ -162,74 +168,107 @@ func (v *Vault) Lease(ctx context.Context, req LeaseRequest, fn func(secret []by
 	}
 	defer func() {
 		keychain.Wipe(buf)
-		if err := v.rlock(); err == nil {
+		// Close the lease in the chain even if a failed rotation marked the
+		// vault inconsistent meanwhile; only Close stops it.
+		v.mu.RLock()
+		defer v.mu.RUnlock()
+		if !v.closed {
 			_ = v.logAudit(ctx, "LEASE_RETURNED", store.Name(req.Name), "Agent: "+req.Agent)
-			v.mu.RUnlock()
 		}
 	}()
 	return fn(buf)
 }
 
-// unseal runs every check and decrypts; it writes LEASE_GRANTED on success.
-func (v *Vault) unseal(ctx context.Context, req LeaseRequest) ([]byte, error) {
-	if err := v.rlock(); err != nil {
-		return nil, err
+// require2FA reports whether the leased row needs a second factor: the
+// ACTIVE version's flag (Python requires_2fa) OR, for a by-version lease,
+// that version's own flag, so an older 2FA-flagged version cannot be read
+// without it after a revoke or a non-2FA successor.
+func (v *Vault) require2FA(ctx context.Context, ns, name string, version int64) (bool, error) {
+	req, err := v.store.Requires2FA(ctx, ns, name)
+	if err != nil || req || version == 0 {
+		return req, err
 	}
-	defer v.mu.RUnlock()
+	var flag sql.NullInt64
+	err = v.aux.QueryRowContext(ctx,
+		"SELECT require_2fa FROM secrets WHERE namespace = ? AND name = ? AND version = ? LIMIT 1",
+		ns, name, version).Scan(&flag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("vault: read require_2fa: %w", err)
+	}
+	return flag.Int64 != 0, nil
+}
 
+// unseal runs every check and decrypts; it writes LEASE_GRANTED on success.
+// The hook and the approval gate run without the vault lock.
+func (v *Vault) unseal(ctx context.Context, req LeaseRequest) ([]byte, error) {
 	name, ns, agent := req.Name, req.Namespace, req.Agent
 	if err := v.hookConsult(ctx, OpRead, agent, ns, req.Purpose, &name); err != nil {
 		return nil, err
 	}
 	if !v.rateLimiter.Allow(agent) {
-		if err := v.logAudit(ctx, "RATE_LIMITED", store.Name(name), "Agent: "+agent); err != nil {
+		if err := v.withR(func() error {
+			return v.logAudit(ctx, "RATE_LIMITED", store.Name(name), "Agent: "+agent)
+		}); err != nil {
 			return nil, err
 		}
 		return nil, rateLimitedErr(agent)
 	}
-	if err := v.checkHoneytoken(ctx, ns, name, agent, req.Purpose); err != nil {
-		return nil, err
-	}
-	d := v.engine.Evaluate(agent, ns, req.Purpose, "read")
-	if !d.Allowed {
-		if err := v.logAudit(ctx, "POLICY_DENIED", store.Name(name),
-			fmt.Sprintf("Action: read, Agent: %s, Namespace: %s, Reason: %s", agent, ns, d.Reason)); err != nil {
-			return nil, err
+	var require2FA bool
+	if err := v.withR(func() error {
+		if err := v.checkHoneytoken(ctx, ns, name, agent, req.Purpose); err != nil {
+			return err
 		}
-		return nil, deniedErr("Agent '%s' denied read access to '%s' (%s/%s)", agent, name, ns, req.Purpose)
+		d := v.engine.Evaluate(agent, ns, req.Purpose, "read")
+		if !d.Allowed {
+			if err := v.logAudit(ctx, "POLICY_DENIED", store.Name(name),
+				fmt.Sprintf("Action: read, Agent: %s, Namespace: %s, Reason: %s", agent, ns, d.Reason)); err != nil {
+				return err
+			}
+			return deniedErr("Agent '%s' denied read access to '%s' (%s/%s)", agent, name, ns, req.Purpose)
+		}
+		var err error
+		require2FA, err = v.require2FA(ctx, ns, name, req.Version)
+		return err
+	}); err != nil {
+		return nil, err
 	}
 
 	// Live approval gate: after static policy, before any ciphertext is read.
-	require2FA, err := v.store.Requires2FA(ctx, ns, name)
-	if err != nil {
-		return nil, err
-	}
 	gd := v.approval.Consult(ctx, approval.NewRequest(agent, ns, name, req.Purpose,
 		approval.WithAction("read"), approval.With2FA(require2FA)))
 	if !gd.Allowed {
-		if err := v.logAudit(ctx, "APPROVAL_DENIED", store.Name(name),
-			fmt.Sprintf("Agent: %s, Namespace: %s, Reason: %s", agent, ns, gd.Reason)); err != nil {
+		if err := v.withR(func() error {
+			return v.logAudit(ctx, "APPROVAL_DENIED", store.Name(name),
+				fmt.Sprintf("Agent: %s, Namespace: %s, Reason: %s", agent, ns, gd.Reason))
+		}); err != nil {
 			return nil, err
 		}
 		return nil, deniedErr("Agent '%s' approval denied for '%s' (%s/%s): %s", agent, name, ns, req.Purpose, gd.Reason)
 	}
 
-	ct, dekVersion, err := v.fetch(ctx, ns, name, req.Version)
-	if err != nil {
-		return nil, err
-	}
-	if dekVersion != 1 {
-		return nil, unsupportedDEKErr(dekVersion)
-	}
-	pt, err := crypto.Decrypt(ct, v.dek, v.aad(ns, name))
-	if err != nil {
-		return nil, err
-	}
-	if err := v.logAudit(ctx, "LEASE_GRANTED", store.Name(name), "Agent: "+agent); err != nil {
-		keychain.Wipe(pt)
-		return nil, err
-	}
-	return pt, nil
+	var pt []byte
+	err := v.withR(func() error {
+		ct, dekVersion, err := v.fetch(ctx, ns, name, req.Version)
+		if err != nil {
+			return err
+		}
+		if dekVersion != 1 {
+			return unsupportedDEKErr(dekVersion)
+		}
+		if pt, err = crypto.Decrypt(ct, v.dek, v.aad(ns, name)); err != nil {
+			return err
+		}
+		if err := v.logAudit(ctx, "LEASE_GRANTED", store.Name(name), "Agent: "+agent); err != nil {
+			keychain.Wipe(pt)
+			pt = nil
+			return err
+		}
+		return nil
+	})
+	return pt, err
 }
 
 // fetch reads the newest ACTIVE version (version 0) or a given version.
@@ -251,6 +290,7 @@ func (v *Vault) fetch(ctx context.Context, ns, name string, version int64) ([]by
 }
 
 // checkHoneytoken writes HONEYTOKEN_TRIGGERED and refuses a decoy name.
+// The caller holds v.mu shared.
 func (v *Vault) checkHoneytoken(ctx context.Context, ns, name, agent, purpose string) error {
 	hit, err := v.store.IsHoneytoken(ctx, ns, name)
 	if err != nil {
@@ -274,19 +314,23 @@ func (v *Vault) Fingerprint(ctx context.Context, namespace, name string, version
 	if err := validateParams(pName(name), pNamespace(namespace)); err != nil {
 		return "", err
 	}
-	if err := v.rlock(); err != nil {
-		return "", err
+	if version < 0 {
+		return "", validationErr("'version' must be >= 1.")
 	}
-	defer v.mu.RUnlock()
-	if err := v.checkHoneytoken(ctx, namespace, name, SystemAgent, "fingerprint"); err != nil {
-		return "", err
-	}
-	ct, _, err := v.fetch(ctx, namespace, name, version)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(ct)
-	return hex.EncodeToString(sum[:])[:8], nil
+	var fp string
+	err := v.withR(func() error {
+		if err := v.checkHoneytoken(ctx, namespace, name, SystemAgent, "fingerprint"); err != nil {
+			return err
+		}
+		ct, _, err := v.fetch(ctx, namespace, name, version)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(ct)
+		fp = hex.EncodeToString(sum[:])[:8]
+		return nil
+	})
+	return fp, err
 }
 
 // ListSecrets lists the ACTIVE secrets of a namespace, never their values
@@ -302,22 +346,24 @@ func (v *Vault) ListSecrets(ctx context.Context, req ListRequest) ([]store.Secre
 	if limit <= 0 {
 		limit = DefaultListSize
 	}
-	if err := v.rlock(); err != nil {
-		return nil, err
-	}
-	defer v.mu.RUnlock()
 	if err := v.hookConsult(ctx, OpList, req.Agent, req.Namespace, req.Purpose, nil); err != nil {
 		return nil, err
 	}
-	d := v.engine.Evaluate(req.Agent, req.Namespace, req.Purpose, "read")
-	if !d.Allowed {
-		if err := v.logAudit(ctx, "POLICY_DENIED", sql.NullString{},
-			fmt.Sprintf("Action: list, Agent: %s, Namespace: %s, Reason: %s", req.Agent, req.Namespace, d.Reason)); err != nil {
-			return nil, err
+	var out []store.SecretInfo
+	err := v.withR(func() error {
+		d := v.engine.Evaluate(req.Agent, req.Namespace, req.Purpose, "read")
+		if !d.Allowed {
+			if err := v.logAudit(ctx, "POLICY_DENIED", sql.NullString{},
+				fmt.Sprintf("Action: list, Agent: %s, Namespace: %s, Reason: %s", req.Agent, req.Namespace, d.Reason)); err != nil {
+				return err
+			}
+			return deniedErr("Unauthorized to access namespace '%s'", req.Namespace)
 		}
-		return nil, deniedErr("Unauthorized to access namespace '%s'", req.Namespace)
-	}
-	return v.store.ListSecrets(ctx, req.Namespace, v.policyHash, limit, req.Offset)
+		var err error
+		out, err = v.store.ListSecrets(ctx, req.Namespace, v.policyHash, limit, req.Offset)
+		return err
+	})
+	return out, err
 }
 
 // RevokeSecret marks the ACTIVE version REVOKED (python revoke_secret):
@@ -326,20 +372,18 @@ func (v *Vault) RevokeSecret(ctx context.Context, namespace, name, agent string)
 	if err := validateParams(pNamespace(namespace), pName(name), pAgent(agent)); err != nil {
 		return err
 	}
-	if err := v.rlock(); err != nil {
-		return err
-	}
-	defer v.mu.RUnlock()
 	if err := v.hookConsult(ctx, OpRevoke, agent, namespace, "", &name); err != nil {
 		return err
 	}
-	d := v.engine.Evaluate(agent, namespace, "*", "revoke")
-	if !d.Allowed {
-		if err := v.logAudit(ctx, "POLICY_DENIED", store.Name(name),
-			fmt.Sprintf("Action: revoke, Agent: %s, Namespace: %s, Reason: %s", agent, namespace, d.Reason)); err != nil {
-			return err
+	return v.withR(func() error {
+		d := v.engine.Evaluate(agent, namespace, "*", "revoke")
+		if !d.Allowed {
+			if err := v.logAudit(ctx, "POLICY_DENIED", store.Name(name),
+				fmt.Sprintf("Action: revoke, Agent: %s, Namespace: %s, Reason: %s", agent, namespace, d.Reason)); err != nil {
+				return err
+			}
+			return deniedErr("Unauthorized to revoke secret.")
 		}
-		return deniedErr("Unauthorized to revoke secret.")
-	}
-	return v.store.RevokeSecret(ctx, namespace, name, v.policyHash)
+		return v.store.RevokeSecret(ctx, namespace, name, v.policyHash)
+	})
 }

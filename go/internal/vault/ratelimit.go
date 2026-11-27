@@ -18,7 +18,12 @@ type RateLimiter struct {
 }
 
 // NewRateLimiter returns a limiter allowing max events per key per window.
+// A non-positive window means DefaultRateWindow (a zero window would let
+// every event expire at once, i.e. fail open); a negative max allows nothing.
 func NewRateLimiter(max int, window time.Duration) *RateLimiter {
+	if window <= 0 {
+		window = DefaultRateWindow
+	}
 	return &RateLimiter{max: max, window: window, now: time.Now, windows: map[string][]time.Time{}}
 }
 
@@ -69,5 +74,5 @@ func (r *RateLimiter) Record(key string) {
 	now := r.now()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.windows[key] = append(r.windows[key], now)
+	r.windows[key] = append(r.prune(key, now), now)
 }

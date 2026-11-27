@@ -238,9 +238,9 @@ func TestRotateDEK1kAtomicity(t *testing.T) {
 	if v.KeyEpoch() != epoch0 {
 		t.Fatalf("epoch after crash %d, want %d", v.KeyEpoch(), epoch0)
 	}
-	if _, err := os.Stat(v.KeychainPath() + ".new"); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("stale .new not removed on open")
-	}
+	// The crashed rotation's uncommitted keychain.json.new is left alone
+	// (Open never deletes it: another process may be rotating); the next
+	// rotation overwrites it.
 	checkMany(t, v, n)
 	mustVerify(t, v)
 
@@ -276,6 +276,10 @@ func TestRotateDEKCrashAfterCommit(t *testing.T) {
 	}
 	checkMany(t, v, 50)
 	mustVerify(t, v)
+	// The usage reset was part of the committed transaction.
+	if c, b, _ := v.store.DEKUsage(context.Background()); c != 0 || b != 0 {
+		t.Fatalf("DEK usage after recovery %d/%d", c, b)
+	}
 }
 
 func TestRotateDEKFailureAfterCommitMarksBroken(t *testing.T) {
@@ -302,7 +306,7 @@ func TestPendingKeychainHandling(t *testing.T) {
 	set(t, v, "n", "s", "v")
 	_ = v.Close()
 	// A valid keychain with a stray .new (from a rotation that never
-	// committed) opens, and the .new is removed.
+	// committed) opens and ignores it.
 	other, _, ov := newFileVault(t)
 	_ = ov.Close()
 	copyFile(t, filepath.Join(other, "keychain.json"), filepath.Join(dir, "keychain.json.new"))
@@ -311,8 +315,8 @@ func TestPendingKeychainHandling(t *testing.T) {
 		t.Fatalf("a valid keychain with a stray .new must open: %v", err)
 	}
 	_ = vv.Close()
-	if _, err := os.Stat(filepath.Join(dir, "keychain.json.new")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("stray .new not removed")
+	if _, err := os.Stat(filepath.Join(dir, "keychain.json.new")); err != nil {
+		t.Fatal("Open must not delete keychain.json.new")
 	}
 
 	// The DB epoch is ahead of keychain.json (a rollback) and the .new

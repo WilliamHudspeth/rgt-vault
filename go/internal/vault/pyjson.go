@@ -59,6 +59,18 @@ func pyEncode(b *strings.Builder, v any, indent, level int) {
 		pyQuote(b, string(x))
 	case int:
 		b.WriteString(strconv.Itoa(x))
+	case int8:
+		b.WriteString(strconv.FormatInt(int64(x), 10))
+	case int16:
+		b.WriteString(strconv.FormatInt(int64(x), 10))
+	case uint:
+		b.WriteString(strconv.FormatUint(uint64(x), 10))
+	case uint8:
+		b.WriteString(strconv.FormatUint(uint64(x), 10))
+	case uint16:
+		b.WriteString(strconv.FormatUint(uint64(x), 10))
+	case float32:
+		b.WriteString(pyFloat(float64(x)))
 	case int64:
 		b.WriteString(strconv.FormatInt(x, 10))
 	case int32:
@@ -68,7 +80,11 @@ func pyEncode(b *strings.Builder, v any, indent, level int) {
 	case uint64:
 		b.WriteString(strconv.FormatUint(x, 10))
 	case json.Number:
-		b.WriteString(x.String())
+		if _, err := strconv.ParseFloat(x.String(), 64); err == nil {
+			b.WriteString(x.String())
+		} else {
+			pyQuote(b, x.String())
+		}
 	case float64:
 		b.WriteString(pyFloat(x))
 	case pyObject:
@@ -106,10 +122,16 @@ func pyEncode(b *strings.Builder, v any, indent, level int) {
 		pyEncodeList(b, items, indent, level)
 	case []any:
 		pyEncodeList(b, x, indent, level)
-	case fmt.Stringer:
-		pyQuote(b, x.String()) // json.dumps(default=str)
+	case map[string]string:
+		m := make(map[string]any, len(x))
+		for k, s := range x {
+			m[k] = s
+		}
+		pyEncode(b, m, indent, level)
 	default:
-		pyQuote(b, fmt.Sprint(x)) // json.dumps(default=str)
+		// json.dumps(default=str). fmt.Sprint also handles a nil-pointer
+		// fmt.Stringer without panicking.
+		pyQuote(b, fmt.Sprint(x))
 	}
 }
 
