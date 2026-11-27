@@ -114,22 +114,34 @@ func TestSearchFilter(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
 
-	// Wait for the filter to render: db-pass visible, api-key gone.
+	// Wait until the "/db" search prompt has been rendered. The output stream
+	// is cumulative and line-diffed by the renderer (intermediate frames such
+	// as "/" with the unfiltered list may be flushed first, and unchanged
+	// lines are not re-emitted), so asserting on "api-key" being absent from
+	// the stream is flaky. Assert on the final model state instead.
 	teatest.WaitFor(
 		t,
 		tm.Output(),
 		func(bts []byte) bool {
-			out := string(bts)
-			return strings.Contains(out, "db-pass") && !strings.Contains(out, "api-key")
+			return strings.Contains(string(bts), "/db")
 		},
 		teatest.WithDuration(3*time.Second),
 		teatest.WithCheckInterval(50*time.Millisecond),
 	)
 
-	// Quit cleanly.
-	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
+	// Keep the filter, then quit.
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
-	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
+	final, ok := tm.FinalModel(t, teatest.WithFinalTimeout(3*time.Second)).(Model)
+	if !ok {
+		t.Fatal("final model is not a tui.Model")
+	}
+	if len(final.filtered) != 1 || final.filtered[0].Name != "db-pass" {
+		t.Fatalf("filtered = %+v, want only db-pass", final.filtered)
+	}
+	if view := final.View(); !strings.Contains(view, "db-pass") || strings.Contains(view, "api-key") {
+		t.Fatalf("view should show db-pass only, got:\n%s", view)
+	}
 }
 
 // TestHelp verifies that "?" opens the help screen.

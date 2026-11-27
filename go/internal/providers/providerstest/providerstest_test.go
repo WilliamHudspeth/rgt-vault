@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -73,7 +74,7 @@ func TestFile(t *testing.T) {
 	if err != nil || len(n) != 32 || !bytes.Equal(n, g) {
 		t.Fatal(n, err)
 	}
-	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o600 {
+	if fi, _ := os.Stat(p); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 { // no mode bits on Windows
 		t.Fatalf("mode %v", fi.Mode())
 	}
 	bad := File{Path: filepath.Join(t.TempDir(), "no", "dir")}

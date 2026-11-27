@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -153,11 +154,14 @@ func TestTPMUnsealSequence(t *testing.T) {
 		_ = fi
 		t.Errorf("scratch dir not removed: %v", err)
 	}
-	if f.scratchMode != 0o700 {
-		t.Errorf("scratch dir mode %v, want 0700", f.scratchMode)
-	}
-	if f.unsealMode != 0o600 {
-		t.Errorf("unseal file mode %v, want 0600", f.unsealMode)
+	// Unix permission bits do not exist on Windows (files report 0666/0777).
+	if runtime.GOOS != "windows" {
+		if f.scratchMode != 0o700 {
+			t.Errorf("scratch dir mode %v, want 0700", f.scratchMode)
+		}
+		if f.unsealMode != 0o600 {
+			t.Errorf("unseal file mode %v, want 0600", f.unsealMode)
+		}
 	}
 	// "-T" (explicit TCTI) must not be passed, as in Python.
 	for _, c := range f.calls {
@@ -348,8 +352,12 @@ func TestSealTPM(t *testing.T) {
 	if priv != filepath.Join(out, "master_secret.priv") || pub != filepath.Join(out, "master_secret.pub") {
 		t.Fatalf("paths %s %s", priv, pub)
 	}
-	if !bytes.Equal(secretAtCreate, secret) || modeAtCreate != 0o600 {
-		t.Fatalf("seal input file: %x mode %v", secretAtCreate, modeAtCreate)
+	if !bytes.Equal(secretAtCreate, secret) {
+		t.Fatalf("seal input file content: %x", secretAtCreate)
+	}
+	// Unix permission bits do not exist on Windows.
+	if runtime.GOOS != "windows" && modeAtCreate != 0o600 {
+		t.Fatalf("seal input file mode %v, want 0600", modeAtCreate)
 	}
 	if !reflect.DeepEqual(f.names(), []string{"tpm2_createpolicy", "tpm2_createprimary", "tpm2_create", "tpm2_flushcontext"}) {
 		t.Fatalf("order %v", f.names())
