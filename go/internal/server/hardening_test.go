@@ -559,3 +559,31 @@ func TestNoVaryHeaderWhenCORSDisabledAndAllowOn405(t *testing.T) {
 		t.Errorf("PUT from allowed origin: %d ACAO=%q", rec.Code, rec.Header().Get("Access-Control-Allow-Origin"))
 	}
 }
+
+// The request logger encodes the path, so a %0A in a URL cannot forge a log
+// line (CodeQL go/log-injection).
+func TestRequestLogEncodesPath(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(io.Discard)
+	h, _ := hardenedServer(t, nil)
+	req := httptest.NewRequest("GET", "/v1/x%0AHTTP%20GET%20/forged%20-%3E%20200", nil)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	out := buf.String()
+	if strings.Contains(out, "\nHTTP GET /forged") || !strings.Contains(out, `/v1/x\nHTTP GET /forged -> 200`) {
+		t.Errorf("request log not encoded:\n%s", out)
+	}
+}
+
+// /v1/audit bounds limit before reading anything (CodeQL go/uncontrolled-allocation-size).
+func TestAuditLimitBounds(t *testing.T) {
+	h, token := hardenedServer(t, nil)
+	for q, want := range map[string]int{"1": 200, "1000": 200, "1001": 400, "0": 400, "-5": 400, "99999999999999999999": 422, "1e9": 422} {
+		if rec := do(h, "GET", "/v1/audit?limit="+q, token, nil, ""); rec.Code != want {
+			t.Errorf("limit=%s: %d, want %d", q, rec.Code, want)
+		}
+		if rec := do(h, "GET", "/v1/audit?capability=x&limit="+q, token, nil, ""); rec.Code != want {
+			t.Errorf("capability limit=%s: %d, want %d", q, rec.Code, want)
+		}
+	}
+}

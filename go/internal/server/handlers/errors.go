@@ -4,13 +4,17 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"rgt-vault-server/internal/actions"
 	"rgt-vault-server/internal/approval"
+	"rgt-vault-server/internal/audit"
 	"rgt-vault-server/internal/capabilities"
 	"rgt-vault-server/internal/vault"
 )
@@ -109,11 +113,11 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	id := newIncidentID()
 	path := ""
 	if r != nil {
-		path = r.URL.Path
+		path = LogSafe(r.URL.Path)
 	}
 	ae, known := classify(err)
 	if !known {
-		log.Printf("ERROR incident=%s path=%s unexpected handler error: %v", id, path, err)
+		log.Printf("ERROR incident=%s path=%s unexpected handler error: %s", id, path, LogSafe(err.Error()))
 		ae = newAppError(http.StatusInternalServerError, "InternalError", "internal server error")
 	} else {
 		log.Printf("WARNING incident=%s status=%d error=%s path=%s", id, ae.Code, ae.Type, path)
@@ -123,4 +127,41 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 		"detail":      ae.Message,
 		"incident_id": id,
 	})
+}
+
+// maxLogField caps a request-derived value in a log line.
+const maxLogField = 256
+
+// LogSafe encodes a request-derived string for a single log line: CR, LF
+// and TAB become \r, \n, \t (internal/audit.Sanitize), every other control
+// character (C0, DEL, C1) and invalid UTF-8 becomes \xNN, and the result is
+// capped at maxLogField bytes (marked with "..."). A client can therefore
+// never forge or split log entries.
+func LogSafe(s string) string {
+	s = strings.ReplaceAll(s, "\r", `\r`)
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	s = audit.Sanitize(s)
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size <= 1:
+			fmt.Fprintf(&b, `\x%02x`, s[i])
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
+			for _, c := range []byte(s[i : i+size]) {
+				fmt.Fprintf(&b, `\x%02x`, c)
+			}
+		default:
+			b.WriteString(s[i : i+size])
+		}
+		i += size
+		if b.Len() > maxLogField {
+			out := b.String()
+			for len(out) > maxLogField || !utf8.ValidString(out) {
+				out = out[:len(out)-1]
+			}
+			return out + "..."
+		}
+	}
+	return b.String()
 }

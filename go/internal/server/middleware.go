@@ -147,7 +147,7 @@ func (mw *Middleware) RecoverMiddleware(next http.Handler) http.Handler {
 			// Log the panic's type, not its value: the value may embed request
 			// data. The stack is enough to locate the fault.
 			log.Printf("PANIC incident=%s method=%s path=%s panic_type=%T\n%s",
-				id, r.Method, r.URL.Path, rec, debug.Stack())
+				id, handlers.LogSafe(r.Method), handlers.LogSafe(r.URL.Path), rec, debug.Stack())
 			if committed {
 				// Headers already sent: appending a JSON body would corrupt
 				// the response. Abort the connection instead.
@@ -254,7 +254,7 @@ func (mw *Middleware) LoggingMiddleware(next http.Handler) http.Handler {
 
 		duration := time.Since(start)
 		log.Printf("HTTP %s %s -> %d (%s)",
-			r.Method, r.URL.Path, wrapped.statusCode, duration.Round(time.Microsecond))
+			handlers.LogSafe(r.Method), handlers.LogSafe(r.URL.Path), wrapped.statusCode, duration.Round(time.Microsecond))
 	})
 }
 

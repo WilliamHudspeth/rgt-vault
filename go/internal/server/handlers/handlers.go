@@ -659,7 +659,9 @@ func (h *Handlers) Audit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
-	entries := make([]AuditEntry, 0, min(len(rows), limit))
+	// No pre-allocation sized by the request: limit is bounded above, but
+	// the slice only ever grows to the rows actually returned.
+	entries := []AuditEntry{}
 	for _, row := range rows {
 		if len(entries) == limit {
 			break
@@ -868,7 +870,7 @@ func (h *Handlers) ExecuteCapability(w http.ResponseWriter, r *http.Request) {
 func executeError(capability string, err error) error {
 	if errors.Is(err, vault.ErrCapabilityFailed) {
 		// The handler's own error: never echoed.
-		log.Printf("ERROR: capability %q failed; details suppressed from response: %v", capability, err)
+		log.Printf("ERROR: capability %s failed; details suppressed from response: %s", LogSafe(capability), LogSafe(err.Error()))
 		return newAppError(http.StatusInternalServerError, "ActionExecutionError",
 			"capability "+pyfmt.Repr(capability)+" failed; see server logs for details")
 	}
@@ -878,7 +880,7 @@ func executeError(capability string, err error) error {
 			return err
 		}
 	}
-	log.Printf("ERROR: capability %q raised an unhandled error; details suppressed from response: %v", capability, err)
+	log.Printf("ERROR: capability %s raised an unhandled error; details suppressed from response: %s", LogSafe(capability), LogSafe(err.Error()))
 	return newAppError(http.StatusInternalServerError, "ActionExecutionError",
 		"capability "+pyfmt.Repr(capability)+" failed; see server logs for details")
 }
