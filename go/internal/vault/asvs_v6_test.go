@@ -67,10 +67,10 @@ func openASVSVault(t *testing.T, prov MasterProvider) (*Vault, string) {
 
 // TestASVSV6_VaultCiphertextStructure12ByteNonce verifies ASVS 6.2.3 (RGT-398)
 // and 6.2.7 (RGT-402) on REAL vault ciphertext persisted in SQLite:
-// - stored blob length is 12 (nonce) + len(plaintext) + 16 (GCM tag);
-// - ct[:12] is the 96-bit AES-256-GCM nonce;
-// - manual decryption with stdlib aes.NewCipher(32B DEK) + cipher.NewGCM and
-//   AAD = "vault_id:namespace:name" reproduces the exact plaintext.
+//   - stored blob length is 12 (nonce) + len(plaintext) + 16 (GCM tag);
+//   - ct[:12] is the 96-bit AES-256-GCM nonce;
+//   - manual decryption with stdlib aes.NewCipher(32B DEK) + cipher.NewGCM and
+//     AAD = "vault_id:namespace:name" reproduces the exact plaintext.
 func TestASVSV6_VaultCiphertextStructure12ByteNonce(t *testing.T) {
 	ctx := context.Background()
 	prov := &asvsRotatableProvider{secret: bytes.Repeat([]byte{0x21}, 32)}
@@ -236,16 +236,16 @@ func TestASVSV6_VaultPlaintextAndDEKNeverOnDisk(t *testing.T) {
 		t.Fatal(err)
 	}
 	needles := map[string][]byte{
-		"plaintext-raw":    secretVal,
-		"plaintext-b64":    []byte(base64.StdEncoding.EncodeToString(secretVal)),
-		"dek-raw":          dek,
-		"dek-hex":          []byte(hex.EncodeToString(dek)),
-		"dek-std-b64":      []byte(base64.StdEncoding.EncodeToString(dek)),
-		"dek-url-b64":      []byte(base64.RawURLEncoding.EncodeToString(dek)),
-		"master-raw":       master,
-		"master-hex":       []byte(hex.EncodeToString(master)),
-		"master-std-b64":   []byte(base64.StdEncoding.EncodeToString(master)),
-		"master-url-b64":   []byte(base64.RawURLEncoding.EncodeToString(master)),
+		"plaintext-raw":  secretVal,
+		"plaintext-b64":  []byte(base64.StdEncoding.EncodeToString(secretVal)),
+		"dek-raw":        dek,
+		"dek-hex":        []byte(hex.EncodeToString(dek)),
+		"dek-std-b64":    []byte(base64.StdEncoding.EncodeToString(dek)),
+		"dek-url-b64":    []byte(base64.RawURLEncoding.EncodeToString(dek)),
+		"master-raw":     master,
+		"master-hex":     []byte(hex.EncodeToString(master)),
+		"master-std-b64": []byte(base64.StdEncoding.EncodeToString(master)),
+		"master-url-b64": []byte(base64.RawURLEncoding.EncodeToString(master)),
 	}
 
 	scanned := 0
@@ -273,9 +273,10 @@ func TestASVSV6_VaultPlaintextAndDEKNeverOnDisk(t *testing.T) {
 // and 6.2.7 (RGT-402):
 // (1) raw DB tamper without updating checksum is caught by store.ErrChecksum;
 // (2) tampering with ciphertext, nonce, GCM tag, or swapping ciphertexts across
-//     names (breaking AAD vault_id:namespace:name) even WITH a recomputed SQLite
-//     checksum fails closed at AES-GCM with the single generic error
-//     crypto.ErrDecryptionFailed without leaking key, AAD, tag, or plaintext.
+//
+//	names (breaking AAD vault_id:namespace:name) even WITH a recomputed SQLite
+//	checksum fails closed at AES-GCM with the single generic error
+//	crypto.ErrDecryptionFailed without leaking key, AAD, tag, or plaintext.
 func TestASVSV6_VaultTamperingFailsClosedGenerically(t *testing.T) {
 	ctx := context.Background()
 	prov := &asvsRotatableProvider{secret: bytes.Repeat([]byte{0x44}, 32)}
@@ -452,11 +453,11 @@ func TestASVSV6_VaultCloseAndLeaseZeroizeKeyMaterial(t *testing.T) {
 
 // TestASVSV6_VaultRotationAndPolicyAlignment verifies ASVS 1.6.3 (RGT-245),
 // 6.2.6 (RGT-401), and RGT-220 constant parity:
-// - DEKMaxEncryptions / DEKMaxBytes match cryptopolicy defaults;
-// - RotateDEK replaces the DEK, re-encrypts secrets with new ciphertexts/nonces,
-//   and bumps key_epoch;
-// - RotateMaster re-wraps under a rotated master secret and bumps key_epoch;
-// - restoring a stale keychain.json from an older epoch fails closed with ErrRollback.
+//   - DEKMaxEncryptions / DEKMaxBytes match cryptopolicy defaults;
+//   - RotateDEK replaces the DEK, re-encrypts secrets with new ciphertexts/nonces,
+//     and bumps key_epoch;
+//   - RotateMaster re-wraps under a rotated master secret and bumps key_epoch;
+//   - restoring a stale keychain.json from an older epoch fails closed with ErrRollback.
 func TestASVSV6_VaultRotationAndPolicyAlignment(t *testing.T) {
 	pol := cryptopolicy.Default()
 	if DEKMaxEncryptions != pol.MaxEncryptionsPerDEK {

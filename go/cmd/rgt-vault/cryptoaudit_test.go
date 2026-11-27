@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"os"
@@ -9,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"rgt-vault-server/internal/crypto"
 	"rgt-vault-server/internal/kdf"
 	"rgt-vault-server/internal/keychain"
 )
@@ -170,5 +174,93 @@ func TestFormatByteSize(t *testing.T) {
 		if got := formatByteSize(in); got != want {
 			t.Errorf("formatByteSize(%d) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestCryptoAuditLivePinnedValues pins the numbers crypto-audit reports. They
+// are measured from real ciphertext, a real keychain.json and real token
+// generators, so this test fails if the code (not just the printout) drifts.
+func TestCryptoAuditLivePinnedValues(t *testing.T) {
+	isolateEnv(t)
+	code, stdout, stderr := runCLI(t, "", "crypto-audit", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d stderr=%q stdout=%q", code, stderr, stdout)
+	}
+	var r cryptoAuditReport
+	if err := json.Unmarshal([]byte(stdout), &r); err != nil {
+		t.Fatal(err)
+	}
+	if !r.LiveProbes.Cipher.OK || !r.LiveProbes.Keychain.OK || !r.LiveProbes.Tokens.OK {
+		t.Fatalf("live probes not OK: %+v", r.LiveProbes)
+	}
+	if r.Cipher.KeyBytes != 32 || r.Cipher.NonceBytes != 12 || r.Cipher.TagBytes != 16 {
+		t.Errorf("cipher sizes drifted: %+v", r.Cipher)
+	}
+	if want := (kdf.Params{MemoryCost: 262144, TimeCost: 4, Parallelism: 4}); r.KDF.DefaultParams != want {
+		t.Errorf("default Argon2 params drifted: got %+v want %+v", r.KDF.DefaultParams, want)
+	}
+	if r.KDF.DefaultSaltBytes != 32 {
+		t.Errorf("salt bytes drifted: %d", r.KDF.DefaultSaltBytes)
+	}
+	ks := r.KeySizes
+	if ks.MasterSecretBytes != 32 || ks.DEKBytes != 32 || ks.KEKBytes != 32 ||
+		ks.BearerTokenBytes != 32 || ks.CapTokenMinBytes != 32 || ks.TOTPSecretDefault != 20 {
+		t.Errorf("key sizes drifted: %+v", ks)
+	}
+	if r.Calibration.Params != r.KDF.DefaultParams || r.Calibration.ElapsedMS < 0 || r.Calibration.Note == "" {
+		t.Errorf("calibration report malformed: %+v", r.Calibration)
+	}
+}
+
+// TestCryptoAuditDetectsCipherDrift injects drifting Encrypt/Decrypt
+// implementations and requires crypto-audit to report FAIL instead of
+// printing the frozen constants.
+func TestCryptoAuditDetectsCipherDrift(t *testing.T) {
+	isolateEnv(t)
+	origEnc, origDec := cryptoAuditEncrypt, cryptoAuditDecrypt
+	t.Cleanup(func() { cryptoAuditEncrypt, cryptoAuditDecrypt = origEnc, origDec })
+
+	// 8-byte nonce instead of 12.
+	cryptoAuditEncrypt = func(pt, key, aad []byte) ([]byte, error) {
+		if len(key) != 32 {
+			return crypto.Encrypt(pt, key, aad)
+		}
+		block, _ := aes.NewCipher(key)
+		g, err := cipher.NewGCMWithNonceSize(block, 8)
+		if err != nil {
+			return nil, err
+		}
+		nonce := make([]byte, 8)
+		if _, err := rand.Read(nonce); err != nil {
+			return nil, err
+		}
+		return g.Seal(nonce, nonce, pt, aad), nil
+	}
+	code, stdout, _ := runCLI(t, "", "crypto-audit")
+	if code != 1 || !strings.Contains(stdout, "Encrypt/Decrypt round trip, nonce/tag from real ciphertext — FAIL") {
+		t.Fatalf("short nonce not detected: exit %d\n%s", code, stdout)
+	}
+
+	// Decrypt that ignores the AAD.
+	cryptoAuditEncrypt = origEnc
+	cryptoAuditDecrypt = func(token, key, _ []byte) ([]byte, error) {
+		// Decrypt with the AAD the probe used, whatever is asked.
+		return origDec(token, key, []byte("crypto-audit-probe:aad"))
+	}
+	code, stdout, _ = runCLI(t, "", "crypto-audit")
+	if code != 1 || !strings.Contains(stdout, "FAIL (Decrypt accepted a wrong AAD)") {
+		t.Fatalf("AAD-ignoring Decrypt not detected: exit %d\n%s", code, stdout)
+	}
+
+	// A tag-ignoring Decrypt.
+	cryptoAuditDecrypt = func(token, key, aad []byte) ([]byte, error) {
+		if len(key) != 32 || len(token) < 28 {
+			return origDec(token, key, aad)
+		}
+		return token[12 : len(token)-16], nil
+	}
+	code, stdout, _ = runCLI(t, "", "crypto-audit")
+	if code != 1 || !strings.Contains(stdout, "FAIL") {
+		t.Fatalf("tag-ignoring Decrypt not detected: exit %d\n%s", code, stdout)
 	}
 }

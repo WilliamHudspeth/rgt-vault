@@ -8,12 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"rgt-vault-server/internal/captoken"
 	"rgt-vault-server/internal/cryptopolicy"
 	"rgt-vault-server/internal/kdf"
 	"rgt-vault-server/internal/keychain"
 	"rgt-vault-server/internal/providers"
-	"rgt-vault-server/internal/totp"
 	"rgt-vault-server/internal/vault"
 )
 
@@ -32,6 +30,8 @@ type cryptoAuditReport struct {
 	DEKRotation  dekRotationAuditInfo        `json:"dek_rotation_limits"`
 	CSPRNG       csprngAuditInfo             `json:"csprng"`
 	SelfTest     selfTestAuditInfo           `json:"selftest"`
+	LiveProbes   liveProbesInfo              `json:"live_probes"`
+	Calibration  argon2CalibrationInfo       `json:"argon2_calibration"`
 	PolicySource string                      `json:"policy_source"`
 	Keychain     *cryptopolicy.KeychainAudit `json:"keychain,omitempty"`
 }
@@ -150,6 +150,20 @@ func runCryptoAudit(policyPath, keychainPath string, jsonOut bool, out io.Writer
 		st.Error = err.Error()
 	}
 
+	// Live probes: real Encrypt/Decrypt, a real keychain.json written with the
+	// shipped default KDF parameters, and real token generators. Every size
+	// printed below is read from these observations, not from literals.
+	cobs, cerr := probeCipher()
+	kobs, kerr := probeKeychain()
+	tobs, terr := probeTokens()
+	probes := liveProbesInfo{Cipher: probeResult(cerr), Keychain: probeResult(kerr), Tokens: probeResult(terr)}
+	calibration := argon2CalibrationInfo{
+		Params:    kobs.Params,
+		ElapsedMS: kobs.CalibrateM.Milliseconds(),
+		Note: "one Argon2id wrap with the shipped default parameters on this machine; " +
+			"informational only (read-only, no format change)",
+	}
+
 	var kcAudit *cryptopolicy.KeychainAudit
 	if keychainPath != "" {
 		ka, err := pol.CheckKeychainFile(keychainPath)
@@ -160,36 +174,37 @@ func runCryptoAudit(policyPath, keychainPath string, jsonOut bool, out io.Writer
 	}
 
 	report := cryptoAuditReport{
-		OK: csprng.OK && st.OK && (kcAudit == nil || kcAudit.Compliant),
+		OK: csprng.OK && st.OK && probes.Cipher.OK && probes.Keychain.OK && probes.Tokens.OK &&
+			(kcAudit == nil || kcAudit.Compliant),
 		Cipher: cipherAuditInfo{
 			Algorithm:  cryptopolicy.RequiredCipher,
-			KeyBytes:   cryptopolicy.RequiredAESKeyBytes,
-			KeyBits:    cryptopolicy.RequiredAESKeyBytes * 8,
-			NonceBytes: cryptopolicy.RequiredNonceBytes,
-			NonceBits:  cryptopolicy.RequiredNonceBytes * 8,
-			TagBytes:   cryptopolicy.RequiredTagBytes,
-			TagBits:    cryptopolicy.RequiredTagBytes * 8,
+			KeyBytes:   cobs.KeyBytes,
+			KeyBits:    cobs.KeyBytes * 8,
+			NonceBytes: cobs.NonceBytes,
+			NonceBits:  cobs.NonceBytes * 8,
+			TagBytes:   cobs.TagBytes,
+			TagBits:    cobs.TagBytes * 8,
 			SecretAAD:  "vault_id:namespace:name",
 			WrapAAD:    "vault_id:epoch",
 		},
 		KDF: kdfAuditInfo{
 			Pipeline:            "Argon2id -> HKDF-SHA512 -> HKDF-SHA256 (nonce expansion)",
-			DefaultParams:       kdf.DefaultParams(),
+			DefaultParams:       kobs.Params,
 			PolicyMinMemoryKiB:  pol.MinArgon2MemoryKiB,
 			PolicyMinTimeCost:   pol.MinArgon2TimeCost,
 			PolicyMinParallel:   pol.MinArgon2Parallelism,
 			PolicyMinSaltBytes:  pol.MinArgon2SaltBytes,
-			DefaultSaltBytes:    keychain.SaltSize,
+			DefaultSaltBytes:    kobs.SaltBytes,
 			HKDFStage2Algorithm: "HKDF-SHA512",
 			HKDFStage3Algorithm: "HKDF-SHA256",
 		},
 		KeySizes: keySizesAuditInfo{
 			MasterSecretBytes: providers.MasterSecretSize,
-			DEKBytes:          keychain.DEKSize,
-			KEKBytes:          cryptopolicy.RequiredAESKeyBytes,
-			BearerTokenBytes:  32,
-			CapTokenMinBytes:  captoken.MinSecretLen,
-			TOTPSecretDefault: totp.DefaultSecretLength,
+			DEKBytes:          kobs.DEKBytes,
+			KEKBytes:          cobs.KeyBytes,
+			BearerTokenBytes:  tobs.Bearer,
+			CapTokenMinBytes:  tobs.CapTokenMin,
+			TOTPSecretDefault: tobs.TOTP,
 		},
 		DEKRotation: dekRotationAuditInfo{
 			DefaultMaxEncryptions: vault.DEKMaxEncryptions,
@@ -199,6 +214,8 @@ func runCryptoAudit(policyPath, keychainPath string, jsonOut bool, out io.Writer
 		},
 		CSPRNG:       csprng,
 		SelfTest:     st,
+		LiveProbes:   probes,
+		Calibration:  calibration,
 		PolicySource: policySource,
 		Keychain:     kcAudit,
 	}
@@ -253,6 +270,17 @@ func printCryptoAuditText(out io.Writer, r cryptoAuditReport) {
 	} else {
 		fmt.Fprintf(out, "  SelfTest (KAT):   FAIL (%s)\n", r.SelfTest.Error)
 	}
+	probe := func(name string, p liveProbeInfo) {
+		if p.OK {
+			fmt.Fprintf(out, "  Live probe:       %s — PASS\n", name)
+		} else {
+			fmt.Fprintf(out, "  Live probe:       %s — FAIL (%s)\n", name, p.Error)
+		}
+	}
+	probe("Encrypt/Decrypt round trip, nonce/tag from real ciphertext", r.LiveProbes.Cipher)
+	probe("default-KDF keychain.json written, read back, unwrapped", r.LiveProbes.Keychain)
+	probe("bearer/TOTP/capability-token sizes from real generators", r.LiveProbes.Tokens)
+	fmt.Fprintf(out, "  Argon2id Timing:  %d ms for one wrap at default params (informational)\n", r.Calibration.ElapsedMS)
 	if r.Keychain != nil {
 		fmt.Fprintf(out, "  Keychain File:    %s (epoch=%d, memory=%d KiB, time=%d, parallelism=%d, salt=%d B) — %s\n",
 			r.Keychain.Path, r.Keychain.KeyEpoch, r.Keychain.Params.MemoryCost, r.Keychain.Params.TimeCost,

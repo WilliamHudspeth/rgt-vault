@@ -1,6 +1,7 @@
 package cryptopolicy_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"testing"
 
 	"rgt-vault-server/internal/approval"
+	"rgt-vault-server/internal/auth"
 	"rgt-vault-server/internal/captoken"
 	"rgt-vault-server/internal/crypto"
 	"rgt-vault-server/internal/store"
@@ -120,16 +122,16 @@ func TestASVSV6_NoMathRandInProductionGo(t *testing.T) {
 // strictly for RFC 6238 TOTP HMAC-SHA1 interoperability.
 func TestASVSV6_NoObsoleteCryptoAlgorithms(t *testing.T) {
 	forbiddenImports := map[string]bool{
-		"crypto/md5":                   true,
-		"crypto/sha1":                  true,
-		"crypto/des":                   true,
-		"crypto/rc4":                   true,
-		"golang.org/x/crypto/md4":      true,
+		"crypto/md5":                    true,
+		"crypto/sha1":                   true,
+		"crypto/des":                    true,
+		"crypto/rc4":                    true,
+		"golang.org/x/crypto/md4":       true,
 		"golang.org/x/crypto/ripemd160": true,
-		"golang.org/x/crypto/blowfish": true,
-		"golang.org/x/crypto/cast5":    true,
-		"golang.org/x/crypto/tea":      true,
-		"golang.org/x/crypto/xtea":     true,
+		"golang.org/x/crypto/blowfish":  true,
+		"golang.org/x/crypto/cast5":     true,
+		"golang.org/x/crypto/tea":       true,
+		"golang.org/x/crypto/xtea":      true,
 	}
 	allowSHA1 := map[string]string{
 		"internal/totp/totp.go": "RFC 6238 TOTP default HMAC-SHA1 interoperability (HMAC-SHA1 is not vulnerable to SHA-1 collision attacks; SHA256/SHA512 also supported)",
@@ -190,14 +192,17 @@ func TestASVSV6_NoObsoleteCryptoAlgorithms(t *testing.T) {
 }
 
 // TestASVSV6_AESGCMOnly32ByteKeys verifies ASVS 6.2.3 (RGT-398) & 6.2.7 (RGT-402):
-// (1) crypto/aes is only imported in internal/crypto/crypto.go and
-// internal/keychain/keychain.go, both of which wrap the block cipher in
-// cipher.NewGCM (no ECB/CBC); (2) crypto.Encrypt and crypto.Decrypt reject
+// (1) crypto/aes is only imported in internal/crypto/crypto.go,
+// internal/keychain/keychain.go and the crypto-audit reference parser
+// (cmd/rgt-vault/cryptoaudit_probe.go, which opens real repo ciphertext with
+// an independent stdlib GCM); each wraps the block cipher in cipher.NewGCM
+// (no ECB/CBC); (2) crypto.Encrypt and crypto.Decrypt reject
 // every key size other than 32 bytes (AES-256).
 func TestASVSV6_AESGCMOnly32ByteKeys(t *testing.T) {
 	allowedAES := map[string]bool{
-		"internal/crypto/crypto.go":     true,
-		"internal/keychain/keychain.go": true,
+		"internal/crypto/crypto.go":          true,
+		"internal/keychain/keychain.go":      true,
+		"cmd/rgt-vault/cryptoaudit_probe.go": true,
 	}
 	seenAES := map[string]bool{}
 
@@ -225,6 +230,11 @@ func TestASVSV6_AESGCMOnly32ByteKeys(t *testing.T) {
 			}
 			if sel.Sel.Name == "NewGCM" {
 				hasGCM = true
+			}
+			// crypto.Encrypt / crypto.Decrypt are the repo's AES-GCM wrappers,
+			// not raw block operations.
+			if id, ok := sel.X.(*ast.Ident); ok && id.Name == "crypto" {
+				return true
 			}
 			if sel.Sel.Name == "Encrypt" || sel.Sel.Name == "Decrypt" {
 				t.Errorf("raw AES block.%s (ECB) found in %s", sel.Sel.Name, rel)
@@ -261,16 +271,28 @@ func TestASVSV6_AESGCMOnly32ByteKeys(t *testing.T) {
 	}
 }
 
-// TestASVSV6_CSPRNGConcurrentLoad verifies ASVS 6.3.3 (RGT-406):
-// crypto/rand operates concurrently under load without error, blocking, or
-// duplicate outputs.
+// TestASVSV6_CSPRNGConcurrentLoad verifies ASVS 6.3.3 (RGT-406) against repo
+// code: under heavy concurrency the repo's own generators (crypto.Encrypt
+// nonces, auth.GenerateToken bearer tokens, captoken.NewTokenID,
+// approval.NewRequest IDs) never error, never produce an all-zero value and
+// never repeat. It is a -race smoke test of repo consumers of crypto/rand,
+// not a proof about the OS CSPRNG itself (Go >= 1.24 crypto/rand is
+// non-blocking and aborts the process if the OS source fails).
 func TestASVSV6_CSPRNGConcurrentLoad(t *testing.T) {
 	const (
 		goroutines = 32
 		perWorker  = 100
-		drawSize   = 32
 	)
-	results := make([][drawSize]byte, goroutines*perWorker)
+	dek := bytes.Repeat([]byte{0x42}, 32)
+	aad := []byte("concurrent-load")
+
+	type draw struct {
+		nonce [12]byte
+		token string
+		tokID string
+		reqID string
+	}
+	results := make([]draw, goroutines*perWorker)
 	var wg sync.WaitGroup
 	errs := make(chan error, goroutines)
 
@@ -280,29 +302,55 @@ func TestASVSV6_CSPRNGConcurrentLoad(t *testing.T) {
 			defer wg.Done()
 			base := worker * perWorker
 			for i := 0; i < perWorker; i++ {
-				if _, err := rand.Read(results[base+i][:]); err != nil {
+				ct, err := crypto.Encrypt([]byte("x"), dek, aad)
+				if err != nil {
 					errs <- err
 					return
 				}
+				copy(results[base+i].nonce[:], ct[:12])
+				tok, err := auth.GenerateToken()
+				if err != nil {
+					errs <- err
+					return
+				}
+				results[base+i].token = tok
+				results[base+i].tokID = captoken.NewTokenID()
+				results[base+i].reqID = approval.NewRequest("agent", "default", "s", "p").RequestID
 			}
 		}(g)
 	}
 	wg.Wait()
 	close(errs)
 	for err := range errs {
-		t.Fatalf("concurrent crypto/rand.Read failed: %v", err)
+		t.Fatalf("concurrent repo generator failed: %v", err)
 	}
 
-	seen := make(map[[drawSize]byte]struct{}, len(results))
-	var zero [drawSize]byte
+	nonces := make(map[[12]byte]struct{}, len(results))
+	tokens := make(map[string]struct{}, len(results))
+	tokIDs := make(map[string]struct{}, len(results))
+	reqIDs := make(map[string]struct{}, len(results))
+	var zero [12]byte
 	for i, r := range results {
-		if r == zero {
-			t.Fatalf("draw %d was all zeros", i)
+		if r.nonce == zero {
+			t.Fatalf("draw %d: all-zero AES-GCM nonce", i)
 		}
-		if _, dup := seen[r]; dup {
-			t.Fatalf("duplicate 256-bit CSPRNG draw at index %d", i)
+		if _, dup := nonces[r.nonce]; dup {
+			t.Fatalf("draw %d: duplicate AES-GCM nonce", i)
 		}
-		seen[r] = struct{}{}
+		nonces[r.nonce] = struct{}{}
+		if r.token == "" {
+			t.Fatalf("draw %d: empty bearer token", i)
+		}
+		for _, c := range []struct {
+			name string
+			set  map[string]struct{}
+			v    string
+		}{{"bearer token", tokens, r.token}, {"captoken id", tokIDs, r.tokID}, {"approval request id", reqIDs, r.reqID}} {
+			if _, dup := c.set[c.v]; dup {
+				t.Fatalf("draw %d: duplicate %s", i, c.name)
+			}
+			c.set[c.v] = struct{}{}
+		}
 	}
 }
 
