@@ -4,34 +4,34 @@ package tui
 import "sync"
 
 type Clipboard interface {
-    Write(s string) error
-    Clear() error
+	Write(s string) error
+	Clear() error
 }
 
 type MemoryClipboard struct {
-    mu      sync.Mutex
-    content string
+	mu      sync.Mutex
+	content string
 }
 
 func (m *MemoryClipboard) Write(s string) error {
-    m.mu.Lock()
-    m.content = s
-    m.mu.Unlock()
-    return nil
+	m.mu.Lock()
+	m.content = s
+	m.mu.Unlock()
+	return nil
 }
 
 func (m *MemoryClipboard) Clear() error {
-    m.mu.Lock()
-    m.content = ""
-    m.mu.Unlock()
-    return nil
+	m.mu.Lock()
+	m.content = ""
+	m.mu.Unlock()
+	return nil
 }
 
 func (m *MemoryClipboard) Content() string {
-    m.mu.Lock()
-    content := m.content
-    m.mu.Unlock()
-    return content
+	m.mu.Lock()
+	content := m.content
+	m.mu.Unlock()
+	return content
 }
 
 type NoopClipboard struct{}
