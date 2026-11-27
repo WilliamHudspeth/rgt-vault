@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -728,3 +729,20 @@ func TestEmptyAllowlistDeniesAndWrappedErrorsAreMasked(t *testing.T) {
 		t.Fatalf("wrapper text must not reach the caller: %v", err)
 	}
 }
+
+func TestDialTimeoutIsClassifiedAsTimeout(t *testing.T) {
+	r := registry(t, Config{
+		Resolver: &fakeResolver{table: map[string][]string{"api.example.com": {"93.184.216.34"}}},
+		DialFunc: func(context.Context, string, string) (net.Conn, error) { return nil, dialTimeout{} },
+	})
+	_, err := run(t, r, "http_get_with_auth", map[string]any{"url": "https://api.example.com/"})
+	if err == nil || !strings.Contains(err.Error(), "(timeout)") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+type dialTimeout struct{}
+
+func (dialTimeout) Error() string   { return "dial tcp 93.184.216.34:443: i/o timeout" }
+func (dialTimeout) Timeout() bool   { return true }
+func (dialTimeout) Temporary() bool { return false }

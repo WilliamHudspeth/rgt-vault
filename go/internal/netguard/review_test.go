@@ -3,8 +3,10 @@ package netguard
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -104,5 +106,25 @@ func TestClient_ResponseHeaderTimeoutFollowsTimeout(t *testing.T) {
 	tr := g.Client().Transport.(*http.Transport)
 	if tr.ResponseHeaderTimeout != 90*time.Second {
 		t.Fatalf("ResponseHeaderTimeout %v must follow WithTimeout, not a hidden 15s cap", tr.ResponseHeaderTimeout)
+	}
+}
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return false }
+
+func TestDialTimeoutStaysVisibleThroughClientErrors(t *testing.T) {
+	g := newTestGuard(t, WithResolver(publicResolver()), WithTimeout(time.Minute),
+		WithDialFunc(func(context.Context, string, string) (net.Conn, error) { return nil, timeoutErr{} }))
+	_, err := get(t, g.Client(), "https://example.com/", nil)
+	var ue *url.Error
+	if !errors.As(err, &ue) || !ue.Timeout() {
+		t.Fatalf("a dial timeout must still report Timeout() through *url.Error: %v", err)
+	}
+	var ne net.Error
+	if !errors.As(err, &ne) || !ne.Timeout() {
+		t.Fatalf("net.Error timeout lost: %v", err)
 	}
 }

@@ -226,6 +226,13 @@ type dialError struct {
 func (e *dialError) Error() string { return "netguard: connecting to " + e.host + " failed" }
 func (e *dialError) Unwrap() error { return e.cause }
 
+// Timeout lets (*url.Error).Timeout and net.Error checks see through the
+// wrapper: url.Error asserts on its direct Err, it does not unwrap.
+func (e *dialError) Timeout() bool {
+	var ne net.Error
+	return errors.As(e.cause, &ne) && ne.Timeout()
+}
+
 // resolve returns the validated addresses for host. A literal IP is validated
 // without a lookup.
 func (g *Guard) resolve(ctx context.Context, host string) ([]netip.Addr, error) {
