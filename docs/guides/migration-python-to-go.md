@@ -174,8 +174,9 @@ KDF chain and its un-prepended nonce, the audit hash input (including Python's `
   (RGT-501). Defender may flag cross-compiled test binaries (RGT-503); build with the native toolchain.
 * A DPAPI blob sealed with `CRYPTPROTECT_LOCAL_MACHINE` (Python's format) can be unsealed by any local user who can
   read the file: restrict its ACL.
-* macOS and TPM interoperability is covered by the CI jobs listed in the appendix; where a box there is unchecked, the
-  step is still a **human check on your machine** before you rely on it.
+* macOS Keychain: Python/Go interoperability is **not verified** (the live tests hang on hosted CI runners, RGT-507).
+  If you use `--provider keyring` or `platform` on macOS, run `migrate check`, then `get --offline` on a *copy* of the
+  vault first. The TPM provider is verified against a software TPM in CI, not on real hardware.
 * The audit chain does not cover `agent_id` (same as Python), and rows imported from other tools that stored NULL
   `details` verify only the way Python verifies them.
 * Python features that were library-only (hooks configuration, webhook/2FA hooks, the freeze watcher) are not wired
@@ -206,5 +207,23 @@ Removing `python/` (batch GZ) may not be scheduled until **every box is ticked b
 Boxes below are ticked only where this repository's CI or tests prove them; the rest say what is missing.
 The same list is posted on RGT-165.
 
-<!-- CHECKLIST:BEGIN (filled in at the end of the PR) -->
-<!-- CHECKLIST:END -->
+Evidence below is CI run [45934553386](https://github.com/WilliamHudspeth/rgt-vault/actions/runs/45934553386) on commit `84f9af2` of PR [#52](https://github.com/WilliamHudspeth/rgt-vault/pull/52) (jobs `compat (python<->go)`, `tpm (swtpm)`, `providers (windows-latest)`, `go (ubuntu/macos/windows)`), or a test name in `go/internal/compat`. Unticked boxes say what is missing.
+
+1. [ ] G1–G12 merged; `go test -race ./...` green on linux/macos/windows; coverage of new packages ≥85%.
+   * Done: G0–G11 are merged (G0 #34, G1 #24, G2 #26, G3 #33, G4 #35, G5 #27, G6 #36, G7 #40, G8a #45, G8b #44, G9 #48, G10 #50, G11 #49); the `go (ubuntu-24.04 / macos-latest / windows-latest)` jobs run `go vet` and `go test -race` and were green on `84f9af2`.
+   * Missing: G12 itself (this PR) is not merged; the ≥85% gate is not met package-wide today (measured with `go test -cover ./...`: `internal/crypto` 83.9%, `internal/kdf` 82.5%, `internal/server/handlers` 21.5% in its own package (exercised from `internal/server`), `internal/auth` and `cmd/gateway` 0% in their own packages), and no CI job enforces it.
+2. [x] G12 round trip green: the Python-created `small` and `default` fixtures are fully readable by Go; a Go-modified vault is readable by Python and `verify_audit_chain()` is True; Python's export imports into Go.
+   * Evidence: `go/internal/compat` `TestFixturesFullStackRead`, `TestFixturesWriteRotateReverify`, `TestFixturesExportImport`, `TestEdgeChainVerdicts`, `TestPythonOpensGoModifiedVault` (also `epoch1` and a Go-created vault), in the `compat (python<->go)` job (required check).
+3. [ ] Provider matrix green in CI (Linux keyring, macOS keychain, Windows keyring and DPAPI; TPM swtpm-green or human-verified; record which).
+   * [x] Linux keyring (Secret Service / gnome-keyring): `TestKeyringInPlaceMigration` in the `compat` job: Python creates a vault with its master secret in the real keyring, the Go binary migrates it in place (`migrate check`, `get --offline`, `serve`, `set`, `rotate dek|master`, `export`), Python re-opens it with the key Go wrote; plus `TestLiveKeyring`.
+   * [x] Windows keyring (Credential Manager): the same test with the real Python `keyring` WinVault backend, `providers (windows-latest)`; manual confirmation in RGT-501.
+   * [x] Windows DPAPI: `TestPythonDPAPIInterop`, Python (pywin32) seals / Go unseals and the reverse, with and without entropy, `providers (windows-latest)`; manual confirmation in RGT-501.
+   * [x] TPM: **swtpm-green** (`tpm (swtpm)`: `TestLiveTPMSealUnseal`, `TestPythonTPMInterop`, Python seals / Go unseals and the reverse, through tpm2-abrmd). Not verified on real hardware (RGT-16 owner).
+   * [ ] macOS Keychain: **not green**. The live provider tests hang on hosted macOS runners (`security add-generic-password` times out, also with an unlocked temporary keychain), so no macOS job is in CI. A human must run `RGT_TEST_REAL_KEYRING=1 RGT_TEST_MACOS_KEYCHAIN=1 go test ./internal/providers` and `go test ./internal/compat -run TestPythonMacOSKeychainInterop` (with `RGT_VAULT_PYTHON`) on a real Mac. Tracked in RGT-507.
+4. [x] Every route in `python/server/app.py` has a Go counterpart, or a documented deliberate omission (`/docs`, `/redoc`, `/openapi.json`; the CSRF cookie is a middleware, not a route). Evidence: `TestRouteParity` (parses both and fails on any undocumented difference).
+5. [x] Every `python/cli.py` subcommand has a Go counterpart, including `enroll-2fa`, and `export` / `import` / `provider seal` exist (D4). Evidence: `TestCLICommandParity`.
+6. [x] Legacy handling per D3 is implemented and documented: Go refuses a vault with `dek_version=0` rows, names the last-Python-release step, and writes nothing. Evidence: `TestLegacyFernetVaultRefused`, `TestCLIMigrateCheckRefusals`, this guide.
+7. [ ] H1 merged. Not merged: the Go server still has Python's shared-token, self-asserted-agent model.
+8. [ ] A Go release cut from parity master (RGT-163 plumbing), with release notes linking this guide. Not done.
+9. [ ] The maintainer migrates their own vault(s) with this guide and confirms. Not done (needs a human).
+10. [ ] The EOL announcement has been public for at least the notice period (D2) before GZ merges. Not done.
