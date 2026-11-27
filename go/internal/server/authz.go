@@ -121,6 +121,8 @@ type failureLimiter struct {
 
 	mu      sync.Mutex
 	sources map[string]*failureWindow
+	// fullSince is when a "table full" summary row was last reported.
+	fullSince time.Time
 }
 
 type failureWindow struct {
@@ -142,7 +144,9 @@ func newFailureLimiter(limit int, window time.Duration) *failureLimiter {
 // failure records one failed attempt from source. It returns limited when
 // the source is over the limit in the current window, and report when this
 // is the first over-limit attempt of the window (write one summary row).
-func (l *failureLimiter) failure(source string) (limited, report bool) {
+// When the source table is full of live windows, newcomers are limited and
+// one summary row per window is reported for all of them (full = true).
+func (l *failureLimiter) failure(source string) (limited, report, full bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
@@ -152,8 +156,13 @@ func (l *failureLimiter) failure(source string) (limited, report bool) {
 			l.prune(now)
 			if len(l.sources) >= maxTrackedSources {
 				// Table full of live windows: treat the newcomer as limited
-				// (no audit row) rather than grow without bound.
-				return true, false
+				// rather than grow without bound; one summary row per window
+				// so the flood is still visible in the audit log.
+				if l.fullSince.IsZero() || now.Sub(l.fullSince) >= l.window {
+					l.fullSince = now
+					return true, true, true
+				}
+				return true, false, true
 			}
 		}
 		fw = &failureWindow{start: now}
@@ -161,13 +170,13 @@ func (l *failureLimiter) failure(source string) (limited, report bool) {
 	}
 	fw.count++
 	if fw.count <= l.limit {
-		return false, false
+		return false, false, false
 	}
 	if !fw.reported {
 		fw.reported = true
-		return true, true
+		return true, true, false
 	}
-	return true, false
+	return true, false, false
 }
 
 func (l *failureLimiter) prune(now time.Time) {

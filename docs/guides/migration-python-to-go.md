@@ -11,7 +11,7 @@ no new keys.
 | Vault database | `~/.secure-vault/vault.db` (SQLite, WAL) | no: same schema (the five migrations), same rows |
 | Wrapped data key | `keychain.json` next to `vault.db` | no: same format (Argon2id parameters are read from the file) |
 | Master secret | OS keyring entry `rgt_vault` / `master_key`, or the platform provider (DPAPI, macOS Keychain, TPM) | no: same entry, same encoding |
-| Agent token | `~/.config/rgt-vault/server.token` | no: same file, same default port 8765 |
+| Agent token | `~/.config/rgt-vault/server.token` (one shared token) | **yes**: Go uses a per-agent token store (`~/.config/rgt-vault/tokens.json`, hashes only); mint one token per agent. Same default port 8765. The old file works only through the temporary `serve --legacy-shared-token` bridge |
 | Policy | your `--policy` YAML | no: same ABAC semantics (`fnmatch`, deny precedence, `*` crosses `/`) |
 
 What is *proved* about this, and where, is listed in [What is verified](#what-is-verified) and the
@@ -22,9 +22,11 @@ What is *proved* about this, and where, is listed in [What is verified](#what-is
 > * The Go release (RGT-163) has not been cut yet. Until it is, build the binary yourself:
 >   `cd go && CGO_ENABLED=0 go build -o rgt-vault ./cmd/rgt-vault` (Go version from `go/go.mod`).
 > * **Do not run Python and Go on the same vault at the same time.** Stop the Python server first.
-> * Per-agent identity (batch H1) is **not merged yet**. Today the Go server has the same model as Python: one shared
->   bearer token, and the agent name in a request is self-asserted. Do not rely on either line for isolation between
->   agents until H1 ships (see [What changes](#what-changes)).
+> * **Identity changes on the Go line (batch H1).** Python has one shared bearer token and a self-asserted agent name;
+>   Go gives every agent its own token and takes the agent from it. Mint tokens before you start the Go server
+>   (step 3, and [agent-identity-migration.md](agent-identity-migration.md)). `serve --legacy-shared-token` keeps the
+>   Python model only as a temporary bridge, and even then refuses the lease route, rotation and the audit log unless
+>   `--legacy-allow-privileged-routes` is also given.
 
 ## 1. Back up (2 minutes, do not skip)
 
@@ -108,14 +110,19 @@ Try the vault offline first (no server involved; same policy, same audit rows as
 rgt-vault get DB_PASSWORD --namespace prod --agent ci-bot --purpose "migration check" --offline
 ```
 
-then start the server on the same port as before:
+then create the token store and one token per agent, and start the server on the same port as before:
 
 ```bash
-rgt-vault serve            # 127.0.0.1:8765, token file ~/.config/rgt-vault/server.token (created 0600 if missing)
+rgt-vault init --tokens-only        # token store + an operator token in ~/.config/rgt-vault/operator.token
+rgt-vault token mint --agent ci-bot --scope agent,lease --out ~/.config/rgt-vault/ci-bot.token
+rgt-vault serve                     # 127.0.0.1:8765, per-agent tokens from ~/.config/rgt-vault/tokens.json
 ```
 
-Existing clients (the TUI, MCP configs, scripts) keep working because the port, the token file and the routes are
-the same.
+Point each client at its own token (`RGT_VAULT_TOKEN_FILE=~/.config/rgt-vault/ci-bot.token`, or `--token`). The TUI
+and the operator commands (`audit`, `verify-audit`, `rotate`) use `operator.token` on their own. `mcp` and the agent
+commands need an explicit token. The port and routes are the same as Python's, except that the plaintext route is now
+`POST .../lease`. If a client cannot be changed yet, the temporary bridge is
+`rgt-vault serve --legacy-shared-token` (see [agent-identity-migration.md](agent-identity-migration.md)).
 
 ## 4. Verify
 
@@ -136,12 +143,12 @@ rgt-vault verify-audit          # Python CLI against the same vault: OK
 
 | | Python line | Go line |
 |---|---|---|
-| Agent identity | one shared bearer token; the `agent` field is self-asserted | **identical today**. Per-agent identity (H1) is in flight, not merged: do not rely on isolation between agents yet |
-| Port, token file, routes | 8765, `~/.config/rgt-vault/server.token` | same (Go-only extras: `GET /v1/secrets/{namespace}/{name}` fingerprint, `GET /v1/actions`) |
+| Agent identity | one shared bearer token; the `agent` field is self-asserted | **per-agent tokens** (H1, breaking): `tokens.json` store, the agent comes from the token, scopes `agent`/`lease`/`audit`/`operator`. The Python model is only `serve --legacy-shared-token`, which also refuses lease/rotate/audit unless `--legacy-allow-privileged-routes`. See [agent-identity-migration.md](agent-identity-migration.md) |
+| Port, token file, routes | 8765, `~/.config/rgt-vault/server.token` | 8765, `~/.config/rgt-vault/tokens.json` + per-agent tokens. Go-only routes: `GET /v1/secrets/{namespace}/{name}` fingerprint (ABAC-gated), `GET /v1/actions`, `POST /v1/secrets/{namespace}/{name}/lease` (plaintext, `lease` scope; replaces `GET /v1/secrets?name=`, which answers 400) |
 | `/docs`, `/redoc`, `/openapi.json`, CSRF cookie | served (docs outside production) | not served; auth is the bearer header only |
-| `get` | leases in-process and prints the value | asks the server by default; `get --offline` (or an explicit `--db`) opens the files like Python did. `--purpose` is required offline |
-| Default `--agent` | `cli` | `system` for `set`/`get`: pass `--agent` explicitly if your policy matches on it |
-| `init` | writes the token file | also opens (never resets) the vault, and writes an operator token file; `--tokens-only` for the old behaviour |
+| `get` | leases in-process and prints the value | asks the server by default (`POST .../lease`, token needs `agent`+`lease`); `get --offline` (or an explicit `--db`) opens the files like Python did. `--purpose` is required offline |
+| Default `--agent` | `cli` | none: the token's agent. `--agent` is only for legacy servers (a different agent is refused) |
+| `init` | writes the token file | also opens (never resets) the vault, creates the token store and an operator token (`operator.token`); `--legacy-shared-token` for the old token files |
 | Seal helpers, export/import | library functions only | CLI: `provider seal dpapi|macos|tpm`, `export`, `import --yes` |
 | MCP | in-process FastMCP | `rgt-vault mcp`, a stdio bridge to a running server |
 | Legacy Fernet rows | migrated on open | refused: open once with the last Python release |
@@ -168,8 +175,8 @@ KDF chain and its un-prepended nonce, the audit hash input (including Python's `
 ## Known limits
 
 * Legacy `dek_version=0` vaults must pass through the last Python release once (above).
-* The Go HTTP server has no route that returns plaintext except the transitional `GET /v1/secrets?name=` used by the
-  default (non-offline) `get`; it is scheduled to go (decisions D5 / H1).
+* The Go HTTP server returns plaintext only on `POST /v1/secrets/{namespace}/{name}/lease`, which needs a token with
+  the `agent` and `lease` scopes (RGT-504); the transitional `GET /v1/secrets?name=` is gone.
 * Windows: the Go `0600` token-file mode is not enforced as an owner-only ACL; the file inherits the profile's ACL
   (RGT-501). Defender may flag cross-compiled test binaries (RGT-503); build with the native toolchain.
 * A DPAPI blob sealed with `CRYPTPROTECT_LOCAL_MACHINE` (Python's format) can be unsealed by any local user who can
@@ -223,7 +230,7 @@ Evidence below is CI run [45934553386](https://github.com/WilliamHudspeth/rgt-va
 4. [x] Every route in `python/server/app.py` has a Go counterpart, or a documented deliberate omission (`/docs`, `/redoc`, `/openapi.json`; the CSRF cookie is a middleware, not a route). Evidence: `TestRouteParity` (parses both and fails on any undocumented difference).
 5. [x] Every `python/cli.py` subcommand has a Go counterpart, including `enroll-2fa`, and `export` / `import` / `provider seal` exist (D4). Evidence: `TestCLICommandParity`.
 6. [x] Legacy handling per D3 is implemented and documented: Go refuses a vault with `dek_version=0` rows, names the last-Python-release step, and writes nothing. Evidence: `TestLegacyFernetVaultRefused`, `TestCLIMigrateCheckRefusals`, this guide.
-7. [ ] H1 merged. Not merged: the Go server still has Python's shared-token, self-asserted-agent model.
+7. [ ] H1 merged (PR #53: per-agent tokens, scopes, token-derived ABAC subject; this guide already describes it). Tick when it is merged.
 8. [ ] A Go release cut from parity master (RGT-163 plumbing), with release notes linking this guide. Not done.
 9. [ ] The maintainer migrates their own vault(s) with this guide and confirms. Not done (needs a human).
 10. [ ] The EOL announcement has been public for at least the notice period (D2) before GZ merges. Not done.

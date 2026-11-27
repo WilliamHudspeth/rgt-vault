@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -409,7 +410,7 @@ func (mw *Middleware) AuthMiddleware(next http.Handler) http.Handler {
 				WriteJSONError(w, status, "ServerAuthError", msg)
 				return
 			}
-			limited, report := mw.limiter().failure(handlers.ClientIP(r))
+			limited, report, full := mw.limiter().failure(handlers.ClientIP(r))
 			if mw.Auditor != nil && (!limited || report) {
 				id := p.TokenID // the record id of an expired token
 				if id == "" {
@@ -420,7 +421,11 @@ func (mw *Middleware) AuthMiddleware(next http.Handler) http.Handler {
 				}
 				event := handlers.EventAuthFailed
 				details := "ip=" + handlers.ClientIP(r) + " " + r.Method + " " + handlers.AuditPath(r) + " reason=" + reason + " token=" + id
-				if limited {
+				switch {
+				case full:
+					event = handlers.EventAuthRateLimited
+					details += fmt.Sprintf(" (failure table full: %d sources tracked; failures from new sources get 429 and are not logged until the window ends)", maxTrackedSources)
+				case limited:
 					event = handlers.EventAuthRateLimited
 					details += " (further failures from this source are not logged until the window ends)"
 				}

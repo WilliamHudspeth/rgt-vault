@@ -184,15 +184,26 @@ type serveProc struct {
 	done chan error
 }
 
-// startServe runs `rgt-vault serve` (keyring provider) and waits for /healthz.
+// startServe runs `rgt-vault serve` (keyring provider) on a per-agent token
+// store and waits for /healthz. The CLI token is in dir/agent.token.
 func startServe(t *testing.T, dir, db, policy string, port int) *serveProc {
 	t.Helper()
 	home := filepath.Join(dir, "home")
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// Per-agent token store (H1): mint the CLI's token with the real binary
+	// (once per dir), then serve on the store. The token is written to
+	// agent.token (0600) and never printed.
+	store, tokFile := filepath.Join(dir, "tokens.json"), filepath.Join(dir, "agent.token")
+	if _, err := os.Stat(tokFile); err != nil {
+		if _, errOut, code := runBin(t, nil, "token", "mint", "--store", store, "--agent", "compat-cli",
+			"--scope", "agent,audit,operator", "--out", tokFile); code != 0 {
+			t.Fatalf("token mint: exit %d %s", code, errOut)
+		}
+	}
 	cmd := exec.Command(binary(t), "--db", db, "--policy", policy, "serve",
-		"--port", strconv.Itoa(port), "--token-file", filepath.Join(dir, "agent.token"))
+		"--port", strconv.Itoa(port), "--token-store", store)
 	cmd.Env = append(cleanEnv(), "HOME="+home, "USERPROFILE="+home)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

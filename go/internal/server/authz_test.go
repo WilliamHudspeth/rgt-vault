@@ -429,25 +429,34 @@ func TestFailureLimiterWindowAndTableBound(t *testing.T) {
 	l := newFailureLimiter(2, time.Minute)
 	l.now = func() time.Time { return now }
 	for i, want := range []bool{false, false, true, true} {
-		lim, rep := l.failure("a")
-		if lim != want || rep != (i == 2) {
-			t.Errorf("attempt %d: limited=%v report=%v", i, lim, rep)
+		lim, rep, full := l.failure("a")
+		if lim != want || rep != (i == 2) || full {
+			t.Errorf("attempt %d: limited=%v report=%v full=%v", i, lim, rep, full)
 		}
 	}
 	now = now.Add(time.Minute)
-	if lim, _ := l.failure("a"); lim {
+	if lim, _, _ := l.failure("a"); lim {
 		t.Error("window did not reset")
 	}
 	// The table is bounded; when full of live windows a newcomer is limited
-	// without a row, after expired windows are pruned.
-	for i := 0; i < maxTrackedSources; i++ {
-		l.failure(fmt.Sprint("s", i))
+	// and ONE summary row per window is reported (review L4).
+	fullReports := 0
+	for i := 0; i < maxTrackedSources+5; i++ {
+		lim, rep, full := l.failure(fmt.Sprint("s", i))
+		if full {
+			if !lim {
+				t.Fatal("full table: newcomer not limited")
+			}
+			if rep {
+				fullReports++
+			}
+		}
 	}
-	if lim, rep := l.failure("newcomer"); !lim || rep {
-		t.Errorf("full table: limited=%v report=%v", lim, rep)
+	if fullReports != 1 {
+		t.Errorf("full-table summary rows in one window = %d, want 1", fullReports)
 	}
 	now = now.Add(2 * time.Minute)
-	if lim, _ := l.failure("newcomer"); lim {
+	if lim, _, _ := l.failure("newcomer"); lim {
 		t.Error("expired windows were not pruned")
 	}
 	if d := newFailureLimiter(0, 0); d.limit != DefaultAuthFailureLimit || d.window != DefaultAuthFailureWindow {

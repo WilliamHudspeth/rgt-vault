@@ -34,6 +34,9 @@ var omittedPythonRoutes = map[string]string{
 var goOnlyRoutes = map[string]string{
 	"GET /v1/secrets/{namespace}/{name}": "ciphertext fingerprint over HTTP (RGT-502)",
 	"GET /v1/actions":                    "registered actions listing",
+	// H1 / RGT-504: replaces the transitional plaintext GET /v1/secrets?name=
+	// (a query filter on Python's list route, not a separate route).
+	"POST /v1/secrets/{namespace}/{name}/lease": "replaces the GET ?name= plaintext route; requires the lease scope (RGT-504)",
 }
 
 // TestRouteParity enumerates every HTTP route of python/server/app.py and of

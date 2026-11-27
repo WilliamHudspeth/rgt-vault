@@ -37,6 +37,10 @@ From H1, `rgt-vault serve` authenticates against a **per-agent token store**:
   returns 400. Read a value with `POST /v1/secrets/{namespace}/{name}/lease` (optional body
   `{"purpose": "..."}`), which needs the `lease` scope, or with `rgt-vault get --offline` on the
   vault files.
+- **The fingerprint route** `GET /v1/secrets/{namespace}/{name}` now checks ABAC `read` for the token's agent.
+  A secret the agent may not see, a secret that does not exist, a revoked one and a missing `?version=` all get the
+  same 404 (`SecretNotFoundError`), so the route reveals nothing about another agent's secrets or versions. Each
+  denial writes an `AUTHZ_DENIED` row.
 - `POST .../use`, `/v1/policy/simulate` and `/v1/capabilities/execute` no longer require
   `agent` / `agent_id`: the token supplies it.
 
@@ -48,11 +52,17 @@ From H1, `rgt-vault serve` authenticates against a **per-agent token store**:
    rgt-vault init
    ```
 
-   This mints an operator token for agent `operator` with scopes `agent,lease,audit,operator`.
-   Its plaintext goes to `~/.config/rgt-vault/operator.token` (0600), which the CLI and the TUI
-   read. An existing `operator.token` from a pre-H1 `init` that is not in the store yet is
-   **imported** as that operator token, so its holder keeps working. `init --force` mints a new one
-   and revokes the replaced one. `init` no longer creates `server.token`.
+   This mints an operator token for agent `operator` with scopes `agent,audit,operator`. It has no
+   `lease` scope: the operator reads plaintext with `rgt-vault get --offline`. Its plaintext goes to
+   `~/.config/rgt-vault/operator.token` (0600), which the TUI and the operator commands read.
+   - An existing `operator.token` from a pre-H1 `init` that is not in the store yet is **imported
+     with the `operator` scope only**: exactly its old privilege, the approval endpoints. Its holder
+     keeps working for approvals but gains nothing.
+   - If that file is readable by other users (Unix group or other bits), the token may be exposed,
+     so `init` refuses to import it. Run `init --force` to mint a new one (recommended), or
+     `--force-import` to import it anyway with a warning.
+   - `init --force` mints a new operator token and revokes the replaced one.
+   - `init` no longer creates `server.token`.
 
 2. **Mint one token per agent**, with the fewest scopes it needs:
 
@@ -65,13 +75,19 @@ From H1, `rgt-vault serve` authenticates against a **per-agent token store**:
    Without `--out` the token is printed once. With `--out` it goes to a new 0600 file and is not
    printed.
 
-3. **Give each client its own token**: `--token`, `RGT_VAULT_TOKEN`, or `RGT_VAULT_TOKEN_FILE=path`.
-   - The CLI looks for its token in this order: `--token`, then `$RGT_VAULT_TOKEN`, then
-     `$RGT_VAULT_TOKEN_FILE`, then `~/.config/rgt-vault/operator.token`, then the legacy
-     `~/.config/rgt-vault/server.token`.
-   - `rgt-vault mcp` and `rgt-vault tui` read the same sources. MCP no longer sends the
-     `mcp-client` label, and the TUI no longer sends `operator` / `tui`. Set `--agent` /
-     `RGT_VAULT_MCP_AGENT` only for a legacy server.
+3. **Give each client its own token, explicitly**: `--token`, `RGT_VAULT_TOKEN`, or
+   `RGT_VAULT_TOKEN_FILE=path`. The CLI never silently picks the operator token for an agent:
+   - **`rgt-vault mcp`** uses only these explicit sources. Without one it refuses to start, and it
+     refuses `--as-operator`. An agent harness with a missing or mistyped token variable therefore
+     fails instead of running as the operator.
+   - **Agent commands** (`set`, `get`, `list`, `revoke`, `simulate`, `fingerprint`) use the explicit
+     sources, then the legacy `~/.config/rgt-vault/server.token`. They fall back to
+     `~/.config/rgt-vault/operator.token` only with `--as-operator`, which the human operator passes
+     on purpose. Without a token they fail before sending anything.
+   - **Operator commands** (`tui`, `audit`, `verify-audit`, `rotate`) fall back to `operator.token`,
+     then `server.token`.
+   - MCP no longer sends the `mcp-client` label, and the TUI no longer sends `operator` / `tui`. Set
+     `--agent` / `RGT_VAULT_MCP_AGENT` only for a legacy server.
 
 4. **Fix the ABAC policy subjects.** Rules now match the agent in the token. A client that used to
    claim `"agent": "x"` must be minted as agent `x`, or the policy must name its new agent id.
@@ -102,13 +118,26 @@ rgt-vault token revoke tok_1a2b...
 ## Legacy mode (temporary)
 
 `rgt-vault serve --legacy-shared-token [--token-file F] [--operator-token-file F]` keeps the
-pre-H1 behaviour: one shared token, the self-asserted `agent` field, and the operator file for
+pre-H1 identity model: one shared token, the self-asserted `agent` field, and the operator file for
 `/v1/requests*` only. It logs a deprecation warning at startup. `rgt-vault init
 --legacy-shared-token` creates the old token files.
 
-Two things still change in legacy mode:
+**Legacy mode enforces no scopes.** Any holder of the shared token can act as any agent it names.
+To limit the damage, legacy mode by default **refuses** (403, audited) the routes that were the
+worst pre-H1 exposure:
+
+- the plaintext lease route;
+- `/v1/rotate`;
+- `/v1/audit` and `/v1/audit/verify`.
+
+Use `rgt-vault get --offline` and `verify-audit --offline` on the vault host instead. If you need the
+full pre-H1 behaviour for a while, add `--legacy-allow-privileged-routes`. It logs a second warning:
+every token holder can then read every secret, rotate keys and read the audit log.
+
+Also in legacy mode:
 
 - The plaintext route is `POST .../lease`, not `GET ?name=`.
+- The fingerprint route keeps Python's ungated behaviour.
 - MCP and TUI clients must set `--agent` (or `SetAgent`) if the server needs one: `use`,
   `simulate` and `capabilities/execute` still require the field in legacy mode.
 
@@ -123,3 +152,7 @@ of the token can act as every agent.
 - There is no `token` HTTP API. Tokens are managed only with the CLI, on the host that owns the
   store file.
 - Transport is still plain HTTP on loopback (TLS is batch H6).
+- **Windows:** the `0600` / `0700` modes are not owner-only ACLs on Windows, and the code does not
+  set ACLs. `tokens.json` (hashes only), `operator.token` and `--out` files rely on the ACL of the
+  user profile directory they sit in. Keep them under your profile (the default
+  `%USERPROFILE%\.config\rgt-vault`), not in a shared directory (RGT-501).

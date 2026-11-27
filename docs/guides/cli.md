@@ -3,10 +3,13 @@
 `rgt-vault` is one binary with two kinds of subcommand:
 
 - **Client commands** talk to a running `rgt-vault serve` over HTTP (`--host`, default
-  `http://127.0.0.1:8765`, and a bearer token from `--token`, `$RGT_VAULT_TOKEN`,
-  `$RGT_VAULT_TOKEN_FILE`, `~/.config/rgt-vault/operator.token` or the legacy
-  `~/.config/rgt-vault/server.token`): `set`, `get`, `list`, `revoke`, `simulate`,
-  `fingerprint`, `rotate`, `audit`, `verify-audit`, `status`, plus `mcp` and `tui`.
+  `http://127.0.0.1:8765`): `set`, `get`, `list`, `revoke`, `simulate`, `fingerprint`, `rotate`,
+  `audit`, `verify-audit`, `status`, plus `mcp` and `tui`. The bearer token comes from `--token`,
+  `$RGT_VAULT_TOKEN` or `$RGT_VAULT_TOKEN_FILE`. There are only two file fallbacks:
+  - `tui`, `audit`, `verify-audit` and `rotate` fall back to `~/.config/rgt-vault/operator.token`.
+  - The agent commands fall back to it only with `--as-operator`.
+  - `mcp` never uses a file fallback.
+  - All but `mcp` finally try the legacy `~/.config/rgt-vault/server.token`.
 - **Token commands** manage the per-agent token store: `token mint|list|revoke|rotate|import`.
 
 **Identity (breaking change, batch H1):** every token belongs to one agent and carries scopes
@@ -49,8 +52,10 @@ YAML
 rgt-vault serve --policy policy.yaml     # 127.0.0.1:8765, data persists across restarts
 ```
 
-`init` never prints a token and never resets an existing vault. An existing operator token file
-that is not in the store yet is imported. `--force` mints a new operator token and revokes the
+`init` never prints a token and never resets an existing vault. It mints the operator token with
+the scopes `agent,audit,operator` (no `lease`: read plaintext with `get --offline`). An existing
+operator token file that is not in the store yet is imported with the `operator` scope only. A file
+that other users can read is refused unless you pass `--force-import`. `--force` mints a new operator token and revokes the
 old one (never touching the vault); `--tokens-only` skips the vault; `--operator-agent` names the
 operator token's agent (default `operator`); `--harness-key-file PATH` also creates the HMAC key for
 v2 capability tokens. `--legacy-shared-token` creates the pre-H1 shared `--token-file` and operator
@@ -83,9 +88,11 @@ rgt-vault serve [--db PATH] [--policy FILE] [--provider keyring|platform]
 - Loopback only: a non-loopback `--host` is refused without `--allow-non-loopback`, and then it
   is plain HTTP, so put a TLS reverse proxy in front.
 - Authentication is the per-agent token store (`--token-store`). `serve` refuses an empty or
-  corrupt store. `--legacy-shared-token` (deprecated, logs a warning) restores the single shared
-  `--token-file` with a self-asserted agent; there `--operator-token-file` separates the
-  approve/deny token.
+  corrupt store.
+- `--legacy-shared-token` (deprecated, logs a warning) restores the single shared `--token-file`
+  with a self-asserted agent and no scope enforcement. `--operator-token-file` then separates the
+  approve/deny token. The lease route, `/v1/rotate` and the audit log are refused in that mode
+  unless you add `--legacy-allow-privileged-routes`.
 - `--require-approval` holds every unseal until a token with the `operator` scope approves it
   (`--totp-secret-file` adds a TOTP code for `require_2fa` secrets; create one with
   `enroll-2fa`). An agent cannot approve its own request unless its token carries `operator`.

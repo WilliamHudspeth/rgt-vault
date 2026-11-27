@@ -474,6 +474,11 @@ func (s *Store) Import(token string, o MintOptions) (TokenInfo, error) {
 	if token == "" {
 		return TokenInfo{}, ErrEmptyToken
 	}
+	if strings.ContainsAny(token, " \t\r\n") {
+		// Could never be presented: the Authorization header parser splits
+		// on "Bearer " and trims whitespace.
+		return TokenInfo{}, errors.New("a token cannot contain whitespace")
+	}
 	return s.add(token, o, nil)
 }
 
@@ -618,21 +623,37 @@ func (s *Store) update(fn func(*fileFormat) error) error {
 	return nil
 }
 
-// lockFile takes an exclusive lock by creating path with O_EXCL; it breaks a
-// lock older than staleLock (a writer that crashed).
+// lockFile takes an exclusive lock by creating path with O_EXCL and writing
+// a random nonce into it; the returned unlock removes the file only if it
+// still holds that nonce (never another writer's lock). A lock older than
+// staleLock (a writer that crashed) is broken atomically (breakStale).
 func lockFile(path string) (func(), error) {
+	nb := make([]byte, 16)
+	if _, err := rand.Read(nb); err != nil {
+		return nil, fmt.Errorf("locking token store: %w", err)
+	}
+	nonce := hex.EncodeToString(nb)
 	deadline := time.Now().Add(lockTimeout)
 	for {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
-			_ = f.Close()
-			return func() { _ = os.Remove(path) }, nil
+			_, werr := f.WriteString(nonce)
+			cerr := f.Close()
+			if werr != nil || cerr != nil {
+				_ = os.Remove(path)
+				return nil, fmt.Errorf("locking token store: %w", errors.Join(werr, cerr))
+			}
+			return func() {
+				if b, err := os.ReadFile(path); err == nil && string(b) == nonce {
+					_ = os.Remove(path)
+				}
+			}, nil
 		}
 		if !errors.Is(err, fs.ErrExist) {
 			return nil, fmt.Errorf("locking token store: %w", err)
 		}
 		if fi, serr := os.Stat(path); serr == nil && time.Since(fi.ModTime()) > staleLock {
-			_ = os.Remove(path)
+			breakStale(path)
 			continue
 		}
 		if time.Now().After(deadline) {
@@ -641,6 +662,42 @@ func lockFile(path string) (func(), error) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// breakStale removes a stale lock without racing other breakers (review of
+// PR #53, L2). Breakers serialize on a second, short-lived lock file
+// (path+".break", O_EXCL); inside it the lock is re-checked (still present,
+// still stale, same content as seen) before it is removed. While the stale
+// lock exists nobody can take a fresh one, so the re-check cannot be fooled
+// by a new holder. A breaker that crashed leaves a ".break" file that is
+// itself ignored after breakStaleAfter.
+func breakStale(path string) {
+	seen, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	bpath := path + ".break"
+	b, err := os.OpenFile(bpath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		if fi, serr := os.Stat(bpath); serr == nil && time.Since(fi.ModTime()) > breakStaleAfter {
+			_ = os.Remove(bpath)
+		}
+		return // another breaker is at it; the caller retries
+	}
+	_ = b.Close()
+	defer func() { _ = os.Remove(bpath) }()
+	fi, err := os.Stat(path)
+	if err != nil || time.Since(fi.ModTime()) <= staleLock {
+		return
+	}
+	if now, err := os.ReadFile(path); err != nil || !bytes.Equal(now, seen) {
+		return
+	}
+	_ = os.Remove(path)
+}
+
+// breakStaleAfter: a ".break" file older than this belongs to a crashed
+// breaker.
+var breakStaleAfter = 10 * time.Second
 
 // writeAtomic writes data to path through a 0600 temp file in the same
 // directory, fsynced, then renamed over path.
