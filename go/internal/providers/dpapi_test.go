@@ -128,6 +128,9 @@ func TestSealDPAPIRejectsEmptySecret(t *testing.T) {
 }
 
 func TestStatRegularPermissionIsNotNotFound(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod 000 does not deny access on Windows (Unix-only permission semantics)")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses directory permissions")
 	}
@@ -191,8 +194,9 @@ func TestSealDPAPIFileErrors(t *testing.T) {
 			t.Fatalf("leftover %s", e.Name())
 		}
 	}
-	// A bad temp dir (parent missing is created by MkdirAll; make dir read-only)
-	if os.Geteuid() != 0 {
+	// A read-only directory denies file creation (Unix permission semantics;
+	// on Windows the 0o500 mode bits do not restrict anything).
+	if os.Geteuid() != 0 && runtime.GOOS != "windows" {
 		ro := filepath.Join(dir, "ro")
 		_ = os.Mkdir(ro, 0o500)
 		if err := SealDPAPI([]byte("x"), filepath.Join(ro, "blob"), nil); err == nil {
