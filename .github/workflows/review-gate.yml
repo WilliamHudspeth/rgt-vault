@@ -202,7 +202,7 @@ jobs:
           export RGT_VAULT_PYTHON="$(python -c 'import sys; print(sys.executable)')"
           export RGT_PYTHON="$RGT_VAULT_PYTHON" RGT_COMPAT_BIN=/tmp/rgt-vault
           go test -count=1 -v -timeout 10m ./internal/compat \
-            -run 'TestFixtures|TestEdge|TestLegacy|TestCLI|TestPythonOpens'
+            -run 'TestFixtures|TestEdge|TestLegacy|TestCLI|TestRouteParity|TestPythonOpens'
           # The other Python round trips that live next to the code they test.
           go test -count=1 -timeout 10m ./internal/vault ./internal/store ./internal/keychain \
             ./internal/server ./internal/capabilities ./cmd/rgt-vault
@@ -251,6 +251,14 @@ jobs:
             --flags not-need-init,startup-clear --daemon
           sleep 1
           echo "TPM2TOOLS_TCTI=swtpm:host=127.0.0.1,port=2321" >> "$GITHUB_ENV"
+      - name: Diagnose Python's own seal/unseal against the software TPM
+        continue-on-error: true
+        run: |
+          export RGT_VAULT_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+          S="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+          D="$(mktemp -d)"
+          "$RGT_VAULT_PYTHON" go/internal/compat/testdata/pycompat.py tpm-seal "$D" "$S"
+          "$RGT_VAULT_PYTHON" go/internal/compat/testdata/pycompat.py tpm-unseal "$D/master_secret.priv" "$D/master_secret.pub"
       - name: Seal and unseal, Python <-> Go
         working-directory: go
         run: |
@@ -285,6 +293,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[server,dev,windows]"
+      - name: Unlocked default keychain (macOS runners have none usable headless)
+        if: runner.os == 'macOS'
+        run: |
+          security create-keychain -p rgt-ci "$RUNNER_TEMP/rgt.keychain-db"
+          security set-keychain-settings -lut 21600 "$RUNNER_TEMP/rgt.keychain-db"
+          security unlock-keychain -p rgt-ci "$RUNNER_TEMP/rgt.keychain-db"
+          security default-keychain -s "$RUNNER_TEMP/rgt.keychain-db"
+          security list-keychains -d user -s "$RUNNER_TEMP/rgt.keychain-db"
       - name: Go provider tests against the real OS stores
         working-directory: go
         env:
