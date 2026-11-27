@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -601,8 +602,11 @@ func TestCallTool_BackendErrorsSanitizedAndUnreachable(t *testing.T) {
 // ---- tool table: tools/list schema and callTool enforcement agree ------
 
 func TestToolsListRequiredMatchesCallToolEnforcement(t *testing.T) {
-	hit := false
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit = true }))
+	var hits atomic.Int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		fmt.Fprint(w, `{"namespace":"x","secrets":[]}`)
+	}))
 	defer ts.Close()
 	s := newTestServer(ts)
 
@@ -627,10 +631,19 @@ func TestToolsListRequiredMatchesCallToolEnforcement(t *testing.T) {
 		if !ok {
 			t.Fatalf("listed tool %q is not callable", tool.Name)
 		}
+		full := map[string]any{}
+		for _, k := range tool.InputSchema.Required {
+			full[k] = "x"
+		}
+		if text, _ := s.callTool(tool.Name, full); strings.HasPrefix(text, "unknown tool") || strings.HasPrefix(text, "missing required") {
+			t.Errorf("%s with all required args: got %q (no handler?)", tool.Name, text)
+		}
 		if fmt.Sprint(tool.InputSchema.Required) != fmt.Sprint(spec.Required) {
 			t.Errorf("%s: listed required %v != enforced %v", tool.Name, tool.InputSchema.Required, spec.Required)
 		}
-		// Enforcement: dropping any one required arg is rejected, naming it.
+		// Enforcement: dropping any one required arg is rejected, naming it,
+		// without a backend call.
+		before := hits.Load()
 		for _, drop := range tool.InputSchema.Required {
 			if _, ok := tool.InputSchema.Properties[drop]; !ok {
 				t.Errorf("%s: required %q missing from properties", tool.Name, drop)
@@ -646,9 +659,9 @@ func TestToolsListRequiredMatchesCallToolEnforcement(t *testing.T) {
 				t.Errorf("%s without %s: got (%q, %v)", tool.Name, drop, text, isErr)
 			}
 		}
-	}
-	if hit {
-		t.Error("backend called despite missing required args")
+		if hits.Load() != before {
+			t.Errorf("%s: backend called despite missing required args", tool.Name)
+		}
 	}
 }
 
@@ -688,13 +701,13 @@ func TestExecuteSecret_AgentAndPurpose(t *testing.T) {
 	if err := s.SetAgent("deploy-bot@ci"); err != nil {
 		t.Fatal(err)
 	}
-	if _, isErr := s.callTool("execute_secret", with(map[string]any{"purpose": "rotate prod DB creds"})); isErr {
+	if _, isErr := s.callTool("execute_secret", with(map[string]any{"purpose": "rotate cafe\u0301 creds"})); isErr {
 		t.Fatal("custom purpose failed")
 	}
 	want := [][2]string{
 		{DefaultAgent, defaultPurpose},
 		{DefaultAgent, defaultPurpose},
-		{"deploy-bot@ci", "rotate prod DB creds"},
+		{"deploy-bot@ci", "rotate caf\u00e9 creds"}, // NFD in, NFC out
 	}
 	if len(got) != len(want) {
 		t.Fatalf("backend saw %d calls", len(got))
@@ -707,7 +720,8 @@ func TestExecuteSecret_AgentAndPurpose(t *testing.T) {
 
 	// Invalid purposes are rejected before any backend call.
 	n := len(got)
-	for _, bad := range []any{7, strings.Repeat("p", maxPurposeLen+1), "bad\x00purpose"} {
+	for _, bad := range []any{7, nil, true, []any{"x"}, strings.Repeat("p", maxPurposeLen+1),
+		"bad\x00purpose", "\n", "\r\n", "\u2028", strings.Repeat(" ", maxPurposeLen+1)} {
 		text, isErr := s.callTool("execute_secret", with(map[string]any{"purpose": bad}))
 		if !isErr || !strings.HasPrefix(text, "invalid purpose") {
 			t.Errorf("purpose %q: got (%q, %v)", bad, text, isErr)
@@ -729,14 +743,34 @@ func TestExecuteSecret_AgentAndPurpose(t *testing.T) {
 }
 
 func TestToolsListAdvertisesPurposeBound(t *testing.T) {
-	spec, _ := lookupTool("execute_secret")
-	p := spec.Properties["purpose"].(map[string]any)
-	if p["maxLength"] != maxPurposeLen {
-		t.Errorf("purpose maxLength = %v", p["maxLength"])
+	s := NewServer("http://127.0.0.1:1", "")
+	raw, _ := json.Marshal(s.handle(makeReq(1, "tools/list", nil)).Result)
+	var listed struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties map[string]map[string]any `json:"properties"`
+				Required   []string                  `json:"required"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
 	}
-	for _, r := range spec.Required {
-		if r == "purpose" {
-			t.Error("purpose must stay optional")
+	if err := json.Unmarshal(raw, &listed); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range listed.Tools {
+		if tool.Name != "execute_secret" {
+			continue
 		}
+		p := tool.InputSchema.Properties["purpose"]
+		if p["type"] != "string" || p["maxLength"] != float64(256) {
+			t.Errorf("purpose schema = %v", p)
+		}
+		for _, r := range tool.InputSchema.Required {
+			if r == "purpose" {
+				t.Error("purpose must stay optional")
+			}
+		}
+		return
 	}
+	t.Fatal("execute_secret not listed")
 }

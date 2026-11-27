@@ -34,6 +34,7 @@ func isolateEnv(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("RGT_VAULT_TOKEN", "")
+	t.Setenv("RGT_VAULT_MCP_AGENT", "")
 }
 
 type seenRequest struct {
@@ -525,8 +526,14 @@ func TestMCPAgentFlagAndEnv(t *testing.T) {
 
 	// An invalid label is refused before serving.
 	var errOut bytes.Buffer
-	if code := run([]string{"--host", srv.URL, "mcp", "--agent", "bad agent"}, strings.NewReader(""), io.Discard, &errOut); code != 1 || !strings.Contains(errOut.String(), "--agent") {
+	if code := run([]string{"--host", srv.URL, "mcp", "--agent", "bad agent"}, strings.NewReader(""), io.Discard, &errOut); code != 1 || !strings.Contains(errOut.String(), "agent label") {
 		t.Errorf("bad agent: exit %d stderr %q", code, errOut.String())
+	}
+	// ...and an invalid label from the env var is refused the same way.
+	t.Setenv("RGT_VAULT_MCP_AGENT", "bad agent")
+	errOut.Reset()
+	if code := run([]string{"--host", srv.URL, "mcp"}, strings.NewReader(""), io.Discard, &errOut); code != 1 || !strings.Contains(errOut.String(), "RGT_VAULT_MCP_AGENT") {
+		t.Errorf("bad env agent: exit %d stderr %q", code, errOut.String())
 	}
 }
 

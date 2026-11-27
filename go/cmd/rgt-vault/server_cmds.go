@@ -123,7 +123,7 @@ func runServe(addr, tokenPath string, allowNonLoopback bool, out io.Writer) erro
 func runMCP(host, token, agent string, in io.Reader, out, errOut io.Writer) error {
 	s := mcp.NewServer(host, token)
 	if err := s.SetAgent(agent); err != nil {
-		return fmt.Errorf("--agent: %w", err)
+		return fmt.Errorf("agent label (--agent / RGT_VAULT_MCP_AGENT): %w", err)
 	}
 	s.SetLogger(log.New(errOut, "rgt-vault mcp: ", log.LstdFlags))
 	return s.Serve(in, out)

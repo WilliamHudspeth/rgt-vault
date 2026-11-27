@@ -442,11 +442,13 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 			if !isStr {
 				return "invalid purpose: must be a string", true
 			}
-			if strings.TrimSpace(p) != "" {
-				clean, err := validation.ValidateFreeText(p, maxPurposeLen)
-				if err != nil {
-					return "invalid purpose: " + err.Error(), true
-				}
+			// Validate first: blank-looking input can hide control or
+			// separator characters (\n, U+2028) or exceed the length cap.
+			clean, err := validation.ValidateFreeText(p, maxPurposeLen)
+			if err != nil {
+				return "invalid purpose: " + err.Error(), true
+			}
+			if strings.TrimSpace(clean) != "" {
 				purpose = clean
 			}
 		}
