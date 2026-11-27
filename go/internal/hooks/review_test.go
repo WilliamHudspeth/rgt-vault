@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -82,12 +83,15 @@ func TestFreezeFileFailsClosed(t *testing.T) {
 	if !h.Frozen() {
 		t.Fatal("dangling symlink must freeze")
 	}
-	// A path whose parent is a regular file (ENOTDIR): not "does not exist".
-	file := filepath.Join(dir, "plain")
-	_ = os.WriteFile(file, nil, 0o600)
-	h.SetFreezeFile(filepath.Join(file, "freeze"))
-	if !h.Frozen() {
-		t.Fatal("stat error other than not-exist must freeze (fail closed)")
+	// A path whose parent is a regular file (ENOTDIR on POSIX; Windows
+	// reports it as not-found): not "does not exist", so it freezes.
+	if runtime.GOOS != "windows" {
+		file := filepath.Join(dir, "plain")
+		_ = os.WriteFile(file, nil, 0o600)
+		h.SetFreezeFile(filepath.Join(file, "freeze"))
+		if !h.Frozen() {
+			t.Fatal("stat error other than not-exist must freeze (fail closed)")
+		}
 	}
 	h.SetFreezeFile(filepath.Join(dir, "absent"))
 	if h.Frozen() {
