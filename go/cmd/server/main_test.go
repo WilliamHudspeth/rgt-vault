@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -11,9 +12,27 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"rgt-vault-server/internal/auth"
+	"rgt-vault-server/internal/kdf"
+	"rgt-vault-server/internal/providers/providerstest"
+	"rgt-vault-server/internal/vault"
 )
 
 func env(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+
+// TestMain swaps the master provider for an in-memory one (no OS keyring in
+// CI) and uses cheap Argon2 parameters for the throwaway test vaults.
+func TestMain(m *testing.M) {
+	newProvider = func(name string) (vault.MasterProvider, error) {
+		if name != "keyring" && name != "platform" {
+			return nil, fmt.Errorf("unknown provider %q", name)
+		}
+		return providerstest.NewMemory(), nil
+	}
+	kdfParams = kdf.Params{MemoryCost: 1024, TimeCost: 1, Parallelism: 1}
+	os.Exit(m.Run())
+}
 
 func TestDefaultBindIsLoopback(t *testing.T) {
 	cfg, err := parseConfig(nil, env(map[string]string{"HOME": t.TempDir()}), io.Discard)
@@ -23,7 +42,7 @@ func TestDefaultBindIsLoopback(t *testing.T) {
 	if cfg.host != "127.0.0.1" {
 		t.Errorf("default host = %q, want 127.0.0.1", cfg.host)
 	}
-	if cfg.port != "8080" {
+	if cfg.port != "8765" {
 		t.Errorf("default port = %q", cfg.port)
 	}
 	if len(cfg.origins) != 0 {
@@ -69,8 +88,14 @@ func TestIsLoopback(t *testing.T) {
 // startServer runs the real run() and returns its address, captured output and a stop func.
 func startServer(t *testing.T, args []string, e map[string]string) (addr, tokenPath string, out, logs *bytes.Buffer, stop func()) {
 	t.Helper()
-	tokenPath = filepath.Join(t.TempDir(), "srv.token")
-	e["RGT_VAULT_TOKEN_FILE"] = tokenPath
+	tokenPath = e["RGT_VAULT_TOKEN_FILE"]
+	if tokenPath == "" {
+		tokenPath = filepath.Join(t.TempDir(), "srv.token")
+		e["RGT_VAULT_TOKEN_FILE"] = tokenPath
+	}
+	if e["RGT_VAULT_DB"] == "" {
+		e["RGT_VAULT_DB"] = filepath.Join(t.TempDir(), "vault", "vault.db")
+	}
 	out, logs = &bytes.Buffer{}, &bytes.Buffer{}
 	ctx, cancel := context.WithCancel(context.Background())
 	ready := make(chan string, 1)
@@ -185,7 +210,7 @@ func TestRunFailsOnBusyPortAndBadFlags(t *testing.T) {
 	addr, _, _, _, stop := startServer(t, []string{"--port", "0"}, map[string]string{})
 	defer stop()
 	port := addr[strings.LastIndex(addr, ":")+1:]
-	e := map[string]string{"RGT_VAULT_TOKEN_FILE": filepath.Join(t.TempDir(), "t2")}
+	e := map[string]string{"RGT_VAULT_TOKEN_FILE": filepath.Join(t.TempDir(), "t2"), "RGT_VAULT_DB": filepath.Join(t.TempDir(), "v.db")}
 	if err := run(context.Background(), []string{"--port", port}, env(e), io.Discard, log.New(io.Discard, "", 0), nil); err == nil {
 		t.Error("expected listen error on a busy port")
 	}
@@ -217,5 +242,170 @@ func TestSystemdUnitIsSandboxed(t *testing.T) {
 	}
 	if strings.Contains(unit, "User=root") || strings.Contains(unit, "0.0.0.0") {
 		t.Error("unit must not run as root or bind 0.0.0.0")
+	}
+}
+
+func TestParseConfigVaultFlags(t *testing.T) {
+	cfg, err := parseConfig(nil, env(nil), io.Discard)
+	if err != nil || cfg.db != "~/.secure-vault/vault.db" || cfg.provider != "keyring" || cfg.policy != "" ||
+		cfg.approvalTimeout != 120*time.Second || cfg.requireApproval || cfg.allowPrivateNetwork {
+		t.Fatalf("defaults: %+v %v", cfg, err)
+	}
+	e := env(map[string]string{
+		"RGT_VAULT_DB": "/e/v.db", "RGT_VAULT_POLICY": "/e/p.yaml", "RGT_VAULT_PROVIDER": "platform",
+		"RGT_VAULT_OPERATOR_TOKEN_FILE": "/e/op", "RGT_VAULT_TOTP_SECRET_FILE": "/e/totp", "RGT_VAULT_HARNESS_KEY_FILE": "/e/hk",
+	})
+	cfg, err = parseConfig([]string{"--require-approval"}, e, io.Discard)
+	if err != nil || cfg.db != "/e/v.db" || cfg.policy != "/e/p.yaml" || cfg.provider != "platform" ||
+		cfg.operatorTokenFile != "/e/op" || cfg.totpSecretFile != "/e/totp" || cfg.harnessKeyFile != "/e/hk" {
+		t.Fatalf("env: %+v %v", cfg, err)
+	}
+	cfg, err = parseConfig([]string{"--db", "/f/v.db", "--provider", "keyring", "--require-approval",
+		"--approval-timeout", "5s", "--allow-private-network"}, e, io.Discard)
+	if err != nil || cfg.db != "/f/v.db" || cfg.provider != "keyring" || cfg.approvalTimeout != 5*time.Second || !cfg.allowPrivateNetwork {
+		t.Fatalf("flags: %+v %v", cfg, err)
+	}
+	for _, bad := range [][]string{
+		{"--provider", "tpm"}, {"--approval-timeout", "0s"}, {"extra-arg"},
+		{"--totp-secret-file", "/x"}, // without --require-approval
+	} {
+		if _, err := parseConfig(bad, env(nil), io.Discard); err == nil {
+			t.Errorf("%v accepted", bad)
+		}
+	}
+}
+
+// The server runs on a real, persistent vault: a secret written through
+// one run is there after a restart on the same --db.
+func TestServerPersistsAcrossRestarts(t *testing.T) {
+	dir := t.TempDir()
+	policy := filepath.Join(dir, "policy.yaml")
+	if err := os.WriteFile(policy, []byte("rules:\n  - effect: allow\n    agent: \"*\"\n    namespace: \"*\"\n    purpose: \"*\"\n    action: \"*\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prov := providerstest.NewMemory()
+	old := newProvider
+	newProvider = func(string) (vault.MasterProvider, error) { return prov, nil }
+	defer func() { newProvider = old }()
+
+	db := filepath.Join(dir, "vault", "vault.db")
+	e := map[string]string{"RGT_VAULT_DB": db, "RGT_VAULT_POLICY": policy}
+	addr, tokenPath, out, _, stop := startServer(t, []string{"--port", "0"}, e)
+	raw, _ := os.ReadFile(tokenPath)
+	token := strings.TrimSpace(string(raw))
+	call := func(addr, method, path, body string) (int, string) {
+		req, _ := http.NewRequest(method, "http://"+addr+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	if code, body := call(addr, "POST", "/v1/secrets", `{"name":"k","value":"persisted","namespace":"p"}`); code != 200 {
+		t.Fatalf("set: %d %s", code, body)
+	}
+	if !strings.Contains(out.String(), db) {
+		t.Errorf("banner lacks the vault path:\n%s", out.String())
+	}
+	stop()
+
+	e["RGT_VAULT_TOKEN_FILE"] = tokenPath
+	addr2, _, _, _, stop2 := startServer(t, []string{"--port", "0"}, e)
+	defer stop2()
+	if code, body := call(addr2, "GET", "/v1/secrets?namespace=p&name=k", ""); code != 200 || !strings.Contains(body, `"persisted"`) {
+		t.Fatalf("after restart: %d %s", code, body)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "vault", "keychain.json")); err != nil {
+		t.Errorf("keychain.json not next to the db: %v", err)
+	}
+}
+
+func TestServerApprovalAndOperatorWiring(t *testing.T) {
+	dir := t.TempDir()
+	totpFile := filepath.Join(dir, "totp.secret")
+	if err := os.WriteFile(totpFile, []byte("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hk := filepath.Join(dir, "harness.key")
+	if err := os.WriteFile(hk, []byte(strings.Repeat("k", 40)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opPath := filepath.Join(dir, "operator.token")
+	addr, tokenPath, _, logs, stop := startServer(t, []string{"--port", "0", "--require-approval",
+		"--totp-secret-file", totpFile, "--operator-token-file", opPath, "--harness-key-file", hk,
+		"--allow-private-network"}, map[string]string{})
+	defer stop()
+	agentRaw, _ := os.ReadFile(tokenPath)
+	opRaw, _ := os.ReadFile(opPath)
+	agentTok, opTok := strings.TrimSpace(string(agentRaw)), strings.TrimSpace(string(opRaw))
+	get := func(tok, path string) int {
+		req, _ := http.NewRequest("GET", "http://"+addr+path, nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if get(opTok, "/v1/requests") != 200 || get(agentTok, "/v1/requests") != 401 || get(opTok, "/v1/audit") != 401 {
+		t.Error("operator scope not separated")
+	}
+	for _, want := range []string{"Operator token file", "allow-private-network", "no --policy"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("log lacks %q:\n%s", want, logs.String())
+		}
+	}
+	if strings.Contains(logs.String(), opTok) || strings.Contains(logs.String(), agentTok) {
+		t.Error("a token was logged")
+	}
+}
+
+func TestServerStartupErrors(t *testing.T) {
+	dir := t.TempDir()
+	tok := filepath.Join(dir, "agent.token")
+	base := func() map[string]string {
+		return map[string]string{"RGT_VAULT_TOKEN_FILE": tok, "RGT_VAULT_DB": filepath.Join(dir, "v", "vault.db")}
+	}
+	runWith := func(args []string, e map[string]string) error {
+		return run(context.Background(), append([]string{"--port", "0"}, args...), env(e), io.Discard, log.New(io.Discard, "", 0), nil)
+	}
+	if _, _, err := auth.LoadOrCreateToken(tok); err != nil {
+		t.Fatal(err)
+	}
+	// operator token equal to the agent token
+	e := base()
+	e["RGT_VAULT_OPERATOR_TOKEN_FILE"] = tok
+	if err := runWith(nil, e); err == nil || !strings.Contains(err.Error(), "differ") {
+		t.Errorf("same operator token: %v", err)
+	}
+	e = base()
+	e["RGT_VAULT_POLICY"] = filepath.Join(dir, "missing.yaml")
+	if err := runWith(nil, e); err == nil || !strings.Contains(err.Error(), "open vault") {
+		t.Errorf("missing policy: %v", err)
+	}
+	e = base()
+	e["RGT_VAULT_OPERATOR_TOKEN_FILE"] = dir // a directory
+	if err := runWith(nil, e); err == nil {
+		t.Error("unreadable operator token accepted")
+	}
+	old := newProvider
+	newProvider = func(string) (vault.MasterProvider, error) { return nil, fmt.Errorf("no keyring here") }
+	defer func() { newProvider = old }()
+	if err := runWith(nil, base()); err == nil || !strings.Contains(err.Error(), "no keyring") {
+		t.Errorf("provider error: %v", err)
+	}
+}
+
+func TestWriteTimeoutOutlastsApproval(t *testing.T) {
+	if got := writeTimeout(config{}); got != 60*time.Second {
+		t.Errorf("default = %s", got)
+	}
+	if got := writeTimeout(config{requireApproval: true, approvalTimeout: 120 * time.Second}); got != 180*time.Second {
+		t.Errorf("with approval = %s", got)
 	}
 }

@@ -8,8 +8,11 @@
 //  4. CORS - deny by default, exact-match allow-list, preflight answered only
 //     for allowed origins
 //  5. Method allow-list - unknown verbs and TRACE get 405 before authentication
-//  6. Bearer token authentication (skipped for /healthz and the XML policy stubs)
-//  7. Request body size limit (413)
+//  6. Strict path check - "..", "//", "\\" and control characters get 400
+//  7. Bearer token authentication (skipped for /healthz and the XML policy
+//     stubs). /v1/requests* takes the operator token, everything else the
+//     agent token.
+//  8. Request body size limit (413)
 package server
 
 import (
@@ -20,36 +23,43 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
 	"rgt-vault-server/internal/auth"
+	"rgt-vault-server/internal/server/handlers"
 )
 
 // DefaultMaxBodyBytes is the default request-body limit (1 MiB).
 const DefaultMaxBodyBytes int64 = 1 << 20
 
-// allowedMethods is the complete verb allow-list. OPTIONS is only ever served
-// as a CORS preflight to an allowed origin; elsewhere it falls through to
-// authentication and the router. TRACE, CONNECT, PUT, PATCH, HEAD and unknown
-// verbs are refused with 405.
-//
-// TODO(D5/G9): DELETE is a Go-only route kept for the CLI; it goes away or
-// becomes a revoke alias when the server moves onto the real vault.
+// allowedMethods is the complete verb allow-list (Python's). OPTIONS is only
+// ever served as a CORS preflight to an allowed origin; elsewhere it falls
+// through to authentication and the router. TRACE, CONNECT, PUT, PATCH,
+// DELETE, HEAD and unknown verbs are refused with 405. (The Go-only DELETE
+// route of the stub store was dropped with it, decision D5: revoke is
+// POST .../revoke.)
 var allowedMethods = map[string]bool{
 	http.MethodGet:     true,
 	http.MethodPost:    true,
-	http.MethodDelete:  true,
 	http.MethodOptions: true,
 }
 
-const allowHeaderValue = "GET, POST, DELETE, OPTIONS"
+const allowHeaderValue = "GET, POST, OPTIONS"
 
 // Middleware holds the server middleware components.
 type Middleware struct {
+	// TokenStore holds the agent bearer token.
 	TokenStore *auth.TokenStore
+
+	// OperatorTokenStore holds the operator token required by the approval
+	// endpoints (/v1/requests*). Nil means those endpoints accept the agent
+	// token, as Python does without --operator-token-file: an agent holding
+	// it could then approve its own requests.
+	OperatorTokenStore *auth.TokenStore
 
 	// AllowedOrigins is the exact-match CORS allow-list. Empty means CORS is
 	// denied for every origin (the default). "*" is never honoured.
@@ -203,7 +213,7 @@ func (mw *Middleware) CORSMiddleware(next http.Handler) http.Handler {
 				h.Add("Vary", "Access-Control-Request-Method")
 				h.Add("Vary", "Access-Control-Request-Headers")
 				h.Set("Access-Control-Allow-Origin", origin)
-				h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE")
+				h.Set("Access-Control-Allow-Methods", "GET, POST")
 				h.Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 				h.Set("Access-Control-Max-Age", "600")
 				w.WriteHeader(http.StatusNoContent)
@@ -283,11 +293,20 @@ func authFailure(err error) (int, string) {
 	}
 }
 
+// operatorPath reports whether path is an operator endpoint.
+func operatorPath(path string) bool {
+	return path == "/v1/requests" || strings.HasPrefix(path, "/v1/requests/")
+}
+
 // AuthMiddleware verifies the bearer token for all routes except the public
 // ones. Unlike earlier versions it does NOT exempt OPTIONS: a legitimate
 // preflight is answered earlier by CORSMiddleware, and any other OPTIONS
 // request must authenticate like everything else.
-// On success, it sets the token ID in the request context.
+//
+// /v1/requests* (approve/deny) verifies against OperatorTokenStore when one
+// is configured, and every other route against TokenStore only, so neither
+// token works in the other's scope. On success it stores the token id and
+// scope in the request context.
 func (mw *Middleware) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet &&
@@ -296,7 +315,14 @@ func (mw *Middleware) AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		tokenID, err := mw.TokenStore.Verify(r.Header.Get("Authorization"))
+		ts, scope := mw.TokenStore, handlers.ScopeAgent
+		if operatorPath(r.URL.Path) {
+			scope = handlers.ScopeOperator
+			if mw.OperatorTokenStore != nil {
+				ts = mw.OperatorTokenStore
+			}
+		}
+		tokenID, err := ts.Verify(r.Header.Get("Authorization"))
 		if err != nil {
 			status, msg := authFailure(err)
 			if status == http.StatusUnauthorized {
@@ -306,23 +332,46 @@ func (mw *Middleware) AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Store token ID in context for handlers that need it
-		ctx := context.WithValue(r.Context(), contextKeyTokenID, tokenID)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		next.ServeHTTP(w, r.WithContext(handlers.WithAuth(r.Context(), tokenID, scope)))
 	})
 }
 
-// contextKey is a private type for context keys to avoid collisions.
-type contextKey string
+// PathMiddleware refuses ambiguous request paths with 400 before
+// authentication (python StrictURLNormalizationMiddleware): "..", a
+// backslash, "//" or a control character, in the decoded path or in the
+// percent-decoded raw path.
+func (mw *Middleware) PathMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw := r.URL.EscapedPath()
+		if dec, err := url.PathUnescape(raw); err == nil {
+			raw = dec
+		}
+		for _, p := range []string{r.URL.Path, raw} {
+			if badPath(p) {
+				WriteJSONError(w, http.StatusBadRequest, "BadRequest", "Invalid URI path")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
-const contextKeyTokenID contextKey = "tokenID"
+func badPath(p string) bool {
+	if strings.Contains(p, "..") || strings.Contains(p, "\\") || strings.Contains(p, "//") {
+		return true
+	}
+	for _, c := range p {
+		if c < 32 || c == 127 {
+			return true
+		}
+	}
+	return false
+}
 
 // TokenIDFromContext extracts the token ID from the request context.
 func TokenIDFromContext(ctx context.Context) string {
-	if v, ok := ctx.Value(contextKeyTokenID).(string); ok {
-		return v
-	}
-	return ""
+	id, _ := handlers.AuthFromContext(ctx)
+	return id
 }
 
 // responseWriter wraps http.ResponseWriter to capture the status code.

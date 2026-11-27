@@ -89,7 +89,7 @@ func TestSDKClient_RealRouter(t *testing.T) {
 	if txt, isErr := call("lease_secret", key); isErr || txt != "s3cr3t-value" {
 		t.Fatalf("lease_secret against real router: (%q, %v)", txt, isErr)
 	}
-	if txt, isErr := call("execute_secret", map[string]any{"namespace": "prod", "name": "api-key", "action": "http.get"}); isErr || strings.Contains(txt, "s3cr3t-value") {
+	if txt, isErr := call("execute_secret", map[string]any{"namespace": "prod", "name": "api-key", "action": "echo"}); isErr || strings.Contains(txt, "s3cr3t-value") {
 		t.Fatalf("execute_secret: (%q, %v)", txt, isErr)
 	}
 	if txt, isErr := call("revoke_secret", key); isErr {
