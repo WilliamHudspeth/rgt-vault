@@ -269,8 +269,12 @@ jobs:
             go test -count=1 -v -timeout 10m ./internal/compat -run TestPythonTPMInterop
           '
 
-  # macOS Keychain and Windows (Credential Manager keyring + DPAPI) on the
-  # hosted runners. Not in the required aggregate until it has a track record.
+  # Windows: Credential Manager keyring + DPAPI against real Python, on the
+  # hosted runner. Not in the required aggregate until it has a track record.
+  # macOS is deliberately absent: `security add-generic-password` (called by
+  # the Go provider's live tests) hangs on the hosted macos-latest runner even
+  # with an unlocked temporary default keychain, so the macOS Keychain stays a
+  # human checklist item (docs/guides/migration-python-to-go.md, appendix).
   providers:
     name: providers (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -278,7 +282,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [windows-latest]
     defaults:
       run:
         shell: bash
@@ -295,19 +299,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[server,dev,windows]"
-      - name: Unlocked default keychain (macOS runners have none usable headless)
-        if: runner.os == 'macOS'
-        run: |
-          security create-keychain -p rgt-ci "$RUNNER_TEMP/rgt.keychain-db"
-          security set-keychain-settings -lut 21600 "$RUNNER_TEMP/rgt.keychain-db"
-          security unlock-keychain -p rgt-ci "$RUNNER_TEMP/rgt.keychain-db"
-          security default-keychain -s "$RUNNER_TEMP/rgt.keychain-db"
-          security list-keychains -d user -s "$RUNNER_TEMP/rgt.keychain-db"
       - name: Go provider tests against the real OS stores
         working-directory: go
         env:
           RGT_TEST_REAL_KEYRING: "1"
-          RGT_TEST_MACOS_KEYCHAIN: "1"
         run: go test -count=1 -v -timeout 10m ./internal/providers
       - name: Python <-> Go provider interop and in-place migration
         working-directory: go
@@ -316,7 +311,7 @@ jobs:
         run: |
           export RGT_VAULT_PYTHON="$(python -c 'import sys; print(sys.executable)')"
           go test -count=1 -v -timeout 15m ./internal/compat \
-            -run 'TestPythonDPAPIInterop|TestPythonMacOSKeychainInterop|TestKeyringInPlaceMigration'
+            -run 'TestPythonDPAPIInterop|TestKeyringInPlaceMigration'
 
   required-status:
     name: required-status-checks
