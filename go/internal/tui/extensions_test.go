@@ -84,19 +84,26 @@ func TestTOTPRemaining(t *testing.T) {
 func TestIsTOTP(t *testing.T) {
 	cases := []struct {
 		name string
+		s    SecretInfo
 		want bool
 	}{
-		{"github-totp", true},
-		{"vpn-otp", true},
-		{"TOTP-service", true},
-		{"api-key", false},
-		{"db-pass", false},
-		{"totp", true},
+		{"note tag", SecretInfo{Name: "github", Note: "type=totp"}, true},
+		{"note tag colon", SecretInfo{Name: "github", Note: "type:TOTP"}, true},
+		{"note tag among words", SecretInfo{Name: "x", Note: "work vpn, type=totp; rotate yearly"}, true},
+		{"server type", SecretInfo{Name: "x", Type: "totp"}, true},
+		{"server type case", SecretInfo{Name: "x", Type: " TOTP "}, true},
+		// The old name heuristic is gone: names say nothing.
+		{"name totp", SecretInfo{Name: "github-totp"}, false},
+		{"name otp", SecretInfo{Name: "vpn-otp"}, false},
+		{"name TOTP", SecretInfo{Name: "TOTP-service"}, false},
+		{"plain", SecretInfo{Name: "api-key", Note: "api key"}, false},
+		{"note mentions totp", SecretInfo{Name: "x", Note: "not a totp seed"}, false},
+		{"note tag glued", SecretInfo{Name: "x", Note: "type=totpish"}, false},
+		{"other type", SecretInfo{Name: "x", Type: "password"}, false},
 	}
 	for _, tc := range cases {
-		got := IsTOTP(SecretInfo{Name: tc.name})
-		if got != tc.want {
-			t.Errorf("IsTOTP(%q): got %v, want %v", tc.name, got, tc.want)
+		if got := IsTOTP(tc.s); got != tc.want {
+			t.Errorf("%s: IsTOTP(%+v) = %v, want %v", tc.name, tc.s, got, tc.want)
 		}
 	}
 }
@@ -137,10 +144,10 @@ func (f *fakeClientTOTP) Health() bool      { return true }
 func (f *fakeClientTOTP) VerifyAudit() bool { return true }
 func (f *fakeClientTOTP) ListSecrets(namespace string) ([]SecretInfo, error) {
 	return []SecretInfo{
-		{Name: "vpn-totp", Fingerprint: "ff001122"},
+		{Name: "vpn-totp", Fingerprint: "ff001122", Note: "vpn seed type=totp"},
 	}, nil
 }
-func (f *fakeClientTOTP) Rotate(target string) error { return nil }
+func (f *fakeClientTOTP) Rotate(target string) error                  { return nil }
 func (f *fakeClientTOTP) GetAuditLog(limit int) ([]AuditEntry, error) { return nil, nil }
 
 // ---------------------------------------------------------------------------
@@ -158,7 +165,7 @@ func (f *fakeClientTree) ListSecrets(namespace string) ([]SecretInfo, error) {
 		{Name: "api/key", Fingerprint: "ccc33333"},
 	}, nil
 }
-func (f *fakeClientTree) Rotate(target string) error { return nil }
+func (f *fakeClientTree) Rotate(target string) error                  { return nil }
 func (f *fakeClientTree) GetAuditLog(limit int) ([]AuditEntry, error) { return nil, nil }
 
 // ---------------------------------------------------------------------------

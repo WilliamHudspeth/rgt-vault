@@ -1,6 +1,13 @@
 // Package mcp implements a local stdio MCP (Model Context Protocol) server that
 // bridges an MCP client to the rgt-vault HTTP backend (Ticket RGT-159).
 // It speaks newline-delimited JSON-RPC 2.0 over stdio; bridges to the rgt-vault HTTP backend.
+//
+// Tools: list_secrets, lease_secret, revoke_secret, execute_secret and, for the
+// capability platform (python/server/mcp_server.py), execute_capability and
+// list_capabilities. The resource vault://policy exposes a read-only policy
+// summary. A v2 capability token is supplied by the caller as a tool argument
+// or configured once with LoadCapabilityTokenFile; it is only ever forwarded
+// to the backend and is never logged or echoed.
 package mcp
 
 import (
@@ -17,6 +24,14 @@ import (
 	"rgt-vault-server/internal/netguard"
 	"rgt-vault-server/internal/validation"
 )
+
+// DefaultBackendURL is the backend a Server talks to when none is given: the
+// vault server's default listen address (cmd/server: 127.0.0.1:8765, D6).
+const DefaultBackendURL = "http://127.0.0.1:8765"
+
+// PolicyResourceURI is the URI of the read-only policy summary resource
+// (python: @mcp.resource("vault://policy")).
+const PolicyResourceURI = "vault://policy"
 
 type rpcRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -51,11 +66,22 @@ type Server struct {
 	// logger receives backend error details; stdout is the protocol channel,
 	// so it must never point there. Defaults to the standard logger (stderr).
 	logger *log.Logger
+	// capToken is the default v2 capability token for execute_capability
+	// (a tool argument overrides it). It is a credential: never logged,
+	// never put in a tool result.
+	capToken string
+	// policyFile, when set, is the ABAC policy file the policy summary
+	// resource counts rules in. The backend has no policy-summary route, so
+	// without it the rule count is reported as null.
+	policyFile string
 }
 
 // NewServer initializes a new Server with trimmed backendURL, default client timeout,
-// and preset server info metadata.
+// and preset server info metadata. An empty backendURL means DefaultBackendURL.
 func NewServer(backendURL, token string) *Server {
+	if strings.TrimSpace(backendURL) == "" {
+		backendURL = DefaultBackendURL
+	}
 	return &Server{
 		backendURL: strings.TrimSuffix(backendURL, "/"),
 		token:      token,
@@ -178,6 +204,40 @@ var toolSpecs = []toolSpec{
 		},
 		Required: []string{"namespace", "name", "action"},
 	},
+	{
+		Name: "execute_capability",
+		Description: "Execute a registered capability with a v2 capability token (Agent Capability Platform). " +
+			"Returns the capability's result, never a secret value.",
+		Properties: map[string]any{
+			"capability": map[string]any{"type": "string", "description": "Capability name, e.g. secrets.echo."},
+			"agent_id": map[string]any{
+				"type":        "string",
+				"description": "Agent the token is bound to. Defaults to the server's configured agent label.",
+			},
+			"capability_token": map[string]any{
+				"type":        "string",
+				"description": "v2 capability token. Omit when the MCP server was started with a capability token file.",
+			},
+			"version": map[string]any{
+				"type":        "integer",
+				"minimum":     1,
+				"description": "Capability version (default 1).",
+			},
+			"payload": map[string]any{"type": "object", "additionalProperties": true},
+		},
+		Required: []string{"capability"},
+	},
+	{
+		Name:        "list_capabilities",
+		Description: "List the capabilities an agent may execute (names, versions, parameter names).",
+		Properties: map[string]any{
+			"agent": map[string]any{
+				"type":        "string",
+				"description": "Agent to list for. Defaults to the server's configured agent label.",
+			},
+		},
+		Required: []string{},
+	},
 }
 
 func lookupTool(name string) (toolSpec, bool) {
@@ -257,7 +317,8 @@ func (s *Server) handle(req rpcRequest) *rpcResponse {
 		result := map[string]any{
 			"protocolVersion": negotiateProtocolVersion(req.Params),
 			"capabilities": map[string]any{
-				"tools": map[string]any{},
+				"tools":     map[string]any{},
+				"resources": map[string]any{},
 			},
 			"serverInfo": map[string]any{
 				"name":    s.serverName,
@@ -276,6 +337,38 @@ func (s *Server) handle(req rpcRequest) *rpcResponse {
 			ID:      req.ID,
 			Result:  map[string]any{"tools": toolListing()},
 		}
+
+	case "resources/list":
+		return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"resources": []any{
+			map[string]any{
+				"uri":         PolicyResourceURI,
+				"name":        "policy",
+				"title":       "Policy summary",
+				"description": "Read-only, non-sensitive policy metadata: rule count and default lease TTL.",
+				"mimeType":    "application/json",
+			},
+		}}}
+
+	case "resources/templates/list":
+		return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"resourceTemplates": []any{}}}
+
+	case "resources/read":
+		var params struct {
+			URI string `json:"uri"`
+		}
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32602, Message: "invalid params: " + err.Error()}}
+		}
+		if params.URI != PolicyResourceURI {
+			return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32002, Message: "resource not found"}}
+		}
+		text, err := json.Marshal(s.policySummary())
+		if err != nil {
+			return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32603, Message: "internal error"}}
+		}
+		return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"contents": []any{
+			map[string]any{"uri": PolicyResourceURI, "mimeType": "application/json", "text": string(text)},
+		}}}
 
 	case "tools/call":
 		var params struct {
@@ -424,6 +517,12 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 		}
 		return s.backendError("revoke_secret", resp, body)
 
+	case "execute_capability":
+		return s.executeCapability(args)
+
+	case "list_capabilities":
+		return s.listCapabilities(args)
+
 	case "execute_secret":
 		ns := getStr("namespace")
 		nm := getStr("name")
@@ -490,7 +589,9 @@ const maxBackendBody = 4 << 20
 // policy internals) it was never meant to hand to an arbitrary MCP client, so
 // the body is only logged (stderr, truncated) and the client gets the status.
 func (s *Server) backendError(tool string, resp *http.Response, body []byte) (string, bool) {
-	logged := body
+	// Redact credentials before truncating so a cut can never leave a token
+	// prefix behind.
+	logged := s.redact(string(body))
 	if len(logged) > maxLoggedErrorBody {
 		logged = logged[:maxLoggedErrorBody]
 	}

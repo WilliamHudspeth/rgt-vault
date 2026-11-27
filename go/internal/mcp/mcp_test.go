@@ -121,15 +121,17 @@ func TestHandle_ToolsList(t *testing.T) {
 	if !ok {
 		t.Fatalf("tools is not an array: %T", toolsRaw)
 	}
-	if len(tools) != 4 {
-		t.Fatalf("expected 4 tools, got %d", len(tools))
+	if len(tools) != 6 {
+		t.Fatalf("expected 6 tools, got %d", len(tools))
 	}
 
 	wantNames := map[string]bool{
-		"list_secrets":   true,
-		"lease_secret":   true,
-		"revoke_secret":  true,
-		"execute_secret": true,
+		"list_secrets":       true,
+		"lease_secret":       true,
+		"revoke_secret":      true,
+		"execute_secret":     true,
+		"execute_capability": true,
+		"list_capabilities":  true,
 	}
 	for _, tv := range tools {
 		tool, ok := tv.(map[string]any)

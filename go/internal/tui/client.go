@@ -1,29 +1,77 @@
 package tui
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"rgt-vault-server/internal/netguard"
+	"rgt-vault-server/internal/validation"
 )
 
-type HTTPClient struct {
-	baseURL string
-	token   string
-	hc      *http.Client
+// DefaultBaseURL is the server the TUI talks to when none is given: the vault
+// server's default listen address (cmd/server: 127.0.0.1:8765).
+const DefaultBaseURL = "http://127.0.0.1:8765"
+
+// DefaultAgent is the agent label the TUI sends on list calls (python
+// tui_client: agent="operator"). It is a label for policy and audit, not an
+// authenticated identity.
+const DefaultAgent = "operator"
+
+// operatorLabel is the operator name recorded on approve/deny decisions
+// (python tui: operator="tui").
+const operatorLabel = "tui"
+
+// maxResponseBytes bounds how much of any server response is read.
+const maxResponseBytes = 4 << 20
+
+// maxFingerprintWorkers bounds the concurrent fingerprint lookups of one list.
+const maxFingerprintWorkers = 8
+
+// ErrRejected means the server refused an approve/deny decision with HTTP 400:
+// a bad or missing 2FA code, a replayed code, or a request that is already
+// decided or gone (python tui_client returns False for this case).
+var ErrRejected = errors.New("rejected by the server")
+
+// StatusError is a non-success HTTP answer. It deliberately carries no body:
+// server error text is never shown to the operator.
+type StatusError struct {
+	Op   string
+	Code int
 }
 
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("%s: HTTP %d %s", e.Op, e.Code, http.StatusText(e.Code))
+}
+
+// HTTPClient talks to a running rgt-vault server. It never asks for, receives
+// or stores a secret value: lists carry metadata and fingerprints only.
+type HTTPClient struct {
+	baseURL       string
+	token         string // agent token: secrets, audit, rotate
+	operatorToken string // operator token: /v1/requests*; defaults to token
+	agent         string
+	hc            *http.Client
+}
+
+// NewHTTPClient builds a client for baseURL (empty means DefaultBaseURL) that
+// authenticates with token. Approval calls use the same token until
+// SetOperatorToken is called.
 func NewHTTPClient(baseURL, token string) *HTTPClient {
-	baseURL = strings.TrimRight(baseURL, "/")
+	if strings.TrimSpace(baseURL) == "" {
+		baseURL = DefaultBaseURL
+	}
 	return &HTTPClient{
-		baseURL: baseURL,
+		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
+		agent:   DefaultAgent,
 		hc: &http.Client{
 			Timeout:   5 * time.Second,
 			Transport: &http.Transport{DialContext: netguard.NewDialer(true).DialContext},
@@ -31,81 +79,153 @@ func NewHTTPClient(baseURL, token string) *HTTPClient {
 	}
 }
 
+// SetOperatorToken sets the token used for the approval endpoints. A server
+// started with a separate operator token file accepts only that token there
+// (and refuses it everywhere else).
+func (c *HTTPClient) SetOperatorToken(token string) { c.operatorToken = token }
+
+// SetAgent sets the agent label sent on list calls.
+func (c *HTTPClient) SetAgent(agent string) error {
+	a, err := validation.ValidateAgent(agent)
+	if err != nil {
+		return err
+	}
+	c.agent = a
+	return nil
+}
+
+func (c *HTTPClient) approvalToken() string {
+	if c.operatorToken != "" {
+		return c.operatorToken
+	}
+	return c.token
+}
+
+// request performs one call and, for a 200 answer, decodes the JSON body into
+// out (when non-nil). Any other status is a *StatusError (the body is
+// discarded unread beyond the cap).
+func (c *HTTPClient) request(op, method, path string, query url.Values, token string, body any, out any) error {
+	u := c.baseURL + path
+	if len(query) > 0 {
+		u += "?" + query.Encode()
+	}
+	var rd io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("%s: %w", op, err)
+		}
+		rd = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequest(method, u, rd)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	if rd != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return &StatusError{Op: op, Code: resp.StatusCode}
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("%s: invalid response", op)
+	}
+	return nil
+}
+
+// Health reports whether GET /healthz answers 200.
 func (c *HTTPClient) Health() bool {
-	req, err := c.newReq(http.MethodGet, c.baseURL+"/healthz", "")
-	if err != nil {
-		return false
-	}
-	resp, err := c.hc.Do(req)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	return c.request("health", http.MethodGet, "/healthz", nil, c.token, nil, nil) == nil
 }
 
+// VerifyAudit asks the server to verify the audit hash chain.
 func (c *HTTPClient) VerifyAudit() bool {
-	req, err := c.newReq(http.MethodPost, c.baseURL+"/v1/audit/verify", "{}")
-	if err != nil {
+	var res struct {
+		OK    *bool `json:"ok"`
+		Valid *bool `json:"valid"` // pre-G9 spelling
+	}
+	if err := c.request("verify audit", http.MethodPost, "/v1/audit/verify", nil, c.token, struct{}{}, &res); err != nil {
 		return false
 	}
-	resp, err := c.hc.Do(req)
-	if err != nil {
-		return false
+	switch {
+	case res.OK != nil:
+		return *res.OK
+	case res.Valid != nil:
+		return *res.Valid
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return false
-	}
-	var result struct {
-		Valid bool `json:"valid"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return false
-	}
-	return result.Valid
+	return false
 }
 
-type listSecretsResponse struct {
-	Namespace string       `json:"namespace"`
-	Secrets   []secretItem `json:"secrets"`
+type secretListItem struct {
+	Name        string `json:"name"`
+	Note        string `json:"note"`
+	Require2FA  bool   `json:"require_2fa"`
+	Fingerprint string `json:"fingerprint"` // optional: used when the list carries it
+	Type        string `json:"type"`        // optional: used when the server carries it
+	// There is deliberately no field for a secret value: whatever a server
+	// sends beyond the metadata is dropped by the decoder.
 }
 
-type secretItem struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-}
-
+// ListSecrets lists the active secrets of namespace with their metadata and
+// ciphertext fingerprints. The list route carries no fingerprint, so each one
+// is fetched from GET /v1/secrets/{namespace}/{name} (bounded concurrency);
+// a secret whose fingerprint cannot be fetched shows an empty fingerprint.
 func (c *HTTPClient) ListSecrets(namespace string) ([]SecretInfo, error) {
-	u := c.baseURL + "/v1/secrets"
-	params := url.Values{}
-	params.Set("namespace", namespace)
-	u = u + "?" + params.Encode()
-	req, err := c.newReq(http.MethodGet, u, "")
-	if err != nil {
-		return nil, err
+	var lr struct {
+		Secrets []secretListItem `json:"secrets"`
 	}
-	resp, err := c.hc.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("list secrets: unexpected status %d", resp.StatusCode)
-	}
-	var lr listSecretsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&lr); err != nil {
+	q := url.Values{"namespace": {namespace}, "agent": {c.agent}}
+	if err := c.request("list secrets", http.MethodGet, "/v1/secrets", q, c.token, nil, &lr); err != nil {
 		return nil, err
 	}
 	infos := make([]SecretInfo, len(lr.Secrets))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxFingerprintWorkers)
 	for i, s := range lr.Secrets {
-		h := sha256.Sum256([]byte(s.Value))
-		fingerprint := hex.EncodeToString(h[:])[:8]
-		infos[i] = SecretInfo{Name: s.Name, Fingerprint: fingerprint}
+		infos[i] = SecretInfo{Name: s.Name, Note: s.Note, Require2FA: s.Require2FA, Type: s.Type, Fingerprint: s.Fingerprint}
+		if s.Fingerprint != "" {
+			continue
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, name string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			infos[i].Fingerprint = c.fingerprint(namespace, name)
+		}(i, s.Name)
 	}
+	wg.Wait()
 	return infos, nil
 }
 
+// fingerprint fetches sha256(ciphertext)[:8] of one secret; "" on any failure.
+func (c *HTTPClient) fingerprint(namespace, name string) string {
+	var res struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	path := "/v1/secrets/" + url.PathEscape(namespace) + "/" + url.PathEscape(name)
+	if err := c.request("fingerprint", http.MethodGet, path, nil, c.token, nil, &res); err != nil {
+		return ""
+	}
+	return res.Fingerprint
+}
+
+// AuditEntry is one audit row as the TUI shows it.
 type AuditEntry struct {
 	Timestamp string `json:"timestamp"`
 	Event     string `json:"event"`
@@ -114,70 +234,98 @@ type AuditEntry struct {
 	Hash      string `json:"hash"`
 }
 
-type auditLogResponse struct {
-	Entries []AuditEntry `json:"entries"`
-}
-
+// GetAuditLog returns up to limit audit rows, oldest first (the server answers
+// newest first; the stream view shows the tail).
 func (c *HTTPClient) GetAuditLog(limit int) ([]AuditEntry, error) {
-	u := fmt.Sprintf("%s/v1/audit?limit=%d", c.baseURL, limit)
-	req, err := c.newReq(http.MethodGet, u, "")
-	if err != nil {
+	var res struct {
+		Entries []struct {
+			Action    string  `json:"action"`
+			Timestamp string  `json:"timestamp"`
+			Details   *string `json:"details"`
+			EntryHash string  `json:"entry_hash"`
+			AgentID   *string `json:"agent_id"`
+		} `json:"entries"`
+	}
+	q := url.Values{"limit": {fmt.Sprint(limit)}}
+	if err := c.request("get audit", http.MethodGet, "/v1/audit", q, c.token, nil, &res); err != nil {
 		return nil, err
 	}
-	resp, err := c.hc.Do(req)
-	if err != nil {
-		return nil, err
+	out := make([]AuditEntry, 0, len(res.Entries))
+	for i := len(res.Entries) - 1; i >= 0; i-- {
+		e := res.Entries[i]
+		entry := AuditEntry{Timestamp: e.Timestamp, Event: e.Action, Hash: e.EntryHash}
+		if e.AgentID != nil {
+			entry.Principal = *e.AgentID
+		}
+		if e.Details != nil {
+			entry.Detail = *e.Details
+		}
+		out = append(out, entry)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get audit: unexpected status %d", resp.StatusCode)
-	}
-	var res auditLogResponse
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return nil, err
-	}
-	return res.Entries, nil
+	return out, nil
 }
 
+// Rotate rotates the "master" key or the "dek".
 func (c *HTTPClient) Rotate(target string) error {
-	body, err := json.Marshal(map[string]string{"target": target})
-	if err != nil {
-		return err
-	}
-	req, err := c.newReq(http.MethodPost, c.baseURL+"/v1/rotate", string(body))
-	if err != nil {
-		return err
-	}
-	resp, err := c.hc.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent {
-		return nil
-	}
-	return fmt.Errorf("rotate: unexpected status %d", resp.StatusCode)
+	return c.request("rotate", http.MethodPost, "/v1/rotate", nil, c.token, map[string]string{"target": target}, nil)
 }
 
-func (c *HTTPClient) newReq(method, url, bodyJSON string) (*http.Request, error) {
-	var req *http.Request
-	var err error
-	if bodyJSON != "" {
-		req, err = http.NewRequest(method, url, strings.NewReader(bodyJSON))
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Content-Type", "application/json")
-	} else {
-		req, err = http.NewRequest(method, url, nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-	return req, nil
+// PendingRequest is an agent request waiting for an operator decision
+// (python tui_client.PendingRequest). It carries no secret value.
+type PendingRequest struct {
+	RequestID  string  `json:"request_id"`
+	Agent      string  `json:"agent"`
+	Namespace  string  `json:"namespace"`
+	SecretName string  `json:"secret_name"`
+	Purpose    string  `json:"purpose"`
+	Action     string  `json:"action"`
+	Require2FA bool    `json:"require_2fa"`
+	CreatedAt  float64 `json:"created_at"`
 }
 
-var _ Client = (*HTTPClient)(nil)
+// ListRequests returns the pending approval requests, oldest first, using the
+// operator token.
+func (c *HTTPClient) ListRequests() ([]PendingRequest, error) {
+	var res struct {
+		Requests []PendingRequest `json:"requests"`
+	}
+	if err := c.request("list requests", http.MethodGet, "/v1/requests", nil, c.approvalToken(), nil, &res); err != nil {
+		return nil, err
+	}
+	return res.Requests, nil
+}
+
+// Approve approves a request. totpCode is required (and verified by the
+// server, single use) when the request needs a second factor. A refusal of
+// the decision (HTTP 400) is ErrRejected.
+func (c *HTTPClient) Approve(requestID, totpCode string) error {
+	var code *string
+	if totpCode != "" {
+		code = &totpCode
+	}
+	body := map[string]any{"totp_code": code, "operator": operatorLabel}
+	return c.decide("approve", requestID, body)
+}
+
+// Deny denies a request.
+func (c *HTTPClient) Deny(requestID, reason string) error {
+	if reason == "" {
+		reason = "denied by operator"
+	}
+	return c.decide("deny", requestID, map[string]any{"reason": reason, "operator": operatorLabel})
+}
+
+func (c *HTTPClient) decide(verb, requestID string, body map[string]any) error {
+	path := "/v1/requests/" + url.PathEscape(requestID) + "/" + verb
+	err := c.request(verb, http.MethodPost, path, nil, c.approvalToken(), body, nil)
+	var se *StatusError
+	if errors.As(err, &se) && se.Code == http.StatusBadRequest {
+		return ErrRejected
+	}
+	return err
+}
+
+var (
+	_ Client         = (*HTTPClient)(nil)
+	_ ApprovalClient = (*HTTPClient)(nil)
+)

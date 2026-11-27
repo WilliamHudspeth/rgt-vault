@@ -12,10 +12,14 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// SecretInfo stores metadata about a secret.
+// SecretInfo stores metadata about a secret. It has no field for a value: the
+// TUI never receives or holds one.
 type SecretInfo struct {
 	Name        string
-	Fingerprint string // short hash; NEVER the plaintext value
+	Fingerprint string // sha256(ciphertext)[:8] from the server; "" if unavailable
+	Note        string // free-text note (the server's "note" metadata)
+	Require2FA  bool   // leasing this secret needs a TOTP second factor
+	Type        string // optional server-supplied kind, e.g. "totp"
 }
 
 // Client is implemented elsewhere in the package (an HTTP client).
@@ -52,22 +56,25 @@ const (
 	modeSearch
 	modeConfirm
 	modeAudit
+	modeRequests       // pending approval requests (approve / deny)
+	modeApproveConfirm // y/n before approving a request without 2FA
+	modeTOTPPrompt     // TOTP entry before approving a require_2fa request
 )
 
 // Model holds the TUI state.
 type Model struct {
-	client    Client
-	namespace string
-	secrets   []SecretInfo // full set
-	filtered  []SecretInfo // after search filter
-	cursor    int
-	serverOK  bool
-	auditValid bool
-	loaded     bool
-	mode       mode
-	search     string
-	status     string // last action status line
-	err        error
+	client        Client
+	namespace     string
+	secrets       []SecretInfo // full set
+	filtered      []SecretInfo // after search filter
+	cursor        int
+	serverOK      bool
+	auditValid    bool
+	loaded        bool
+	mode          mode
+	search        string
+	status        string // last action status line
+	err           error
 	width, height int
 
 	// RGT-160: TOTP countdown
@@ -84,6 +91,16 @@ type Model struct {
 
 	// RGT-41: Live Audit Log Streamer
 	auditEntries []AuditEntry
+
+	// RGT-160/497: pending approval requests (operator view).
+	approver    ApprovalClient // nil when the client cannot approve
+	requests    []PendingRequest
+	reqCursor   int
+	reqErr      error
+	reqGen      int           // bumped on every enter/leave; stale loads and ticks are dropped
+	requestPoll time.Duration // refresh interval of the requests view
+	target      *PendingRequest
+	totpInput   string // digits typed so far; masked in the view, cleared on submit
 }
 
 // totpTickCmd arms a one-second tick that emits totpTickMsg.
@@ -116,8 +133,11 @@ func totpTickCmd() tea.Cmd {
 
 // New constructs a new TUI Model.
 func New(client Client, namespace string) Model {
+	approver, _ := client.(ApprovalClient)
 	return Model{
 		client:           client,
+		approver:         approver,
+		requestPoll:      DefaultRequestPoll,
 		namespace:        namespace,
 		mode:             modeDashboard,
 		showTOTP:         true,
@@ -132,6 +152,15 @@ func New(client Client, namespace string) Model {
 func NewWithClipboard(client Client, namespace string, clip Clipboard) Model {
 	m := New(client, namespace)
 	m.clipboard = clip
+	return m
+}
+
+// WithRequestPollInterval sets how often the requests view refreshes (test
+// seam; the default is DefaultRequestPoll).
+func (m Model) WithRequestPollInterval(d time.Duration) Model {
+	if d > 0 {
+		m.requestPoll = d
+	}
 	return m
 }
 
@@ -180,7 +209,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case rotatedMsg:
 		if msg.err != nil {
-			m.status = "rotate failed: " + msg.err.Error()
+			m.status = "rotate failed: " + errText(msg.err)
 		} else {
 			m.status = "rotate complete"
 		}
@@ -206,11 +235,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case auditLoadMsg:
 		m.auditEntries = msg.entries
 		if msg.err != nil {
-			m.status = "audit error: " + msg.err.Error()
+			m.status = "audit error: " + errText(msg.err)
 		}
 		return m, nil
 
+	case requestsLoadedMsg, requestsTickMsg, decisionMsg:
+		nm, cmd, _ := m.updateRequestsMsg(msg)
+		return nm, cmd
+
 	case tea.KeyMsg:
+		if m.inRequests() {
+			return m.updateRequestsKey(msg)
+		}
 		switch m.mode {
 		case modeDashboard:
 			switch msg.String() {
@@ -239,6 +275,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "vault locked"
 				return m, tea.Quit
 
+			case "tab", "i":
+				return m.enterRequests()
 			case "a":
 				m.mode = modeAudit
 				m.status = "streaming audit log..."
@@ -368,6 +406,7 @@ func (m Model) View() string {
 		sb.WriteString("  P        Panic lock & exit\n")
 		sb.WriteString("  t        Toggle tree view\n")
 		sb.WriteString("  a        Live audit log stream\n")
+		sb.WriteString("  tab/i    Pending approval requests (approve/deny)\n")
 		sb.WriteString("  c        Copy fingerprint to clipboard\n")
 		sb.WriteString("  ?        Show help\n")
 		sb.WriteString("  q/ctrl+c Quit\n")
@@ -393,24 +432,25 @@ func (m Model) View() string {
 			}
 			for _, entry := range m.auditEntries[start:] {
 				// Trim long details
-				detail := entry.Detail
-				if len(detail) > 40 {
-					detail = detail[:37] + "..."
-				}
+				detail := safeText(entry.Detail, maxDetailRunes)
 				// Format: HH:MM:SS | EVENT | PRINCIPAL | DETAIL
-				tStr := entry.Timestamp
+				tStr := safeText(entry.Timestamp, 32)
 				if len(tStr) >= 19 {
 					tStr = tStr[11:19] // Extract HH:MM:SS from RFC3339
 				}
-				line := fmt.Sprintf("%-8s | %-15s | %-10s | %s", tStr, entry.Event, entry.Principal, detail)
+				line := fmt.Sprintf("%-8s | %-15s | %-10s | %s", tStr, safeText(entry.Event, 15), safeText(entry.Principal, 10), detail)
 				sb.WriteString(normalStyle.Render(line) + "\n")
 			}
 		}
 		sb.WriteString("\n[a/esc] back | [q] quit\n")
 		if m.status != "" {
-			sb.WriteString("\n" + m.status)
+			sb.WriteString("\n" + safeText(m.status, 200))
 		}
 		return sb.String()
+	}
+
+	if m.inRequests() {
+		return m.viewRequests()
 	}
 
 	var sb strings.Builder
@@ -423,11 +463,15 @@ func (m Model) View() string {
 	if m.auditValid {
 		auditStr = "audit: OK"
 	}
-	headerText := fmt.Sprintf("[%s] [%s] Namespace: %s", healthStr, auditStr, m.namespace)
+	headerText := fmt.Sprintf("[%s] [%s] Namespace: %s", healthStr, auditStr, safeText(m.namespace, maxFieldRunes))
 	sb.WriteString(headerStyle.Render(headerText) + "\n\n")
 
+	if m.err != nil {
+		sb.WriteString("  error: " + errText(m.err) + "\n\n")
+	}
+
 	if m.mode == modeSearch {
-		sb.WriteString(fmt.Sprintf("/%s\n\n", m.search))
+		sb.WriteString(fmt.Sprintf("/%s\n\n", safeText(m.search, maxFieldRunes)))
 	}
 
 	if len(m.filtered) == 0 {
@@ -440,17 +484,18 @@ func (m Model) View() string {
 			indent := strings.Repeat("  ", row.Indent)
 			if row.IsLeaf && row.Secret != nil {
 				suffix := m.totpSuffix(*row.Secret)
-				line := fmt.Sprintf("%s%s  %s%s", indent, row.Label, row.Secret.Fingerprint, suffix)
+				line := fmt.Sprintf("%s%s  %s%s", indent, safeText(row.Label, maxNameRunes), secretColumns(*row.Secret), suffix)
 				sb.WriteString(normalStyle.Render(line) + "\n")
 			} else {
-				sb.WriteString(normalStyle.Render(indent+row.Label) + "\n")
+				sb.WriteString(normalStyle.Render(indent+safeText(row.Label, maxNameRunes)) + "\n")
 			}
 		}
 	} else {
-		// Flat list view.
+		// Flat list view: NAME FINGERPRINT 2FA NOTE.
+		sb.WriteString(normalStyle.Render(fmt.Sprintf("  %-20s  %-11s  %-3s  %s", "NAME", "FINGERPRINT", "2FA", "NOTE")) + "\n")
 		for i, secret := range m.filtered {
 			suffix := m.totpSuffix(secret)
-			line := fmt.Sprintf("%-20s  %s%s", secret.Name, secret.Fingerprint, suffix)
+			line := fmt.Sprintf("%-20s  %s%s", safeText(secret.Name, maxNameRunes), secretColumns(secret), suffix)
 			if i == m.cursor {
 				sb.WriteString(selectedStyle.Render("> "+line) + "\n")
 			} else {
@@ -467,7 +512,7 @@ func (m Model) View() string {
 
 	var footerParts []string
 	if m.mode == modeDashboard {
-		footerParts = append(footerParts, "[/] search", "[r] rotate", "[a] audit", "[P] panic-lock", "[t] tree", "[c] copy", "[?] help", "[q] quit")
+		footerParts = append(footerParts, "[/] search", "[r] rotate", "[a] audit", "[P] panic-lock", "[t] tree", "[c] copy", "[tab] requests", "[?] help", "[q] quit")
 	} else if m.mode == modeSearch {
 		footerParts = append(footerParts, "[esc] cancel search", "[enter] keep filter")
 	} else if m.mode == modeConfirm {
@@ -476,8 +521,22 @@ func (m Model) View() string {
 	sb.WriteString(strings.Join(footerParts, " | "))
 
 	if m.status != "" {
-		sb.WriteString("\n\n" + m.status)
+		sb.WriteString("\n\n" + safeText(m.status, 200))
 	}
 
 	return sb.String()
+}
+
+// secretColumns renders the metadata columns of a secret row: fingerprint,
+// 2FA flag and note. Every server-supplied field is made terminal-safe.
+func secretColumns(s SecretInfo) string {
+	fp := safeText(s.Fingerprint, 16)
+	if fp == "" {
+		fp = "-"
+	}
+	line := fmt.Sprintf("%-11s  %-3s", fp, yesNo(s.Require2FA))
+	if note := safeText(s.Note, maxNoteRunes); note != "" {
+		line += "  " + note
+	}
+	return line
 }
