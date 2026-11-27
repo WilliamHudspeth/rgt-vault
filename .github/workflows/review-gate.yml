@@ -239,33 +239,35 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[server,dev]"
-      - name: Install swtpm and tpm2-tools
+      - name: Install swtpm, tpm2-tools and the TPM resource manager
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends swtpm swtpm-tools tpm2-tools libtss2-tcti-swtpm0
-      - name: Start a software TPM
+          sudo apt-get install -y --no-install-recommends dbus dbus-user-session swtpm swtpm-tools tpm2-tools tpm2-abrmd libtss2-tcti-swtpm0 libtss2-tcti-tabrmd0
+      - name: Start a software TPM behind a resource manager
         run: |
           mkdir -p "$RUNNER_TEMP/tpm"
           swtpm socket --tpm2 --tpmstate dir="$RUNNER_TEMP/tpm" \
             --server type=tcp,port=2321 --ctrl type=tcp,port=2322 \
             --flags not-need-init,startup-clear --daemon
           sleep 1
-          echo "TPM2TOOLS_TCTI=swtpm:host=127.0.0.1,port=2321" >> "$GITHUB_ENV"
-      - name: Diagnose Python's own seal/unseal against the software TPM
-        continue-on-error: true
-        run: |
-          export RGT_VAULT_PYTHON="$(python -c 'import sys; print(sys.executable)')"
-          S="$(python -c 'import secrets; print(secrets.token_hex(32))')"
-          D="$(mktemp -d)"
-          "$RGT_VAULT_PYTHON" go/internal/compat/testdata/pycompat.py tpm-seal "$D" "$S"
-          "$RGT_VAULT_PYTHON" go/internal/compat/testdata/pycompat.py tpm-unseal "$D/master_secret.priv" "$D/master_secret.pub"
+      # Sealing to a PCR policy keeps a policy SESSION across several tpm2_*
+      # invocations, which a raw swtpm socket cannot do; tpm2-abrmd (the
+      # resource manager every real system runs) can. It needs a D-Bus bus.
       - name: Seal and unseal, Python <-> Go
         working-directory: go
         run: |
-          tpm2_getcap properties-fixed | head -5
           export RGT_VAULT_PYTHON="$(python -c 'import sys; print(sys.executable)')"
-          go test -count=1 -v -timeout 10m ./internal/providers -run TestLiveTPM
-          go test -count=1 -v -timeout 10m ./internal/compat -run TestPythonTPMInterop
+          dbus-run-session -- bash -ec '
+            tpm2-abrmd --tcti=swtpm:host=127.0.0.1,port=2321 --session --allow-root &
+            sleep 2
+            export TPM2TOOLS_TCTI=tabrmd:bus_type=session
+            tpm2_getcap properties-fixed | head -5
+            S="$(python -c "import secrets; print(secrets.token_hex(32))")"; D="$(mktemp -d)"
+            python ../go/internal/compat/testdata/pycompat.py tpm-seal "$D" "$S"
+            python ../go/internal/compat/testdata/pycompat.py tpm-unseal "$D/master_secret.priv" "$D/master_secret.pub"
+            go test -count=1 -v -timeout 10m ./internal/providers -run TestLiveTPM
+            go test -count=1 -v -timeout 10m ./internal/compat -run TestPythonTPMInterop
+          '
 
   # macOS Keychain and Windows (Credential Manager keyring + DPAPI) on the
   # hosted runners. Not in the required aggregate until it has a track record.
