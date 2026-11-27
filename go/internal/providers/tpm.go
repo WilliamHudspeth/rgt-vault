@@ -343,9 +343,11 @@ func backupFile(path string) (string, error) {
 	return bak, nil
 }
 
-// syncFile fsyncs path.
+// syncFile fsyncs path. The handle is opened writable: on Windows
+// FlushFileBuffers needs write access ("Access is denied" on a read-only
+// handle). Directories are never synced here (not supported on Windows).
 func syncFile(path string) error {
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -385,31 +386,31 @@ func TestOpenErrors(t *testing.T) {
 	if _, err := Open(ctx, ""); err == nil {
 		t.Error("empty path accepted")
 	}
-	if _, err := Open(ctx, t.TempDir()+"/a?b.db"); err == nil {
+	if _, err := Open(ctx, filepath.Join(t.TempDir(), "a?b.db")); err == nil {
 		t.Error("'?' path accepted")
 	}
 	// A file where the directory should be.
-	f := t.TempDir() + "/file"
+	f := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(f, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Open(ctx, f+"/vault.db"); err == nil {
+	if _, err := Open(ctx, filepath.Join(f, "vault.db")); err == nil {
 		t.Error("path under a regular file accepted")
 	}
 	// Not a database.
-	bad := t.TempDir() + "/bad.db"
+	bad := filepath.Join(t.TempDir(), "bad.db")
 	if err := os.WriteFile(bad, bytes.Repeat([]byte("not sqlite"), 200), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Open(ctx, bad); err == nil {
 		t.Error("garbage file opened")
 	}
-	if p, err := DefaultDBPath(); err != nil || !strings.HasSuffix(p, ".secure-vault/vault.db") {
+	if p, err := DefaultDBPath(); err != nil || !strings.HasSuffix(p, filepath.Join(".secure-vault", "vault.db")) {
 		t.Errorf("DefaultDBPath = %q %v", p, err)
 	}
 	// A failing migration (table already exists in an unexpected shape)
 	// surfaces as an error.
-	weird := t.TempDir() + "/weird.db"
+	weird := filepath.Join(t.TempDir(), "weird.db")
 	s := openT(t, weird)
 	if _, err := s.db.Exec("DELETE FROM schema_migrations WHERE version = 3"); err != nil {
 		t.Fatal(err)
