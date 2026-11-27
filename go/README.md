@@ -15,48 +15,60 @@ capability-based execution layer on top of the v0.2.0 cryptographic core.
 
 ## Status
 
-- **Milestone:** v0.3.0 — Enterprise Security (in progress)
-- **Coverage of v0.2.0 API surface:** server skeleton (auth, middleware, secret
-  CRUD, audit endpoint) — `handlers/handlers.go`
-- **Not yet implemented:** SQLite-backed storage, AES-256-GCM crypto
-  primitives, Argon2id keychain manager, hash-chained audit log, capability
-  executor, action registry, Ed25519 token v2
+The CLI and server run on the **real vault**: encrypted SQLite storage (`vault.db` + `keychain.json`,
+the same files and formats as the Python line), the hash-chained audit log, ABAC policy, hooks,
+approval with TOTP, capability tokens and the built-in actions. Data persists across restarts.
 
-See the milestone tickets in [Multica rgt-vault](https://10.10.88.88:3050/rgt-vault)
-(`RGT-144` … `RGT-166`) for the per-component migration plan.
+> **v0.3.0 was different.** The v0.3.0 release served an in-memory stub store: secrets written to it
+> were lost when the process exited. If you stored anything with that release, it is gone. Use a build
+> from this line and `rgt-vault serve` (below) instead.
 
 ## Quick start
 
 ```bash
 cd go/
-go build -o rgt-vault-server ./cmd/server
-./rgt-vault-server
-# -> starts on :8080, mints a bearer token at
-#    ~/.config/rgt-vault/server.token (printed once on first run)
+go build -o rgt-vault ./cmd/rgt-vault
+
+./rgt-vault init                          # vault (+ master secret in the OS keyring), agent + operator tokens (0600)
+cat > policy.yaml <<'YAML'
+rules:
+  - effect: allow
+    agent: "*"
+    namespace: "*"
+    purpose: "*"
+    action: "*"
+YAML
+./rgt-vault serve --policy policy.yaml &   # 127.0.0.1:8765; no --policy = every request denied
+
+echo "my-secret" | ./rgt-vault set api-key --namespace prod
+./rgt-vault get api-key --namespace prod
+./rgt-vault verify-audit
 ```
 
-Requires Go 1.23.4+.
+`init` is idempotent and never overwrites an existing vault or token (see [`docs/guides/cli.md`](../docs/guides/cli.md)
+for every subcommand and flag: `serve`, `init`, `status`, `enroll-2fa`, `export`/`import`,
+`migrate check`, `provider seal`, offline `get`/`verify-audit`).
 
-## Endpoints (current Go skeleton)
+Requires Go 1.26+ (see `go.mod`). The default port is **8765**, like the Python line.
+`rgt-vault-server` (`./cmd/server`) is a deprecated alias of `rgt-vault serve`.
+
+## Endpoints
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | GET  | `/healthz` | none | liveness check |
 | POST | `/v1/secrets` | bearer | set a secret |
-| GET  | `/v1/secrets` | bearer | list secrets by namespace |
-| GET  | `/v1/secrets/{namespace}/{name}` | bearer | get a single secret |
-| POST | `/v1/secrets/{namespace}/{name}/use` | bearer | lease/use a secret |
+| GET  | `/v1/secrets` | bearer | list secrets by namespace (never values) |
+| GET  | `/v1/secrets/{namespace}/{name}` | bearer | ciphertext fingerprint |
+| POST | `/v1/secrets/{namespace}/{name}/use` | bearer | lease a secret and run an action |
 | POST | `/v1/secrets/{namespace}/{name}/revoke` | bearer | revoke a secret |
-| DELETE | `/v1/secrets/{namespace}/{name}` | bearer | delete a secret |
 | POST | `/v1/rotate` | bearer | rotate master/DEK |
 | GET  | `/v1/audit` | bearer | read audit log |
 | POST | `/v1/audit/verify` | bearer | verify audit chain |
 | POST | `/v1/policy/simulate` | bearer | simulate a policy decision |
 | GET  | `/v1/actions` | bearer | list registered actions |
-
-The Go server is currently an **in-memory** store. The next milestone replaces
-this with the SQLite-backed `VaultManager` ported from Python
-(`rgt_vault/storage/sqlite.py`).
+| GET/POST | `/v1/capabilities*` | bearer | list / execute capabilities (needs `--harness-key-file`) |
+| GET/POST | `/v1/requests*` | operator | list / approve / deny pending approvals |
 
 ## TUI Dashboard (rgt-vault-tui)
 
@@ -72,8 +84,9 @@ cd go/
 go test ./...
 ```
 
-Current coverage: server + middleware + auth integration tests
-(`internal/server/server_test.go`, 564 LOC).
+The CLI tests run against a real `server.New` stack on a throwaway vault and against the
+Python-generated fixtures in `testdata/pyvault`. Set `RGT_VAULT_PYTHON=/path/to/.venv/bin/python`
+(a Python with `rgt_vault` installed) to also run the real-Python export/import round trip.
 
 ## Differences from the Python line
 
@@ -82,8 +95,8 @@ Current coverage: server + middleware + auth integration tests
   server-side actions; the LLM agent never receives the secret bytes.
 - **Static binary:** no Python runtime, no `cryptography` wheel pain on
   cross-platform install. Single-file deploy.
-- **Better concurrency:** the Go `Store` (`handlers/handlers.go`) uses
-  `sync.RWMutex` and is safe for parallel use out of the box.
+- **Same files, no conversion:** a Python vault opens as it is (`rgt-vault migrate check` tells you
+  first; legacy `dek_version=0` rows must be upgraded once with the last Python release).
 
 ## Cutover plan (RGT-161 → RGT-165)
 

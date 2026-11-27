@@ -8,7 +8,7 @@ A running rgt-vault backend must be available. Start one with:
 
 ```
 rgt-vault init
-rgt-vault serve --addr :8080
+rgt-vault serve --policy policy.yaml
 ```
 
 ## Running
@@ -18,7 +18,7 @@ rgt-vault mcp
 ```
 
 The command speaks JSON-RPC on stdin/stdout and is normally launched by an MCP client (e.g. Claude Desktop), not invoked directly.
-It connects to the backend at `--host` (default `http://localhost:8080`) and reads the bearer token from `--token`, the environment variable `RGT_VAULT_TOKEN`, or the file `~/.config/rgt-vault/server.token` (in that order).
+It connects to the backend at `--host` (default `http://127.0.0.1:8765`) and reads the bearer token from `--token`, the environment variable `RGT_VAULT_TOKEN`, or the file `~/.config/rgt-vault/server.token` (in that order).
 
 ## Configure Claude Desktop
 
@@ -29,7 +29,7 @@ Add the following entry to your `claude_desktop_config.json`:
   "mcpServers": {
     "rgt-vault": {
       "command": "rgt-vault",
-      "args": ["mcp", "--host", "http://localhost:8080"]
+      "args": ["mcp", "--host", "http://127.0.0.1:8765"]
     }
   }
 }
