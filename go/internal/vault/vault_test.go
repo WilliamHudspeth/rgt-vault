@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -95,8 +96,14 @@ func TestFreshVaultBootstrapAndReopen(t *testing.T) {
 	if v.KeyEpoch() != 1 || v.VaultID() == "" || v.KeychainPath() != filepath.Join(filepath.Dir(db), "keychain.json") {
 		t.Fatalf("epoch %d id %q path %q", v.KeyEpoch(), v.VaultID(), v.KeychainPath())
 	}
-	if st, err := os.Stat(v.KeychainPath()); err != nil || st.Mode().Perm() != 0o600 {
-		t.Fatalf("keychain mode: %v %v", st, err)
+	st, err := os.Stat(v.KeychainPath())
+	if err != nil {
+		t.Fatalf("stat keychain: %v", err)
+	}
+	// POSIX only: Windows has no Unix permission bits (Go reports 0666 for a
+	// writable file); access there is governed by the profile directory ACLs.
+	if runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
+		t.Fatalf("keychain mode %v, want 0600", st.Mode().Perm())
 	}
 	set(t, v, "default", "a", "alpha")
 	id := v.VaultID()
