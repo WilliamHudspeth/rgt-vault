@@ -53,7 +53,8 @@ func TestReviewConcurrentMintRevokeTwoStores(t *testing.T) {
 	}
 }
 
-// Many writers see the same stale lock at once: no lost update (review L2).
+// A leftover lock file from a dead writer and many concurrent writers: no
+// lost update (review L2; with OS locks there is nothing stale to break).
 func TestReviewStaleLockRace(t *testing.T) {
 	for round := 0; round < 30; round++ {
 		p := filepath.Join(t.TempDir(), "tokens.json")
@@ -79,26 +80,47 @@ func TestReviewStaleLockRace(t *testing.T) {
 		if err != nil || len(infos) != n {
 			t.Fatalf("round %d: lost updates: %d of %d tokens (err=%v)", round, len(infos), n, err)
 		}
-		if ents, _ := os.ReadDir(filepath.Dir(p)); len(ents) != 1 {
-			t.Fatalf("round %d: lock/stale files left: %v", round, ents)
+		if ents := nonLockEntries(t, filepath.Dir(p)); len(ents) != 1 {
+			t.Fatalf("round %d: temp files left: %v", round, ents)
 		}
 	}
 }
 
-// unlock never removes a lock it does not own.
-func TestUnlockChecksOwnership(t *testing.T) {
+// The OS lock is exclusive between handles (goroutines or processes), an
+// unlock releases only the caller's own lock, and closing the handle (a
+// crashed holder) releases it.
+func TestLockIsExclusiveAndReleasedOnClose(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "x.lock")
-	unlock, err := lockFile(p)
+	oldTimeout := lockTimeout
+	t.Cleanup(func() { lockTimeout = oldTimeout })
+	lockTimeout = 50 * time.Millisecond
+	unlockA, err := lockFile(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(p, []byte("someone-else"), 0o600); err != nil {
+	if _, err := lockFile(p); !errors.Is(err, ErrStoreLocked) {
+		t.Fatalf("second holder got the lock: %v", err)
+	}
+	unlockA()
+	unlockB, err := lockFile(p)
+	if err != nil {
+		t.Fatalf("after unlock: %v", err)
+	}
+	unlockB()
+	// A holder that dies: the OS drops its lock with the handle.
+	f, err := os.OpenFile(p, os.O_RDWR, 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
-	unlock()
-	if b, err := os.ReadFile(p); err != nil || string(b) != "someone-else" {
-		t.Errorf("unlock removed a foreign lock: %q %v", b, err)
+	if err := tryLock(f); err != nil {
+		t.Fatal(err)
 	}
+	_ = f.Close() // no unlock call, like a crash
+	unlockC, err := lockFile(p)
+	if err != nil {
+		t.Fatalf("lock not released by close: %v", err)
+	}
+	unlockC()
 }
 
 func TestReviewCorruptionFailsClosed(t *testing.T) {

@@ -92,8 +92,8 @@ func TestMintAuthenticateAndFileFormat(t *testing.T) {
 			t.Errorf("store dir mode %o", fi.Mode().Perm())
 		}
 	}
-	if ents, _ := os.ReadDir(filepath.Dir(s.Path())); len(ents) != 1 {
-		t.Errorf("temp or lock files left: %v", ents)
+	if ents := nonLockEntries(t, filepath.Dir(s.Path())); len(ents) != 1 {
+		t.Errorf("temp files left: %v", ents)
 	}
 }
 
@@ -328,28 +328,37 @@ func TestLocking(t *testing.T) {
 	s := newStore(t)
 	mustMint(t, s, "bot")
 	lock := s.Path() + ".lock"
-	if err := os.WriteFile(lock, nil, 0o600); err != nil {
+	oldTimeout := lockTimeout
+	t.Cleanup(func() { lockTimeout = oldTimeout })
+	lockTimeout = 50 * time.Millisecond
+
+	// Another holder of the OS lock: writers wait, then time out.
+	unlock, err := lockFile(lock)
+	if err != nil {
 		t.Fatal(err)
 	}
-	oldTimeout, oldStale := lockTimeout, staleLock
-	t.Cleanup(func() { lockTimeout, staleLock = oldTimeout, oldStale })
-	lockTimeout, staleLock = 50*time.Millisecond, time.Hour
 	if _, _, err := s.Mint(MintOptions{Agent: "b2", Scopes: []Scope{ScopeAgent}}); !errors.Is(err, ErrStoreLocked) {
 		t.Errorf("held lock: %v", err)
 	}
-	// A stale lock (crashed writer) is broken.
-	old := time.Now().Add(-2 * time.Hour)
-	_ = os.Chtimes(lock, old, old)
-	if _, _, err := s.Mint(MintOptions{Agent: "b2", Scopes: []Scope{ScopeAgent}}); err != nil {
-		t.Errorf("stale lock not broken: %v", err)
-	}
-	if _, err := os.Stat(lock); err == nil {
-		t.Error("lock file left behind")
-	}
 	// Reads never take the lock.
-	_ = os.WriteFile(lock, nil, 0o600)
-	if infos, err := s.List(); err != nil || len(infos) != 2 {
+	if infos, err := s.List(); err != nil || len(infos) != 1 {
 		t.Errorf("List under a held lock: %v %v", infos, err)
+	}
+	unlock()
+	if _, _, err := s.Mint(MintOptions{Agent: "b2", Scopes: []Scope{ScopeAgent}}); err != nil {
+		t.Errorf("after unlock: %v", err)
+	}
+	// A leftover lock FILE (a crashed writer) holds no OS lock: nothing to
+	// break, writers proceed at once.
+	if err := os.WriteFile(lock, []byte("crashed-writer"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Mint(MintOptions{Agent: "b3", Scopes: []Scope{ScopeAgent}}); err != nil {
+		t.Errorf("leftover lock file blocked a writer: %v", err)
+	}
+	// The lock file is kept (never deleted, so no delete/create race).
+	if _, err := os.Stat(lock); err != nil {
+		t.Errorf("lock file: %v", err)
 	}
 }
 
@@ -418,4 +427,20 @@ func TestPresentedID(t *testing.T) {
 	if got := PresentedID("Bearer secret-token"); got != TokenID("secret-token") || strings.Contains(got, "secret") {
 		t.Errorf("PresentedID = %q", got)
 	}
+}
+
+// nonLockEntries lists dir without the (permanent) *.lock file.
+func nonLockEntries(t *testing.T, dir string) []string {
+	t.Helper()
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, e := range ents {
+		if !strings.HasSuffix(e.Name(), ".lock") {
+			out = append(out, e.Name())
+		}
+	}
+	return out
 }
