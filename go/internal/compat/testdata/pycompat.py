@@ -224,8 +224,9 @@ def macos_delete(service, account):
 def tpm_seal(outdir, secret_hex):
     from rgt_vault.providers.linux_tpm import seal_master_secret
 
-    priv, pub = seal_master_secret(bytes.fromhex(secret_hex), outdir)
-    print(json.dumps({"priv": str(priv), "pub": str(pub)}))
+    seal_master_secret(bytes.fromhex(secret_hex), outdir)
+    # The blob names are fixed by seal_master_secret.
+    print(json.dumps({"priv": os.path.join(outdir, "master_secret.priv"), "pub": os.path.join(outdir, "master_secret.pub")}))
 
 
 def tpm_unseal(priv, pub, expect_hex):
