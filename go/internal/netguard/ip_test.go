@@ -1,6 +1,7 @@
 package netguard
 
 import (
+	"context"
 	"errors"
 	"net"
 	"testing"
@@ -41,8 +42,23 @@ func TestCheckIP_Table(t *testing.T) {
 		{"198.51.100.1", false, true, "documentation"},
 		{"203.0.113.1", false, true, "documentation"},
 		{"2001:db8::1", false, true, "documentation"},
-		{"2001::1", false, true, "Teredo"},
-		{"2002:7f00:1::", false, true, "6to4"},
+		{"2001:1::1", false, true, "IETF protocol assignments (outside Teredo /32)"},
+		{"2001:2::1", false, true, "benchmarking, soft via 2001::/23"},
+		{"2001:3::1", false, true, "AMT, soft via 2001::/23"},
+		{"2001:4:112::1", false, true, "AS112-v6, soft via 2001::/23"},
+		{"2001:10::1", false, true, "ORCHID, soft via 2001::/23"},
+		{"2001:20::1", false, true, "ORCHID v2, soft via 2001::/23"},
+		{"192.31.196.1", false, true, "AS112-v4"},
+		{"192.52.193.1", false, true, "AMT"},
+		{"192.175.48.1", false, true, "direct-delegation AS112"},
+		{"2001::1", false, false, "Teredo is hard"},
+		{"2001:0:4136:e378:8000:63bf:3fff:fdd2", false, false, "Teredo example"},
+		{"2002:7f00:1::", false, false, "6to4 embedding 127.0.0.1"},
+		{"2002:a9fe:a9fe::", false, false, "6to4 embedding metadata 169.254.169.254"},
+		{"2002:6464:64c8::", false, false, "6to4 embedding Alibaba metadata"},
+		{"2002:808:808::1", false, false, "6to4 embedding public IPv4 is still refused"},
+		{"2606:4700::1111", true, true, "public IPv6"},
+		{"2a00:1450::1", true, true, "public IPv6"},
 		{"100::1", false, true, "discard"},
 		{"64:ff9b:1::1", false, false, "local NAT64 (may embed metadata)"},
 		{"100.100.100.200", false, false, "Alibaba metadata inside CGNAT"},
@@ -148,6 +164,19 @@ func TestCheckAddr_ZoneRefused(t *testing.T) {
 	}
 }
 
+func TestCheckAddr_ZoneRefusedTable(t *testing.T) {
+	// netip.Prefix.Contains is false for zoned addresses, so the explicit zone
+	// check in checkAddr is what refuses them; pin it for every lifting mode.
+	for _, lit := range []string{"fe80::1", "2001:4860::1", "2002:a9fe:a9fe::", "::1"} {
+		a := mustAddr(t, lit).WithZone("x")
+		for _, priv := range []bool{false, true} {
+			if err := checkAddr(a, priv, "h"); err == nil || !errors.Is(err, ErrBlocked) {
+				t.Errorf("%s%%x allowPrivate=%v: err=%v want ErrBlocked", lit, priv, err)
+			}
+		}
+	}
+}
+
 func TestBlockedError_Text(t *testing.T) {
 	e := blocked(ReasonAddress, "example.com", "nope")
 	if e.Error() == "" || !errors.Is(e, ErrBlocked) {
@@ -159,5 +188,44 @@ func TestBlockedError_Text(t *testing.T) {
 	}
 	if errors.Is(e, errors.New("other")) {
 		t.Fatal("must not match unrelated errors")
+	}
+}
+
+// RGT-361: 6to4 and Teredo embed IPv4 addresses, so they are hard-blocked even
+// with allowPrivate; checked through CheckIP, Guard.CheckIP and the dial path.
+func TestTunnelRanges_RefusedEvenWithAllowPrivate(t *testing.T) {
+	bad := []string{
+		"2002:a9fe:a9fe::",                     // 6to4 -> 169.254.169.254
+		"2002:6464:64c8::",                     // 6to4 -> 100.100.100.200
+		"2002:7f00:1::",                        // 6to4 -> 127.0.0.1
+		"2001:0:a9fe:a9fe::",                   // Teredo server field = metadata
+		"2001:0:4136:e378:8000:63bf:56ec:ab36", // Teredo, client 169.254.84.201 obfuscated
+	}
+	good := []string{"2606:4700::1111", "2a00:1450::1", "8.8.8.8", "93.184.216.34"}
+	g := newTestGuard(t, WithAllowPrivate(true))
+	rd := &recordingDial{}
+	gd := newTestGuard(t, WithAllowPrivate(true), WithDialFunc(rd.dial))
+	for _, lit := range bad {
+		ip := net.ParseIP(lit)
+		if err := CheckIP(ip, true); !errors.Is(err, ErrBlocked) {
+			t.Errorf("CheckIP(%s, true) = %v, want ErrBlocked", lit, err)
+		}
+		if err := g.CheckIP(ip); !errors.Is(err, ErrBlocked) {
+			t.Errorf("Guard.CheckIP(%s) = %v, want ErrBlocked", lit, err)
+		}
+		if _, hard, forbidden := ClassifyIP(ip); !forbidden || !hard {
+			t.Errorf("ClassifyIP(%s) hard=%v forbidden=%v, want hard+forbidden", lit, hard, forbidden)
+		}
+		if _, err := gd.DialContext(context.Background(), "tcp", "["+lit+"]:443"); !errors.Is(err, ErrBlocked) {
+			t.Errorf("DialContext([%s]) = %v, want ErrBlocked", lit, err)
+		}
+	}
+	if len(rd.got()) != 0 {
+		t.Errorf("dial func must never run for tunnel addresses: %v", rd.got())
+	}
+	for _, lit := range good {
+		if err := CheckIP(net.ParseIP(lit), true); err != nil {
+			t.Errorf("CheckIP(%s, true) = %v, want allowed", lit, err)
+		}
 	}
 }
