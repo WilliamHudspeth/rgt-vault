@@ -16,7 +16,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"reflect"
 	"sort"
 	"strconv"
@@ -224,6 +223,9 @@ func (v *Vault) ExecuteCapability(ctx context.Context, req CapabilityRequest) (a
 		return nil, newErr([]error{ErrCapabilityNotFound}, nil, "unknown capability %s. Registered: []", pyRepr(name))
 	}
 	spec, err := v.capabilities.Lookup(name)
+	if err == nil && spec == nil {
+		err = newErr([]error{ErrCapabilityNotFound}, nil, "unknown capability %s", pyRepr(name))
+	}
 	if err != nil {
 		if !errors.Is(err, ErrCapabilityNotFound) {
 			err = newErr([]error{ErrCapabilityNotFound}, err, "%s", err.Error())
@@ -342,7 +344,10 @@ func invokeHandler(ctx context.Context, spec CapabilitySpec, payload map[string]
 
 type handlerPanic struct{ value any }
 
-func (p *handlerPanic) Error() string { return fmt.Sprintf("capability handler panicked: %v", p.value) }
+// Error never includes the panic value: it may contain secret material.
+func (p *handlerPanic) Error() string {
+	return "capability handler panicked; see server logs for details"
+}
 func (*handlerPanic) PyClass() string { return "panic" }
 func (p *handlerPanic) Unwrap() error { e, _ := p.value.(error); return e }
 

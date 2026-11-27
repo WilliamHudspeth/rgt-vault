@@ -634,3 +634,24 @@ func TestPyCompactSorted(t *testing.T) {
 		t.Fatalf("got  %s\nwant %s", b.String(), want)
 	}
 }
+
+type nilSpecRegistry struct{}
+
+func (nilSpecRegistry) Lookup(string) (CapabilitySpec, error) { return nil, nil }
+
+func TestExecuteCapabilityReviewFixes(t *testing.T) {
+	ctx := context.Background()
+	ver := verifierAt(t, time.Unix(1_900_000_000, 0))
+	v := newCapVault(t, nil, nilSpecRegistry{}, ver)
+	req := CapabilityRequest{Capability: "secrets.echo", Agent: "a"}
+	if _, err := v.ExecuteCapability(ctx, signedReq(t, ver, req)); !errors.Is(err, ErrCapabilityNotFound) {
+		t.Fatalf("nil spec: %v", err)
+	}
+	// A panic value (which may hold a secret) never reaches the error text.
+	v = newCapVault(t, nil, fakeRegistry{"secrets.echo": &fakeSpec{versions: []int{1},
+		invoke: func(context.Context, map[string]any, CapabilityContext) (any, error) { panic("hunter2") }}}, ver)
+	_, err := v.ExecuteCapability(ctx, signedReq(t, ver, req))
+	if err == nil || strings.Contains(err.Error(), "hunter2") {
+		t.Fatalf("panic leaked: %v", err)
+	}
+}

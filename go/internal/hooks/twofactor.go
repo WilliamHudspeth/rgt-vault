@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -175,29 +176,48 @@ func (h *TwoFactorHook) consultV2(req vault.HookRequest) vault.HookResponse {
 }
 
 // accept is the bounded replay cache shared by v1 and v2 (python
-// _accept_token): when full, the half with the earliest expiry is dropped
-// first (an evicted id can then be replayed: the documented trade-off of an
-// in-process cache; the signature check stays authoritative).
+// _accept_token): when full, expired ids are purged and then the half with
+// the earliest expiry is dropped (an evicted, still-valid id can then be
+// replayed: the documented trade-off of an in-process cache; the signature
+// check stays authoritative).
 func (h *TwoFactorHook) accept(tokenID string, expiresAt int64, reason string) vault.HookResponse {
 	h.seenMu.Lock()
 	defer h.seenMu.Unlock()
+	// Go-only hardening: Python evicts BEFORE the duplicate check, so
+	// replaying a cached id into a full cache could evict that id and be
+	// accepted. Check first, then purge expired ids, then evict.
+	if _, dup := h.seen[tokenID]; dup {
+		return deny("capability_token replay detected")
+	}
+	if len(h.seen) >= h.maxCache {
+		now := h.now().Unix()
+		for id, exp := range h.seen {
+			if exp > 0 && exp < now {
+				delete(h.seen, id)
+			}
+		}
+	}
 	if len(h.seen) >= h.maxCache {
 		ids := make([]string, 0, len(h.seen))
 		for id := range h.seen {
 			ids = append(ids, id)
 		}
+		// exp <= 0 never expires: evict those last.
+		key := func(id string) int64 {
+			if e := h.seen[id]; e > 0 {
+				return e
+			}
+			return math.MaxInt64
+		}
 		sort.Slice(ids, func(i, j int) bool {
-			if h.seen[ids[i]] != h.seen[ids[j]] {
-				return h.seen[ids[i]] < h.seen[ids[j]]
+			if ki, kj := key(ids[i]), key(ids[j]); ki != kj {
+				return ki < kj
 			}
 			return ids[i] < ids[j]
 		})
 		for _, id := range ids[:h.maxCache/2] {
 			delete(h.seen, id)
 		}
-	}
-	if _, dup := h.seen[tokenID]; dup {
-		return deny("capability_token replay detected")
 	}
 	h.seen[tokenID] = expiresAt
 	return vault.HookResponse{Decision: vault.HookAllow, Reason: reason, Extra: map[string]any{"token_id": tokenID}}

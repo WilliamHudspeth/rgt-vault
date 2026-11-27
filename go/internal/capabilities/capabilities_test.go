@@ -473,3 +473,41 @@ func TestTwoFactorHookOnCapabilityPath(t *testing.T) {
 		t.Fatalf("frozen: %v", err)
 	}
 }
+
+func TestReviewFixes(t *testing.T) {
+	// Nested JSONSchema values are honoured.
+	s := JSONSchema{"properties": JSONSchema{"count": JSONSchema{"type": "integer"}}}
+	if err := s.Validate("c", map[string]any{"count": "not-an-int"}); err == nil {
+		t.Fatal("nested JSONSchema ignored")
+	}
+	if asMap(42) != nil {
+		t.Fatal("asMap")
+	}
+	// secrets.use checks the action before the namespace (Python order).
+	ver := fixedVerifier(t)
+	v := openVault(t, nil, NewDefault(fakeActions{"a": &fakeAction{}}), ver)
+	_, err := execCap(t, v, ver, UseCapability, "bot", map[string]any{"secret_name": "s", "action": "missing", "namespace": 123}, nil)
+	if !errors.Is(err, ErrActionNotFound) {
+		t.Fatalf("order: %v", err)
+	}
+	_, err = execCap(t, v, ver, UseCapability, "bot", map[string]any{"secret_name": "s", "action": "a", "namespace": jsonNum("123")}, nil)
+	if err == nil || err.Error() != "'namespace' must be a string. Got int." {
+		t.Fatalf("json.Number namespace: %v", err)
+	}
+	for _, c := range []struct {
+		v    any
+		want string
+	}{{jsonNum("1.5"), "float"}, {jsonNum("10000000000000000000"), "int"}, {int64(1), "int"}, {float32(1), "float"}} {
+		if pyTypeName(c.v) != c.want {
+			t.Errorf("pyTypeName(%#v)", c.v)
+		}
+	}
+	for _, f := range []any{int64(0), uint8(0), jsonNum("0e0"), jsonNum("0.00"), float32(0)} {
+		if pyTruthy(f) {
+			t.Errorf("pyTruthy(%#v) = true", f)
+		}
+	}
+	if !pyTruthy(int64(2)) || !pyTruthy(jsonNum("bogus")) || !pyTruthy(struct{}{}) {
+		t.Fatal("pyTruthy truthy values")
+	}
+}

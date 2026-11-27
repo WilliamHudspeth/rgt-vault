@@ -35,6 +35,8 @@
 package hooks
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"sync"
 
@@ -78,8 +80,8 @@ func (b *Base) ID() string { return b.id }
 
 // Frozen reports whether the hook is frozen: by Freeze, or because the
 // freeze file exists. It is checked under a lock on every operation.
-// A stat error other than "does not exist" is treated as "absent", as in
-// Python (Path.exists).
+// Unlike Python, a stat error other than "does not exist" (EACCES, EIO, a
+// broken parent) counts as frozen: the kill switch fails closed.
 func (b *Base) Frozen() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -93,8 +95,11 @@ func freezeFilePresent(path string) bool {
 	if path == "" {
 		return false
 	}
-	_, err := os.Stat(path)
-	return err == nil
+	// Lstat: a dangling symlink still freezes. Any error other than "does
+	// not exist" freezes too (fail closed; Python's Path.exists treats it
+	// as absent).
+	_, err := os.Lstat(path)
+	return err == nil || !errors.Is(err, fs.ErrNotExist)
 }
 
 // Freeze marks the hook frozen: every sensitive operation is denied.

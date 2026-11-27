@@ -74,7 +74,7 @@ func (s JSONSchema) Validate(_ string, payload map[string]any) error {
 			return payloadErr("Payload validation failed: Missing required field '%s'", f)
 		}
 	}
-	props, _ := s["properties"].(map[string]any)
+	props := asMap(s["properties"])
 	noExtra := false
 	if b, ok := s["additionalProperties"].(bool); ok && !b {
 		noExtra = true
@@ -92,8 +92,7 @@ func (s JSONSchema) Validate(_ string, payload map[string]any) error {
 			}
 			continue
 		}
-		m, _ := ps.(map[string]any)
-		t, _ := m["type"].(string)
+		t, _ := asMap(ps)["type"].(string)
 		v := payload[k]
 		switch t {
 		case "string":
@@ -117,6 +116,17 @@ func (s JSONSchema) Validate(_ string, payload map[string]any) error {
 				return payloadErr("Payload validation failed: '%s' must be a list", k)
 			}
 		}
+	}
+	return nil
+}
+
+// asMap accepts both map[string]any and a nested JSONSchema.
+func asMap(v any) map[string]any {
+	switch x := v.(type) {
+	case map[string]any:
+		return x
+	case JSONSchema:
+		return x
 	}
 	return nil
 }

@@ -2,7 +2,10 @@ package capabilities
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"strconv"
 
 	"rgt-vault-server/internal/hooks/pyfmt"
 	"rgt-vault-server/internal/vault"
@@ -101,15 +104,6 @@ func useHandler(actions ActionRegistry) Handler {
 		if actionName == "" {
 			return nil, actionErr(nil, "'action' is required")
 		}
-		namespace := vault.DefaultNamespace
-		if ns, ok := payload["namespace"]; ok {
-			s, isStr := ns.(string)
-			if !isStr {
-				return nil, newError("ValidationError", nil, []error{vault.ErrValidation},
-					"'namespace' must be a string. Got %s.", pyTypeName(ns))
-			}
-			namespace = s
-		}
 		params := map[string]any{}
 		if p, ok := payload["params"]; ok && pyTruthy(p) {
 			m, isMap := p.(map[string]any)
@@ -127,6 +121,17 @@ func useHandler(actions ActionRegistry) Handler {
 		}
 		if err := act.ValidateParams(params); err != nil {
 			return nil, err
+		}
+		// Python validates the namespace only inside vault.execute, after the
+		// action lookup and parameter check.
+		namespace := vault.DefaultNamespace
+		if ns, ok := payload["namespace"]; ok {
+			s, isStr := ns.(string)
+			if !isStr {
+				return nil, newError("ValidationError", nil, []error{vault.ErrValidation},
+					"'namespace' must be a string. Got %s.", pyTypeName(ns))
+			}
+			namespace = s
 		}
 		if c.Vault == nil {
 			return nil, actionErr(nil, "secrets.use requires a vault")
@@ -167,28 +172,32 @@ func pyTruthy(v any) bool {
 		return len(x) > 0
 	case float64:
 		return x != 0
-	case int:
+	case float32:
 		return x != 0
-	}
-	if s, ok := v.(interface{ String() string }); ok { // json.Number
-		switch s.String() {
-		case "0", "-0", "0.0", "-0.0":
-			return false
-		}
+	case json.Number:
+		f, err := strconv.ParseFloat(x.String(), 64)
+		return err != nil || f != 0
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return fmt.Sprint(x) != "0"
 	}
 	return true
 }
 
 func pyTypeName(v any) string {
-	switch v.(type) {
+	switch x := v.(type) {
 	case nil:
 		return "NoneType"
 	case bool:
 		return "bool"
-	case float64:
+	case float32, float64:
 		return "float"
-	case int, int64:
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		return "int"
+	case json.Number:
+		if isPyInt(x) {
+			return "int"
+		}
+		return "float"
 	case map[string]any:
 		return "dict"
 	case []any:

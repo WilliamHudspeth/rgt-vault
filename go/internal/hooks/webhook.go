@@ -28,7 +28,8 @@ const maxWebhookResponse = 64 * 1024
 // answer (python WebhookHook). Anything else (unreachable, HTTP error,
 // non-JSON, unknown decision) is a deny.
 //
-// Unlike Python's urllib, the client dials through netguard: link-local and
+// Unlike Python's urllib, redirects are not followed, only 2xx answers are
+// honoured, and the client dials through netguard: link-local and
 // cloud-metadata addresses are always refused, non-loopback hosts are
 // refused unless WithAllowRemote(true), and HTTP(S)_PROXY is ignored (a
 // proxy would hide the real destination from the dial-time check).
@@ -66,8 +67,12 @@ func NewWebhookHook(rawURL string, opts ...WebhookOption) (*WebhookHook, error) 
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, validationErr("webhook hook url must be an absolute http(s) URL")
 	}
+	// The hook id goes into every audit row: drop the query and fragment
+	// (they may carry an API key) and mask a URL password.
+	idURL := *u
+	idURL.RawQuery, idURL.ForceQuery, idURL.Fragment, idURL.RawFragment = "", false, "", ""
 	h := &WebhookHook{
-		Base:    NewBase("webhook:" + u.Redacted()),
+		Base:    NewBase("webhook:" + idURL.Redacted()),
 		url:     rawURL,
 		timeout: DefaultWebhookTimeout,
 	}
@@ -77,6 +82,9 @@ func NewWebhookHook(rawURL string, opts ...WebhookOption) (*WebhookHook, error) 
 	dialer := netguard.NewDialer(h.allowRemote)
 	h.client = &http.Client{
 		Timeout: h.timeout,
+		// Never follow redirects: a redirect could pivot the request (and
+		// the bearer token) to another host or scheme.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		Transport: &http.Transport{
 			Proxy:                 nil,
 			DialContext:           dialer.DialContext,
@@ -145,9 +153,9 @@ func (h *WebhookHook) Consult(ctx context.Context, req vault.HookRequest) (vault
 		return deny(fmt.Sprintf("hook URL unreachable: %v", err)), nil
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		// urllib raises HTTPError (a URLError) whose reason is the status
-		// phrase.
+		// phrase. Redirects are not followed, so a 3xx is a deny too.
 		return deny("hook URL unreachable: " + http.StatusText(resp.StatusCode)), nil
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxWebhookResponse))
@@ -157,8 +165,11 @@ func (h *WebhookHook) Consult(ctx context.Context, req vault.HookRequest) (vault
 	var parsed any
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
-	if err := dec.Decode(&parsed); err != nil || dec.More() {
+	if err := dec.Decode(&parsed); err != nil {
 		return deny("hook response not valid JSON"), nil
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return deny("hook response not valid JSON"), nil // trailing data
 	}
 	obj, ok := parsed.(map[string]any)
 	if !ok {

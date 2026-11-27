@@ -212,21 +212,54 @@ func TestTwoFactorReplayCacheEviction(t *testing.T) {
 	if h.maxCache != 2 {
 		t.Fatalf("min cache = %d", h.maxCache)
 	}
-	h, _ = NewTwoFactorHook(testKey, WithClock(func() time.Time { return now }), WithReplayCacheSize(4))
-	for i := 0; i < 4; i++ {
-		if r := h.accept(fmt.Sprintf("id-%d", i), int64(100+i), "ok"); r.Decision != vault.HookAllow {
-			t.Fatal(r)
+	far := now.Unix() + 1000
+	fill := func() *TwoFactorHook {
+		h, _ := NewTwoFactorHook(testKey, WithClock(func() time.Time { return now }), WithReplayCacheSize(4))
+		for i := 0; i < 4; i++ {
+			if r := h.accept(fmt.Sprintf("id-%d", i), far+int64(i), "ok"); r.Decision != vault.HookAllow {
+				t.Fatal(r)
+			}
+		}
+		return h
+	}
+	// Replaying a cached id into a FULL cache must still be denied (Python
+	// evicted first, which let the replay through) and must not evict.
+	h = fill()
+	for _, id := range []string{"id-0", "id-3"} {
+		if r := h.accept(id, far, "ok"); r.Reason != "capability_token replay detected" {
+			t.Fatalf("replay of %s into a full cache: %+v", id, r)
 		}
 	}
-	// Full: the two earliest-expiring ids are evicted, then id-4 inserted.
-	if r := h.accept("id-4", 200, "ok"); r.Decision != vault.HookAllow {
+	if len(h.seen) != 4 {
+		t.Fatalf("a denied replay evicted entries: %d left", len(h.seen))
+	}
+	// A new id into a full cache of live ids evicts the earliest-expiring half.
+	if r := h.accept("id-4", far+10, "ok"); r.Decision != vault.HookAllow {
 		t.Fatal(r)
 	}
-	if r := h.accept("id-0", 100, "ok"); r.Decision != vault.HookAllow {
-		t.Fatalf("evicted id must be accepted again: %+v", r)
+	if _, ok := h.seen["id-0"]; ok || len(h.seen) != 3 {
+		t.Fatalf("eviction: %v", h.seen)
 	}
-	if r := h.accept("id-3", 103, "ok"); r.Reason != "capability_token replay detected" {
+	if r := h.accept("id-3", far, "ok"); r.Reason != "capability_token replay detected" {
 		t.Fatalf("id-3 should still be cached: %+v", r)
+	}
+	// Never-expiring ids (exp <= 0) are evicted last.
+	h = fill()
+	h.seen["id-0"] = 0
+	if r := h.accept("id-9", far+50, "ok"); r.Decision != vault.HookAllow {
+		t.Fatal(r)
+	}
+	if _, ok := h.seen["id-0"]; !ok {
+		t.Fatalf("non-expiring id evicted first: %v", h.seen)
+	}
+	// Expired ids are purged first; live ones survive.
+	h = fill()
+	h.seen["id-0"], h.seen["id-1"] = now.Unix()-1, now.Unix()-2
+	if r := h.accept("id-5", far, "ok"); r.Decision != vault.HookAllow {
+		t.Fatal(r)
+	}
+	if _, ok := h.seen["id-2"]; !ok || len(h.seen) != 3 {
+		t.Fatalf("expired purge: %v", h.seen)
 	}
 }
 
