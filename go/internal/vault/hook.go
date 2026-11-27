@@ -155,6 +155,10 @@ func (v *Vault) preOpCheck(ctx context.Context, req HookRequest) (resp HookRespo
 // The caller must NOT hold v.mu: the hook runs unlocked (it may be slow or
 // call back into the vault) and only the audit write takes the lock.
 func (v *Vault) hookConsult(ctx context.Context, operation, agent, namespace, purpose string, secretName *string) error {
+	// No external hook side effects on a closed or broken vault.
+	if err := v.withR(func() error { return nil }); err != nil {
+		return err
+	}
 	req := HookRequest{
 		Operation:  operation,
 		Agent:      agent,

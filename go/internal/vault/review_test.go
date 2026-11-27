@@ -4,6 +4,7 @@ package vault
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,7 +13,9 @@ import (
 	"time"
 
 	"rgt-vault-server/internal/approval"
+	"rgt-vault-server/internal/keychain"
 	"rgt-vault-server/internal/providers/providerstest"
+	"rgt-vault-server/internal/store"
 )
 
 // A 2FA-flagged version must not be leasable by version without the second
@@ -283,5 +286,135 @@ func TestPyB64DecodePadding(t *testing.T) {
 		if err != nil || string(got) != want {
 			t.Errorf("%q: %q %v", in, got, err)
 		}
+	}
+}
+
+// Round 2: a stale keychain.json.new from a RotateDEK that crashed before
+// its commit must never be installed, even when keychain.json is damaged.
+func TestStaleDEKPendingNeverInstalled(t *testing.T) {
+	dir, prov, v := newFileVault(t)
+	setMany(t, v, 20)
+	_ = v.Close()
+	runCrash(t, dir, "rewrite", 5)
+	if _, err := os.Stat(filepath.Join(dir, "keychain.json.new")); err != nil {
+		t.Fatalf("expected the crashed rotation's .new: %v", err)
+	}
+	// Damage keychain.json so it no longer unwraps (wrong tag).
+	kc := filepath.Join(dir, "keychain.json")
+	b, _ := os.ReadFile(kc)
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	w := []byte(doc["wrapped_dek"].(string))
+	if w[0] == 'A' {
+		w[0] = 'B'
+	} else {
+		w[0] = 'A'
+	}
+	doc["wrapped_dek"] = string(w)
+	nb, _ := json.Marshal(doc)
+	if err := os.WriteFile(kc, nb, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Open(context.Background(), Config{DBPath: filepath.Join(dir, "vault.db"), Provider: prov, KDFParams: testParams})
+	if !errors.Is(err, keychain.ErrUnwrapFailed) {
+		t.Fatalf("want the original unwrap error, got %v", err)
+	}
+	if b2, _ := os.ReadFile(kc); string(b2) != string(nb) {
+		t.Fatal("the stale .new was installed over keychain.json")
+	}
+	st, _ := store.Open(context.Background(), filepath.Join(dir, "vault.db"))
+	defer func() { _ = st.Close() }()
+	if e, _ := st.KeyEpoch(context.Background()); e != 1 {
+		t.Fatalf("epoch bumped to %d", e)
+	}
+}
+
+func TestRotateMasterProviderFailureInsideTx(t *testing.T) {
+	ctx := context.Background()
+	v, prov := newVault(t, allowAllPolicy)
+	set(t, v, "n", "s", "v")
+	prov.RotateErr = errors.New("keyring locked")
+	if err := v.RotateMaster(ctx); err == nil || errors.Is(err, ErrInconsistent) {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := os.Stat(v.KeychainPath() + ".new"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(".new left behind")
+	}
+	if got, err := get(t, v, "n", "s", 0); err != nil || got != "v" || v.KeyEpoch() != 1 {
+		t.Fatalf("vault unusable after a clean provider failure: %q %v", got, err)
+	}
+}
+
+// The approval gate runs unlocked; a write flagging 2FA while the request
+// waits is honoured before decryption.
+func TestRequire2FAChangedDuringApproval(t *testing.T) {
+	var v *Vault
+	gate := gateFunc(func(ctx context.Context, r approval.Request) approval.Decision {
+		if !r.Require2FA {
+			_ = v.SetSecret(ctx, SetSecretRequest{Name: r.SecretName, Namespace: r.Namespace, Agent: SystemAgent,
+				Value: []byte("now-2fa"), Require2FA: true})
+		}
+		return approval.Decision{Allowed: true}
+	})
+	v = openT(t, Config{DBPath: filepath.Join(t.TempDir(), "vault.db"), Provider: memProv(), PolicyYAML: allowAllPolicy, Approval: gate})
+	set(t, v, "n", "s", "plain")
+	_, err := get(t, v, "n", "s", 0)
+	if !errors.Is(err, ErrPolicyDenied) || !strings.Contains(err.Error(), "flag changed during approval") {
+		t.Fatalf("got %v", err)
+	}
+	if r := lastAudit(t, v, 1)[0]; r.Action != "APPROVAL_DENIED" {
+		t.Fatalf("last row %s", r.Action)
+	}
+}
+
+// A rotate hook that writes a secret over the threshold must not deadlock.
+type writingRotateHook struct{ v *Vault }
+
+func (h *writingRotateHook) ID() string   { return "w" }
+func (h *writingRotateHook) Frozen() bool { return false }
+func (h *writingRotateHook) Consult(ctx context.Context, r HookRequest) (HookResponse, error) {
+	if r.Operation == OpRotate && h.v != nil {
+		_ = h.v.SetSecret(ctx, SetSecretRequest{Name: "from-hook", Namespace: "n", Agent: SystemAgent, Value: []byte("x")})
+	}
+	return HookResponse{Decision: HookAllow}, nil
+}
+
+func TestRotateHookWritingDoesNotDeadlock(t *testing.T) {
+	h := &writingRotateHook{}
+	v := openT(t, Config{DBPath: filepath.Join(t.TempDir(), "vault.db"), Provider: memProv(), PolicyYAML: allowAllPolicy, Hook: h})
+	h.v = v
+	v.dekMaxEncryptions = 1
+	done := make(chan error, 1)
+	go func() {
+		done <- v.SetSecret(context.Background(), SetSecretRequest{Name: "s", Namespace: "n", Agent: SystemAgent, Value: []byte("v")})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("deadlock: rotate hook wrote a secret during auto-rotation")
+	}
+	if v.KeyEpoch() != 2 {
+		t.Fatalf("epoch %d", v.KeyEpoch())
+	}
+}
+
+func TestClosedVaultDoesNotConsultHook(t *testing.T) {
+	h := &testHook{id: "t", resp: HookResponse{Decision: HookAllow}}
+	v := openT(t, Config{DBPath: filepath.Join(t.TempDir(), "vault.db"), Provider: memProv(), PolicyYAML: allowAllPolicy, Hook: h})
+	_ = v.Close()
+	_ = v.SetSecret(context.Background(), SetSecretRequest{Name: "s", Namespace: "n", Agent: SystemAgent, Value: []byte("v")})
+	if len(h.reqs) != 0 {
+		t.Fatal("hook consulted on a closed vault")
+	}
+}
+
+func TestPyJSONNumberValidation(t *testing.T) {
+	if got := pyDumps([]any{json.Number("-1.5e+3"), json.Number("+1"), json.Number("1_000"), json.Number("")}); got != `[-1.5e+3, "+1", "1_000", ""]` {
+		t.Fatal(got)
 	}
 }

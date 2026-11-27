@@ -139,25 +139,45 @@ func (v *Vault) RotateMaster(ctx context.Context) error {
 		return err
 	}
 
-	newMaster, err := rot.RotateMasterSecret()
-	if err != nil {
-		_ = os.Remove(newPath)
-		return err
-	}
-	defer keychain.Wipe(newMaster)
-
+	// The provider is rotated inside the transaction, after the epoch
+	// checks, so a failure before that point changes nothing.
+	var newMaster []byte
+	rewrapped := false
+	defer func() { keychain.Wipe(newMaster) }()
 	newEpoch, err := v.inRotationTx(ctx, func(_ *sql.Tx, newEpoch int64) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var err error
+		if newMaster, err = rot.RotateMasterSecret(); err != nil {
+			newMaster = nil
+			return err
+		}
 		if err := pending.Rewrap(newMaster, v.vaultID, newEpoch, v.kdfParams); err != nil {
 			return err
 		}
+		rewrapped = true
+		syncDir(filepath.Dir(newPath))
 		if v.testMasterPreCommit != nil {
 			return v.testMasterPreCommit()
 		}
 		return nil
 	}, nil)
 	if err != nil {
-		return fmt.Errorf("vault: master secret was rotated in the provider but the key epoch was not committed "+
-			"(%s holds the DEK wrapped under the new master; re-open the vault to complete): %w", newPath, err)
+		var cu *commitUnknownError
+		switch {
+		case newMaster == nil && !errors.As(err, &cu):
+			_ = os.Remove(newPath) // the provider was not touched
+			return err
+		case rewrapped:
+			// The only wrap under the new master is in .new: keep it, and
+			// stop using this handle so nothing overwrites it.
+			return v.failAfterCommit(fmt.Errorf("master secret rotated in the provider but the key epoch was not "+
+				"committed; %s holds the DEK wrapped under the new master, re-open the vault to complete: %w", newPath, err))
+		default:
+			return v.failAfterCommit(fmt.Errorf("master secret rotated in the provider but the DEK could not be "+
+				"re-wrapped; restore the previous master secret in the provider: %w", err))
+		}
 	}
 	if v.testBeforeSwap != nil {
 		if err := v.testBeforeSwap(); err != nil {
@@ -204,7 +224,11 @@ func (v *Vault) RotateDEK(ctx context.Context) error {
 // Re-checking under the rotation lock means concurrent writers that all
 // crossed the threshold trigger one rotation, not many.
 func (v *Vault) autoRotateDEK(ctx context.Context) error {
-	v.rotMu.Lock()
+	// A rotation already in progress resets the counters; do not wait for
+	// it (a rotate hook that writes a secret would otherwise deadlock).
+	if !v.rotMu.TryLock() {
+		return nil
+	}
 	defer v.rotMu.Unlock()
 	return v.rotateDEK(ctx, true)
 }
@@ -250,6 +274,7 @@ func (v *Vault) rotateDEK(ctx context.Context, onlyIfOver bool) error {
 		if newDEK, err = pending.Initialize(master, v.vaultID, newEpoch, v.kdfParams); err != nil {
 			return err
 		}
+		syncDir(filepath.Dir(newPath))
 		if err := v.rewriteAll(ctx, tx, newDEK); err != nil {
 			return err
 		}
@@ -264,6 +289,10 @@ func (v *Vault) rotateDEK(ctx context.Context, onlyIfOver bool) error {
 		return nil
 	}, func() { _ = os.Remove(newPath) })
 	if err != nil {
+		var cu *commitUnknownError
+		if errors.As(err, &cu) {
+			return v.failAfterCommit(err) // keep .new; Open decides from the epochs
+		}
 		return err
 	}
 	if v.testAfterCommit != nil {
@@ -339,25 +368,36 @@ func (v *Vault) inRotationTx(ctx context.Context, fn func(tx *sql.Tx, newEpoch i
 		strconv.FormatInt(newEpoch, 10)); err != nil {
 		return abort(fmt.Errorf("vault: rotation: %w", err))
 	}
+	// fn checks ctx itself: past this point a commit is not cancelled.
 	if err := fn(tx, newEpoch); err != nil {
-		return abort(err)
-	}
-	if err := ctx.Err(); err != nil {
 		return abort(err)
 	}
 	if cerr := tx.Commit(); cerr != nil {
 		// Did it commit anyway? Ask the database (the transaction is over
-		// either way, so this read cannot see uncommitted state).
-		if got, err := readEpoch(bg, v.aux); err == nil && got == newEpoch {
+		// either way, so this read cannot see uncommitted state). Only a
+		// confirmed rollback runs onAbort.
+		got, err := readEpoch(bg, v.aux)
+		switch {
+		case err == nil && got == newEpoch:
 			return newEpoch, nil
+		case err == nil && got == epoch:
+			if onAbort != nil {
+				onAbort()
+			}
+			return 0, fmt.Errorf("vault: rotation: commit: %w", cerr)
+		default:
+			return 0, &commitUnknownError{fmt.Errorf("vault: rotation: commit outcome unknown: %w", cerr)}
 		}
-		if onAbort != nil {
-			onAbort()
-		}
-		return 0, fmt.Errorf("vault: rotation: commit: %w", cerr)
 	}
 	return newEpoch, nil
 }
+
+// commitUnknownError: the rotation commit failed and its outcome could not
+// be read back. keychain.json.new is kept; Open decides from the epochs.
+type commitUnknownError struct{ err error }
+
+func (e *commitUnknownError) Error() string { return e.err.Error() }
+func (e *commitUnknownError) Unwrap() error { return e.err }
 
 type rewriteRow struct {
 	id         int64

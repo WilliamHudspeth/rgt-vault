@@ -8,12 +8,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
 	"rgt-vault-server/internal/approval"
+	"rgt-vault-server/internal/crypto"
 	"rgt-vault-server/internal/kdf"
 	"rgt-vault-server/internal/keychain"
 	"rgt-vault-server/internal/policy"
@@ -291,30 +293,96 @@ func (v *Vault) recoverRotation(ctx context.Context, master []byte, orig error) 
 	pending := keychain.New(newPath)
 	defer func() { _ = pending.Close() }()
 	epoch := v.keyEpoch
+	bump := false
 	dek, err := pending.Load(master, v.vaultID, epoch)
 	if err != nil && errors.Is(orig, keychain.ErrUnwrapFailed) {
-		if dek, err = pending.Load(master, v.vaultID, epoch+1); err == nil {
-			got, ierr := v.store.IncrementKeyEpoch(ctx)
-			if ierr == nil && got != epoch+1 {
-				ierr = fmt.Errorf("vault: key_epoch moved to %d during recovery", got)
-			}
-			if ierr != nil {
-				keychain.Wipe(dek)
-				return nil, nil, ierr
-			}
-			epoch = got
-		}
+		dek, err = pending.Load(master, v.vaultID, epoch+1)
+		bump = true
 	}
 	if err != nil {
 		return nil, nil, orig
 	}
+	// The .new key must actually decrypt the stored rows: a stale .new from
+	// a RotateDEK that never committed holds a DEK that encrypts nothing.
+	ok, verr := v.dekDecryptsRows(ctx, dek)
 	keychain.Wipe(dek)
+	if verr != nil {
+		return nil, nil, verr
+	}
+	if !ok {
+		return nil, nil, orig
+	}
+	if bump {
+		if err := v.casEpoch(ctx, epoch, epoch+1); err != nil {
+			return nil, nil, err
+		}
+		epoch++
+	}
 	v.keyEpoch = epoch
 	km, dek, err := v.installPending(master, epoch)
 	if err != nil {
 		return nil, nil, fmt.Errorf("vault: complete interrupted rotation: %w", err)
 	}
 	return km, dek, nil
+}
+
+// dekDecryptsRows reports whether dek decrypts the newest ACTIVE row, or,
+// with no ACTIVE row, any of the newest 50 rows. An empty vault matches.
+func (v *Vault) dekDecryptsRows(ctx context.Context, dek []byte) (bool, error) {
+	rows, err := v.aux.QueryContext(ctx,
+		"SELECT namespace, name, ciphertext, status FROM secrets WHERE dek_version = 1 "+
+			"ORDER BY (status = 'ACTIVE') DESC, id DESC LIMIT 50")
+	if err != nil {
+		return false, fmt.Errorf("vault: read secrets: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	seen := false
+	for rows.Next() {
+		var ns, name, status string
+		var ct []byte
+		if err := rows.Scan(&ns, &name, &ct, &status); err != nil {
+			return false, fmt.Errorf("vault: read secrets: %w", err)
+		}
+		seen = true
+		pt, err := crypto.Decrypt(ct, dek, v.aad(ns, name))
+		keychain.Wipe(pt)
+		if err == nil {
+			return true, nil
+		}
+		if status == store.StatusActive {
+			return false, nil // the current DEK always decrypts ACTIVE rows
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("vault: read secrets: %w", err)
+	}
+	return !seen, nil
+}
+
+// casEpoch moves key_epoch from old to new in one durable transaction; an
+// epoch already at new (another process recovered first) is accepted.
+func (v *Vault) casEpoch(ctx context.Context, old, new int64) error {
+	tx, err := v.aux.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("vault: recover epoch: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	cur, err := readEpoch(ctx, tx)
+	if err != nil {
+		return err
+	}
+	switch cur {
+	case new:
+		return nil
+	case old:
+		if _, err := tx.ExecContext(ctx, "UPDATE metadata SET value = ? WHERE key = 'key_epoch'",
+			strconv.FormatInt(new, 10)); err != nil {
+			return fmt.Errorf("vault: recover epoch: %w", err)
+		}
+		return tx.Commit()
+	default:
+		return fmt.Errorf("vault: key_epoch is %d during recovery (expected %d)", cur, old)
+	}
 }
 
 // Close wipes the key material and closes the database.

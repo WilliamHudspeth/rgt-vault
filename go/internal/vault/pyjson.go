@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,9 @@ import (
 // separators ", " and ": ") and the export document (json.dumps(d,
 // indent=2)). Both use ensure_ascii=True. Go's encoding/json differs
 // (no spaces, HTML escaping, raw UTF-8), so it cannot be used here.
+
+// jsonNumber is the RFC 8259 number grammar.
+var jsonNumber = regexp.MustCompile(`^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$`)
 
 // pyKV is one key/value of an ordered JSON object (Python dict insertion
 // order).
@@ -80,7 +84,7 @@ func pyEncode(b *strings.Builder, v any, indent, level int) {
 	case uint64:
 		b.WriteString(strconv.FormatUint(x, 10))
 	case json.Number:
-		if _, err := strconv.ParseFloat(x.String(), 64); err == nil {
+		if jsonNumber.MatchString(x.String()) {
 			b.WriteString(x.String())
 		} else {
 			pyQuote(b, x.String())

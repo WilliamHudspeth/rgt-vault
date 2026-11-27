@@ -251,6 +251,25 @@ func (v *Vault) unseal(ctx context.Context, req LeaseRequest) ([]byte, error) {
 
 	var pt []byte
 	err := v.withR(func() error {
+		// The approval ran unlocked: re-check what may have changed
+		// meanwhile (a write flagging 2FA, an import adding a honeytoken).
+		if err := v.checkHoneytoken(ctx, ns, name, agent, req.Purpose); err != nil {
+			return err
+		}
+		if !require2FA {
+			now, err := v.require2FA(ctx, ns, name, req.Version)
+			if err != nil {
+				return err
+			}
+			if now {
+				reason := "second factor required (flag changed during approval)"
+				if err := v.logAudit(ctx, "APPROVAL_DENIED", store.Name(name),
+					fmt.Sprintf("Agent: %s, Namespace: %s, Reason: %s", agent, ns, reason)); err != nil {
+					return err
+				}
+				return deniedErr("Agent '%s' approval denied for '%s' (%s/%s): %s", agent, name, ns, req.Purpose, reason)
+			}
+		}
 		ct, dekVersion, err := v.fetch(ctx, ns, name, req.Version)
 		if err != nil {
 			return err
