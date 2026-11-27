@@ -11,7 +11,7 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,6 +47,25 @@ var (
 )
 
 func main() {
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
+
+// run executes the CLI with the given arguments and streams and returns the
+// process exit code (0 ok, 1 error, 2 audit chain tampered).
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	root := newRootCmd(stdin, stdout)
+	root.SetArgs(args)
+	root.SetIn(stdin)
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	err := root.Execute()
+	if err != nil {
+		fmt.Fprintln(stderr, "Error:", err)
+	}
+	return exitCode(err)
+}
+
+func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 	var host, token string
 
 	rootCmd := &cobra.Command{
@@ -56,6 +75,8 @@ func main() {
 		Run: func(cmd *cobra.Command, args []string) {
 			_ = cmd.Help()
 		},
+		SilenceUsage:  true,
+		SilenceErrors: true,
 	}
 
 	rootCmd.PersistentFlags().StringVar(&host, "host", "http://localhost:8080", "server base URL")
@@ -63,6 +84,10 @@ func main() {
 
 	// Helper to get resolved token at command runtime.
 	getToken := func() string { return resolveToken(token) }
+	// newCLI resolves the per-invocation HTTP environment at run time.
+	newCLI := func() *cli {
+		return &cli{host: strings.TrimSuffix(host, "/"), token: getToken(), stdin: stdin, stdout: stdout, client: newHTTPClient()}
+	}
 
 	// -----------------------------------------------------------------------
 	// set  — write a secret (value from stdin or --value-file)
@@ -72,7 +97,9 @@ func main() {
 		Use:   "set <name>",
 		Short: "Store a secret (pipe value via stdin or --value-file)",
 		Args:  cobra.ExactArgs(1),
-		RunE:  func(cmd *cobra.Command, args []string) error { return runSet(host, getToken(), args[0], setNamespace, setAgent, setPurpose, setValueFile) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return newCLI().runSet(args[0], setNamespace, setAgent, setPurpose, setValueFile)
+		},
 	}
 	setCmd.Flags().StringVar(&setNamespace, "namespace", "default", "secret namespace")
 	setCmd.Flags().StringVar(&setAgent, "agent", "system", "agent identity")
@@ -87,7 +114,7 @@ func main() {
 		Use:   "get <name>",
 		Short: "Retrieve a secret value",
 		Args:  cobra.ExactArgs(1),
-		RunE:  func(cmd *cobra.Command, args []string) error { return runGet(host, getToken(), args[0], getNamespace, getAgent, getPurpose) },
+		RunE:  func(cmd *cobra.Command, args []string) error { return newCLI().runGet(args[0], getNamespace) },
 	}
 	getCmd.Flags().StringVar(&getNamespace, "namespace", "default", "secret namespace")
 	getCmd.Flags().StringVar(&getAgent, "agent", "system", "agent identity")
@@ -100,7 +127,7 @@ func main() {
 	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List secrets in a namespace",
-		RunE:  func(cmd *cobra.Command, args []string) error { return runList(host, getToken(), listNamespace, listAgent) },
+		RunE:  func(cmd *cobra.Command, args []string) error { return newCLI().runList(listNamespace) },
 	}
 	listCmd.Flags().StringVar(&listNamespace, "namespace", "default", "secret namespace")
 	listCmd.Flags().StringVar(&listAgent, "agent", "system", "agent identity")
@@ -113,7 +140,7 @@ func main() {
 		Use:   "revoke <name>",
 		Short: "Revoke (soft-delete) a secret",
 		Args:  cobra.ExactArgs(1),
-		RunE:  func(cmd *cobra.Command, args []string) error { return runRevoke(host, getToken(), args[0], revokeNamespace) },
+		RunE:  func(cmd *cobra.Command, args []string) error { return newCLI().runRevoke(args[0], revokeNamespace) },
 	}
 	revokeCmd.Flags().StringVar(&revokeNamespace, "namespace", "default", "secret namespace")
 
@@ -124,7 +151,9 @@ func main() {
 	simulateCmd := &cobra.Command{
 		Use:   "simulate",
 		Short: "Simulate a policy decision without accessing secrets",
-		RunE:  func(cmd *cobra.Command, args []string) error { return runSimulate(host, getToken(), simAgent, simNamespace, simPurpose, simAction) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return newCLI().runSimulate(simAgent, simNamespace, simPurpose, simAction)
+		},
 	}
 	simulateCmd.Flags().StringVar(&simAgent, "agent", "system", "agent identity")
 	simulateCmd.Flags().StringVar(&simNamespace, "namespace", "default", "secret namespace")
@@ -139,7 +168,7 @@ func main() {
 		Use:   "fingerprint <name>",
 		Short: "Print the ciphertext fingerprint of a secret (no plaintext exposed)",
 		Args:  cobra.ExactArgs(1),
-		RunE:  func(cmd *cobra.Command, args []string) error { return runFingerprint(host, getToken(), args[0], fpNamespace) },
+		RunE:  func(cmd *cobra.Command, args []string) error { return newCLI().runFingerprint(args[0], fpNamespace) },
 	}
 	fingerprintCmd.Flags().StringVar(&fpNamespace, "namespace", "default", "secret namespace")
 
@@ -150,7 +179,7 @@ func main() {
 	rotateCmd := &cobra.Command{
 		Use:   "rotate",
 		Short: "Rotate the master key or DEK",
-		RunE:  func(cmd *cobra.Command, args []string) error { return runRotate(host, getToken(), rotateTarget) },
+		RunE:  func(cmd *cobra.Command, args []string) error { return newCLI().runRotate(rotateTarget) },
 	}
 	rotateCmd.Flags().StringVar(&rotateTarget, "target", "master", "what to rotate: master | dek")
 
@@ -160,7 +189,7 @@ func main() {
 	verifyAuditCmd := &cobra.Command{
 		Use:   "verify-audit",
 		Short: "Verify the audit log hash chain",
-		RunE:  func(cmd *cobra.Command, args []string) error { return runVerifyAudit(host, getToken()) },
+		RunE:  func(cmd *cobra.Command, args []string) error { return newCLI().runVerifyAudit() },
 	}
 
 	// -----------------------------------------------------------------------
@@ -170,29 +199,37 @@ func main() {
 	auditCmd := &cobra.Command{
 		Use:   "audit",
 		Short: "Print audit log entries",
-		RunE:  func(cmd *cobra.Command, args []string) error { return runAudit(host, getToken(), auditLimit) },
+		RunE:  func(cmd *cobra.Command, args []string) error { return newCLI().runAudit(auditLimit) },
 	}
 	auditCmd.Flags().IntVar(&auditLimit, "limit", 100, "maximum entries to return")
 
 	// -----------------------------------------------------------------------
 	// init  — initialise a new vault token
 	// -----------------------------------------------------------------------
+	var initTokenFile string
 	initCmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialise vault credentials (creates server.token)",
-		RunE:  func(cmd *cobra.Command, args []string) error { return runInit() },
+		RunE:  func(cmd *cobra.Command, args []string) error { return runInit(initTokenFile, stdout) },
 	}
+
+	initCmd.Flags().StringVar(&initTokenFile, "token-file", defaultTokenPath(), "where to write the bearer token (0600)")
 
 	// -----------------------------------------------------------------------
 	// serve  — start the HTTP server
 	// -----------------------------------------------------------------------
-	var serveAddr string
+	var serveAddr, serveTokenFile string
+	var serveAllowNonLoopback bool
 	serveCmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start the rgt-vault HTTP server",
-		RunE:  func(cmd *cobra.Command, args []string) error { return runServe(serveAddr) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runServe(serveAddr, serveTokenFile, serveAllowNonLoopback, stdout)
+		},
 	}
-	serveCmd.Flags().StringVar(&serveAddr, "addr", ":8080", "listen address")
+	serveCmd.Flags().StringVar(&serveAddr, "addr", "127.0.0.1:8080", "listen address (loopback by default)")
+	serveCmd.Flags().BoolVar(&serveAllowNonLoopback, "allow-non-loopback", false, "permit a non-loopback --addr")
+	serveCmd.Flags().StringVar(&serveTokenFile, "token-file", defaultTokenPath(), "bearer token file (created 0600 if missing)")
 
 	// -----------------------------------------------------------------------
 	// status  — check if the server is reachable
@@ -200,7 +237,7 @@ func main() {
 	statusCmd := &cobra.Command{
 		Use:   "status",
 		Short: "Check server health",
-		RunE:  func(cmd *cobra.Command, args []string) error { return runStatus(host) },
+		RunE:  func(cmd *cobra.Command, args []string) error { return runStatus(strings.TrimSuffix(host, "/"), stdout) },
 	}
 
 	// -----------------------------------------------------------------------
@@ -209,7 +246,9 @@ func main() {
 	mcpCmd := &cobra.Command{
 		Use:   "mcp",
 		Short: "Run a stdio MCP server bridging to the vault backend",
-		RunE:  func(cmd *cobra.Command, args []string) error { return runMCP(host, getToken()) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runMCP(strings.TrimSuffix(host, "/"), getToken(), stdin, stdout)
+		},
 	}
 
 	// -----------------------------------------------------------------------
@@ -219,16 +258,14 @@ func main() {
 	tuiCmd := &cobra.Command{
 		Use:   "tui",
 		Short: "Launch the interactive dashboard (read-only by default)",
-		RunE:  func(cmd *cobra.Command, args []string) error { return runTUI(host, getToken(), tuiNamespace) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTUI(strings.TrimSuffix(host, "/"), getToken(), tuiNamespace)
+		},
 	}
 	tuiCmd.Flags().StringVar(&tuiNamespace, "namespace", "default", "namespace to display")
 
 	rootCmd.AddCommand(setCmd, getCmd, listCmd, revokeCmd, simulateCmd,
 		fingerprintCmd, rotateCmd, verifyAuditCmd, auditCmd,
 		initCmd, serveCmd, statusCmd, mcpCmd, tuiCmd)
-
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		log.Fatal(err)
-	}
+	return rootCmd
 }

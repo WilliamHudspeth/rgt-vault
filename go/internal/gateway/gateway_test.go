@@ -25,6 +25,7 @@ func makeGateway(t *testing.T, pyURL, goURL string, goPercent int) *Gateway {
 	if err != nil {
 		t.Fatalf("NewGateway(%q, %q, %d): %v", pyURL, goURL, goPercent, err)
 	}
+	gw.SetOperatorTokenStore(newOperatorStore(t))
 	return gw
 }
 
@@ -133,6 +134,7 @@ func TestAdminCutover_PutSetsPercent(t *testing.T) {
 
 	// PUT /__cutover?go=100
 	req := httptest.NewRequest(http.MethodPut, "/__cutover?go=100", nil)
+	req.Header.Set("Authorization", "Bearer "+testOperatorToken)
 	rr := httptest.NewRecorder()
 	gw.ServeHTTP(rr, req)
 
@@ -172,6 +174,7 @@ func TestAdminCutover_PostAlsoWorks(t *testing.T) {
 	gw := makeGateway(t, py.URL, go_.URL, 100)
 
 	req := httptest.NewRequest(http.MethodPost, "/__cutover?go=0", nil)
+	req.Header.Set("Authorization", "Bearer "+testOperatorToken)
 	rr := httptest.NewRecorder()
 	gw.ServeHTTP(rr, req)
 
@@ -193,6 +196,7 @@ func TestAdminCutover_MissingParam(t *testing.T) {
 	gw := makeGateway(t, py.URL, go_.URL, 0)
 
 	req := httptest.NewRequest(http.MethodPut, "/__cutover", nil)
+	req.Header.Set("Authorization", "Bearer "+testOperatorToken)
 	rr := httptest.NewRecorder()
 	gw.ServeHTTP(rr, req)
 
@@ -211,6 +215,7 @@ func TestAdminCutover_InvalidParam(t *testing.T) {
 	gw := makeGateway(t, py.URL, go_.URL, 0)
 
 	req := httptest.NewRequest(http.MethodPut, "/__cutover?go=banana", nil)
+	req.Header.Set("Authorization", "Bearer "+testOperatorToken)
 	rr := httptest.NewRecorder()
 	gw.ServeHTTP(rr, req)
 
@@ -237,6 +242,7 @@ func TestAdminStats_ReturnsValidJSON(t *testing.T) {
 	doRequest(gw)
 
 	req := httptest.NewRequest(http.MethodGet, "/__cutover/stats", nil)
+	req.Header.Set("Authorization", "Bearer "+testOperatorToken)
 	rr := httptest.NewRecorder()
 	gw.ServeHTTP(rr, req)
 
