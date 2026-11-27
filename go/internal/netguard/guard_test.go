@@ -113,7 +113,7 @@ func TestDial_LiteralIPsAreCheckedWithoutLookup(t *testing.T) {
 	res := newFakeResolver(nil)
 	rd := &recordingDial{}
 	g := newTestGuard(t, WithResolver(res), WithDialFunc(rd.dial))
-	for _, a := range []string{"127.0.0.1:80", "[::1]:80", "10.1.1.1:80", "169.254.169.254:80", "[::ffff:10.0.0.1]:80", "[fe80::1%eth0]:80"} {
+	for _, a := range []string{"127.0.0.1:80", "[::1]:80", "10.1.1.1:80", "169.254.169.254:80", "[::ffff:10.0.0.1]:80", "[fe80::1%eth0]:80", "0.0.0.0:80", "[::]:80", "224.0.0.1:80"} {
 		if _, err := g.DialContext(context.Background(), "tcp", a); !errors.Is(err, ErrBlocked) {
 			t.Errorf("%s: want refusal, got %v", a, err)
 		}

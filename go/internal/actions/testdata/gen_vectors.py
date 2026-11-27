@@ -24,7 +24,6 @@ import sys
 import urllib.parse
 from unittest import mock
 
-from rgt_vault.exceptions import ActionExecutionError
 from rgt_vault.server import actions as A
 
 FAKE_DNS = {
