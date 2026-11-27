@@ -6,6 +6,7 @@ package actions
 const (
 	devHard             = "link-local/metadata, multicast, unspecified and reserved targets stay blocked even with AllowPrivateNetwork (Python only blocks them without --allow-private-network)"
 	devCGNAT            = "CGNAT 100.64.0.0/10 and site-local fec0::/10 are blocked (Python ipaddress.is_private misses them)"
+	devTunnel           = "6to4 (2002::/16) and Teredo (2001::/32) tunnel addresses embed an IPv4 address (possibly a metadata one) and are blocked even with AllowPrivateNetwork (RGT-361)"
 	devNumeric          = "ambiguous numeric IPv4 hosts (decimal/octal/hex/short forms) are refused outright"
 	devPort0            = "port 0 is refused"
 	devUserinfo         = "credentials/userinfo in the URL are refused (Python accepts and silently uses the part after @)"
@@ -47,6 +48,8 @@ var urlDeviations = map[string]deviation{
 	"url-059-priv": {"reject", devHard},
 	"url-062-priv": {"reject", devHard},
 	"url-065-priv": {"reject", devHard},
+	"url-068-priv": {"reject", devTunnel},
+	"url-070-priv": {"reject", devTunnel},
 	"url-072-priv": {"reject", devHard},
 	"url-074-priv": {"reject", devNumeric},
 	"url-075-priv": {"reject", devNumeric},

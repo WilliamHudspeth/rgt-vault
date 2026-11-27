@@ -78,7 +78,10 @@ var v4Rules = []rule{
 	{mustPrefix("172.16.0.0/12"), "RFC1918 private", false},
 	{mustPrefix("192.0.0.0/24"), "IETF protocol assignments", false},
 	{mustPrefix("192.0.2.0/24"), "documentation", false},
+	{mustPrefix("192.31.196.0/24"), "AS112-v4 anycast", false},
+	{mustPrefix("192.52.193.0/24"), "AMT anycast", false},
 	{mustPrefix("192.88.99.0/24"), "6to4 relay anycast", false},
+	{mustPrefix("192.175.48.0/24"), "direct-delegation AS112 anycast", false},
 	{mustPrefix("192.168.0.0/16"), "RFC1918 private", false},
 	{mustPrefix("198.18.0.0/15"), "benchmarking", false},
 	{mustPrefix("198.51.100.0/24"), "documentation", false},
@@ -92,9 +95,17 @@ var v6Rules = []rule{
 	{mustPrefix("64:ff9b:1::/48"), "local-use NAT64 (may embed a metadata address)", true}, // inside ::/8, so it must come first
 	{mustPrefix("::/8"), "unspecified/reserved", true},
 	{mustPrefix("100::/64"), "discard-only", false},
-	{mustPrefix("2001::/23"), "IETF protocol/Teredo", false},
+	// 6to4 and Teredo embed IPv4 addresses (including metadata addresses such
+	// as 169.254.169.254) that this guard cannot judge; both are deprecated
+	// tunnels with no legitimate outbound target, so they are hard. The Teredo
+	// /32 sits inside the soft 2001::/23 and must come first (first match wins).
+	// The other IANA special-purpose blocks under 2001::/23 (benchmarking
+	// 2001:2::/48, AMT 2001:3::/32, AS112-v6 2001:4:112::/48, ORCHID
+	// 2001:10::/28 and 2001:20::/28) are already covered softly by that parent.
+	{mustPrefix("2001::/32"), "Teredo tunnel (embeds IPv4 addresses)", true},
+	{mustPrefix("2001::/23"), "IETF protocol assignments", false},
 	{mustPrefix("2001:db8::/32"), "documentation", false},
-	{mustPrefix("2002::/16"), "6to4", false},
+	{mustPrefix("2002::/16"), "6to4 tunnel (embeds an IPv4 address)", true},
 	{mustPrefix("3fff::/20"), "documentation", false},
 	{mustPrefix("5f00::/16"), "SRv6 SIDs", false},
 	{mustPrefix("fd00:ec2::/32"), "cloud metadata address (AWS IPv6)", true}, // inside ULA, so it must come first
@@ -193,8 +204,8 @@ func ClassifyIP(ip net.IP) (name string, hard, forbidden bool) {
 
 // CheckIP returns a *BlockedError when ip is in a forbidden range. With
 // allowPrivate the loopback, RFC1918, CGNAT, ULA and documentation ranges are
-// permitted; link-local (including 169.254.169.254), multicast, unspecified
-// and reserved space never are.
+// permitted; link-local (including 169.254.169.254), multicast, unspecified,
+// reserved space and the 6to4/Teredo tunnel ranges never are.
 func CheckIP(ip net.IP, allowPrivate bool) error {
 	addr, ok := fromNetIP(ip)
 	if !ok {
