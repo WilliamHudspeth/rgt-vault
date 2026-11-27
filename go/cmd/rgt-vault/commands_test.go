@@ -34,6 +34,7 @@ func isolateEnv(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("RGT_VAULT_TOKEN", "")
+	t.Setenv("RGT_VAULT_MCP_AGENT", "")
 }
 
 type seenRequest struct {
@@ -484,6 +485,55 @@ func TestMCPSubcommandUsesInjectedStreams(t *testing.T) {
 		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`+"\n"), &out, io.Discard)
 	if code != 0 || !strings.Contains(out.String(), `"id":1`) {
 		t.Fatalf("exit %d out %q", code, out.String())
+	}
+
+	// Backend error details go to the injected stderr, never to stdout.
+	srv, _ := recordingServer(t, 500, `{"detail":"INTERNAL-DETAIL /srv/state.db"}`)
+	var out2, errOut bytes.Buffer
+	call := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_secrets","arguments":{"namespace":"prod"}}}` + "\n"
+	code = run([]string{"--host", srv.URL, "--token", "x", "mcp"}, strings.NewReader(call), &out2, &errOut)
+	if code != 0 || !strings.Contains(out2.String(), "backend error: 500") || strings.Contains(out2.String(), "INTERNAL-DETAIL") {
+		t.Fatalf("exit %d stdout %q", code, out2.String())
+	}
+	if !strings.Contains(errOut.String(), "INTERNAL-DETAIL") || !strings.Contains(errOut.String(), "rgt-vault mcp: ") {
+		t.Errorf("backend detail not logged to injected stderr: %q", errOut.String())
+	}
+}
+
+func TestMCPAgentFlagAndEnv(t *testing.T) {
+	isolateEnv(t)
+	if got := mcpAgentLabel(""); got != "mcp-client" {
+		t.Errorf("default agent = %q", got)
+	}
+	t.Setenv("RGT_VAULT_MCP_AGENT", "env-bot")
+	if got := mcpAgentLabel(""); got != "env-bot" {
+		t.Errorf("env agent = %q", got)
+	}
+	if got := mcpAgentLabel("flag-bot"); got != "flag-bot" {
+		t.Errorf("flag agent = %q", got)
+	}
+
+	// The flag reaches execute_secret's request body.
+	srv, seen := recordingServer(t, 200, `{"ok":true}`)
+	call := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"execute_secret","arguments":{"namespace":"ns","name":"n","action":"a"}}}` + "\n"
+	var out bytes.Buffer
+	if code := run([]string{"--host", srv.URL, "--token", "x", "mcp", "--agent", "flag-bot"}, strings.NewReader(call), &out, io.Discard); code != 0 {
+		t.Fatalf("exit %d out %q", code, out.String())
+	}
+	if len(*seen) != 1 || (*seen)[0].Body["agent"] != "flag-bot" {
+		t.Fatalf("backend saw %+v", *seen)
+	}
+
+	// An invalid label is refused before serving.
+	var errOut bytes.Buffer
+	if code := run([]string{"--host", srv.URL, "mcp", "--agent", "bad agent"}, strings.NewReader(""), io.Discard, &errOut); code != 1 || !strings.Contains(errOut.String(), "agent label") {
+		t.Errorf("bad agent: exit %d stderr %q", code, errOut.String())
+	}
+	// ...and an invalid label from the env var is refused the same way.
+	t.Setenv("RGT_VAULT_MCP_AGENT", "bad agent")
+	errOut.Reset()
+	if code := run([]string{"--host", srv.URL, "mcp"}, strings.NewReader(""), io.Discard, &errOut); code != 1 || !strings.Contains(errOut.String(), "RGT_VAULT_MCP_AGENT") {
+		t.Errorf("bad env agent: exit %d stderr %q", code, errOut.String())
 	}
 }
 

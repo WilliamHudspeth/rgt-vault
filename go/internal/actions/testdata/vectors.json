@@ -1,0 +1,5611 @@
+{
+ "actions": [
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-minimal-pub",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-minimal-priv",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-full-pub",
+   "params": {
+    "max_tokens": 10,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m",
+    "temperature": 0.5
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-full-priv",
+   "params": {
+    "max_tokens": 10,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m",
+    "temperature": 0.5
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-max-tokens-edge-pub",
+   "params": {
+    "max_tokens": 1000000,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-max-tokens-edge-priv",
+   "params": {
+    "max_tokens": 1000000,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-max-tokens-over-pub",
+   "params": {
+    "max_tokens": 1000001,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-max-tokens-over-priv",
+   "params": {
+    "max_tokens": 1000001,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-max-tokens-zero-pub",
+   "params": {
+    "max_tokens": 0,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-max-tokens-zero-priv",
+   "params": {
+    "max_tokens": 0,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-max-tokens-neg-pub",
+   "params": {
+    "max_tokens": -1,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-max-tokens-neg-priv",
+   "params": {
+    "max_tokens": -1,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-max-tokens-bool-pub",
+   "params": {
+    "max_tokens": true,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-max-tokens-bool-priv",
+   "params": {
+    "max_tokens": true,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-max-tokens-str-pub",
+   "params": {
+    "max_tokens": "5",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-max-tokens-str-priv",
+   "params": {
+    "max_tokens": "5",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-max-tokens-frac-pub",
+   "params": {
+    "max_tokens": 1.5,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-max-tokens-frac-priv",
+   "params": {
+    "max_tokens": 1.5,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-max-tokens-null-pub",
+   "params": {
+    "max_tokens": null,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-max-tokens-null-priv",
+   "params": {
+    "max_tokens": null,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-temp-2-pub",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m",
+    "temperature": 2
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-temp-2-priv",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m",
+    "temperature": 2
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-temp-over-pub",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m",
+    "temperature": 2.01
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-temp-over-priv",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m",
+    "temperature": 2.01
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-temp-neg-pub",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m",
+    "temperature": -0.1
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-temp-neg-priv",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m",
+    "temperature": -0.1
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-temp-bool-pub",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m",
+    "temperature": true
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-temp-bool-priv",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m",
+    "temperature": true
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-temp-str-pub",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m",
+    "temperature": "1"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-temp-str-priv",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m",
+    "temperature": "1"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-model-empty-pub",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": ""
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-model-empty-priv",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": ""
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-model-int-pub",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": 5
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-model-int-priv",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": 5
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-model-missing-pub",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ]
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-model-missing-priv",
+   "params": {
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ]
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-messages-missing-pub",
+   "params": {
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-messages-missing-priv",
+   "params": {
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-messages-empty-pub",
+   "params": {
+    "messages": [],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-messages-empty-priv",
+   "params": {
+    "messages": [],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-messages-str-pub",
+   "params": {
+    "messages": "hi",
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-messages-str-priv",
+   "params": {
+    "messages": "hi",
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-message-str-pub",
+   "params": {
+    "messages": [
+     "hi"
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-message-str-priv",
+   "params": {
+    "messages": [
+     "hi"
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-role-missing-pub",
+   "params": {
+    "messages": [
+     {
+      "content": "x"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-role-missing-priv",
+   "params": {
+    "messages": [
+     {
+      "content": "x"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-role-empty-pub",
+   "params": {
+    "messages": [
+     {
+      "content": "x",
+      "role": ""
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-role-empty-priv",
+   "params": {
+    "messages": [
+     {
+      "content": "x",
+      "role": ""
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-content-missing-pub",
+   "params": {
+    "messages": [
+     {
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-content-missing-priv",
+   "params": {
+    "messages": [
+     {
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-content-empty-str-pub",
+   "params": {
+    "messages": [
+     {
+      "content": "",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-content-empty-str-priv",
+   "params": {
+    "messages": [
+     {
+      "content": "",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-content-list-pub",
+   "params": {
+    "messages": [
+     {
+      "content": [
+       {
+        "text": "x",
+        "type": "text"
+       }
+      ],
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-content-list-priv",
+   "params": {
+    "messages": [
+     {
+      "content": [
+       {
+        "text": "x",
+        "type": "text"
+       }
+      ],
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-content-int-pub",
+   "params": {
+    "messages": [
+     {
+      "content": 5,
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-content-int-priv",
+   "params": {
+    "messages": [
+     {
+      "content": 5,
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-extra-key-pub",
+   "params": {
+    "messages": [
+     {
+      "content": "x",
+      "name": "n",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-extra-key-priv",
+   "params": {
+    "messages": [
+     {
+      "content": "x",
+      "name": "n",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "id": "oa-base-public-pub",
+   "params": {
+    "base_url": "https://public.example",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "request": {
+    "data": "{\"model\": \"m\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/v1/chat/completions"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "id": "oa-base-public-priv",
+   "params": {
+    "base_url": "https://public.example",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "request": {
+    "data": "{\"model\": \"m\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/v1/chat/completions"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "id": "oa-base-slash-pub",
+   "params": {
+    "base_url": "https://public.example/",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "request": {
+    "data": "{\"model\": \"m\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/v1/chat/completions"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "id": "oa-base-slash-priv",
+   "params": {
+    "base_url": "https://public.example/",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "request": {
+    "data": "{\"model\": \"m\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/v1/chat/completions"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "id": "oa-base-path-pub",
+   "params": {
+    "base_url": "https://public.example/api",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "request": {
+    "data": "{\"model\": \"m\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/api/v1/chat/completions"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "id": "oa-base-path-priv",
+   "params": {
+    "base_url": "https://public.example/api",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "request": {
+    "data": "{\"model\": \"m\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/api/v1/chat/completions"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "id": "oa-base-query-pub",
+   "params": {
+    "base_url": "https://public.example/api?x=1",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "request": {
+    "data": "{\"model\": \"m\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/api?x=1/v1/chat/completions"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "id": "oa-base-query-priv",
+   "params": {
+    "base_url": "https://public.example/api?x=1",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "request": {
+    "data": "{\"model\": \"m\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/api?x=1/v1/chat/completions"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "id": "oa-base-frag-pub",
+   "params": {
+    "base_url": "https://public.example/#f",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "request": {
+    "data": "{\"model\": \"m\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/#f/v1/chat/completions"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "id": "oa-base-frag-priv",
+   "params": {
+    "base_url": "https://public.example/#f",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "request": {
+    "data": "{\"model\": \"m\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/#f/v1/chat/completions"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "id": "oa-base-http-pub",
+   "params": {
+    "base_url": "http://public.example",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "request": {
+    "data": "{\"model\": \"m\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "http://public.example/v1/chat/completions"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "id": "oa-base-http-priv",
+   "params": {
+    "base_url": "http://public.example",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "request": {
+    "data": "{\"model\": \"m\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "http://public.example/v1/chat/completions"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-base-loopback-pub",
+   "params": {
+    "base_url": "http://127.0.0.1:11434",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-base-loopback-priv",
+   "params": {
+    "base_url": "http://127.0.0.1:11434",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-base-internal-pub",
+   "params": {
+    "base_url": "https://internal.example",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-base-internal-priv",
+   "params": {
+    "base_url": "https://internal.example",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "id": "oa-base-userinfo-pub",
+   "params": {
+    "base_url": "https://u:p@public.example",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "request": {
+    "data": "{\"model\": \"m\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://u:p@public.example/v1/chat/completions"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "id": "oa-base-userinfo-priv",
+   "params": {
+    "base_url": "https://u:p@public.example",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "request": {
+    "data": "{\"model\": \"m\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://u:p@public.example/v1/chat/completions"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-base-int-pub",
+   "params": {
+    "base_url": 5,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-base-int-priv",
+   "params": {
+    "base_url": 5,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-base-null-pub",
+   "params": {
+    "base_url": null,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-base-null-priv",
+   "params": {
+    "base_url": null,
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "oa-base-empty-pub",
+   "params": {
+    "base_url": "",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "openai_chat",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "oa-base-empty-priv",
+   "params": {
+    "base_url": "",
+    "messages": [
+     {
+      "content": "hi",
+      "role": "user"
+     }
+    ],
+    "model": "m"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": false,
+   "id": "get-basic-pub",
+   "params": {
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": null,
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN"
+    },
+    "method": "GET",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": true,
+   "id": "get-basic-priv",
+   "params": {
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": null,
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN"
+    },
+    "method": "GET",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": false,
+   "id": "get-headers-pub",
+   "params": {
+    "headers": {
+     "X-A": "1"
+    },
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": null,
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "x-a": "1"
+    },
+    "method": "GET",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": true,
+   "id": "get-headers-priv",
+   "params": {
+    "headers": {
+     "X-A": "1"
+    },
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": null,
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "x-a": "1"
+    },
+    "method": "GET",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": false,
+   "id": "get-host-header-pub",
+   "params": {
+    "headers": {
+     "Host": "evil"
+    },
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": null,
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN"
+    },
+    "method": "GET",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": true,
+   "id": "get-host-header-priv",
+   "params": {
+    "headers": {
+     "Host": "evil"
+    },
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": null,
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN"
+    },
+    "method": "GET",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": false,
+   "id": "get-crlf-header-pub",
+   "params": {
+    "headers": {
+     "X-A": "a\r\nb: c"
+    },
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": null,
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "x-a": "a\r\nb: c"
+    },
+    "method": "GET",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": true,
+   "id": "get-crlf-header-priv",
+   "params": {
+    "headers": {
+     "X-A": "a\r\nb: c"
+    },
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": null,
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "x-a": "a\r\nb: c"
+    },
+    "method": "GET",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": false,
+   "id": "get-auth-header-pub",
+   "params": {
+    "headers": {
+     "Authorization": "Bearer evil"
+    },
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": null,
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN"
+    },
+    "method": "GET",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": true,
+   "id": "get-auth-header-priv",
+   "params": {
+    "headers": {
+     "Authorization": "Bearer evil"
+    },
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": null,
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN"
+    },
+    "method": "GET",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "get-headers-str-pub",
+   "params": {
+    "headers": "x",
+    "url": "https://public.example/x"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "get-headers-str-priv",
+   "params": {
+    "headers": "x",
+    "url": "https://public.example/x"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": false,
+   "id": "get-headers-null-pub",
+   "params": {
+    "headers": null,
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": null,
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN"
+    },
+    "method": "GET",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": true,
+   "id": "get-headers-null-priv",
+   "params": {
+    "headers": null,
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": null,
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN"
+    },
+    "method": "GET",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": false,
+   "id": "get-headers-empty-pub",
+   "params": {
+    "headers": {},
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": null,
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN"
+    },
+    "method": "GET",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": true,
+   "id": "get-headers-empty-priv",
+   "params": {
+    "headers": {},
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": null,
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN"
+    },
+    "method": "GET",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "get-url-empty-pub",
+   "params": {
+    "url": ""
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "get-url-empty-priv",
+   "params": {
+    "url": ""
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "get-url-missing-pub",
+   "params": {},
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "get-url-missing-priv",
+   "params": {},
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "get-url-int-pub",
+   "params": {
+    "url": 5
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "get-url-int-priv",
+   "params": {
+    "url": 5
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "get-loopback-pub",
+   "params": {
+    "url": "http://127.0.0.1/"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": true,
+   "id": "get-loopback-priv",
+   "params": {
+    "url": "http://127.0.0.1/"
+   },
+   "request": {
+    "data": null,
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN"
+    },
+    "method": "GET",
+    "url": "http://127.0.0.1/"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "get-metadata-pub",
+   "params": {
+    "url": "http://169.254.169.254/latest/meta-data/"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": true,
+   "id": "get-metadata-priv",
+   "params": {
+    "url": "http://169.254.169.254/latest/meta-data/"
+   },
+   "request": {
+    "data": null,
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN"
+    },
+    "method": "GET",
+    "url": "http://169.254.169.254/latest/meta-data/"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "get-internal-pub",
+   "params": {
+    "url": "https://internal.example/"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": true,
+   "id": "get-internal-priv",
+   "params": {
+    "url": "https://internal.example/"
+   },
+   "request": {
+    "data": null,
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN"
+    },
+    "method": "GET",
+    "url": "https://internal.example/"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "get-ftp-pub",
+   "params": {
+    "url": "ftp://public.example/"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "http_get_with_auth",
+   "allow_private": true,
+   "error_type": "ActionExecutionError",
+   "id": "get-ftp-priv",
+   "params": {
+    "url": "ftp://public.example/"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": false,
+   "id": "post-nobody-pub",
+   "params": {
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": true,
+   "id": "post-nobody-priv",
+   "params": {
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": false,
+   "id": "post-json-body-pub",
+   "params": {
+    "body": {
+     "a": 1
+    },
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "{\"a\": 1}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": true,
+   "id": "post-json-body-priv",
+   "params": {
+    "body": {
+     "a": 1
+    },
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "{\"a\": 1}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": false,
+   "id": "post-str-body-pub",
+   "params": {
+    "body": "raw text",
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "raw text",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": true,
+   "id": "post-str-body-priv",
+   "params": {
+    "body": "raw text",
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "raw text",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": false,
+   "id": "post-empty-str-body-pub",
+   "params": {
+    "body": "",
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": true,
+   "id": "post-empty-str-body-priv",
+   "params": {
+    "body": "",
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": false,
+   "id": "post-list-body-pub",
+   "params": {
+    "body": [
+     1,
+     2
+    ],
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "[1, 2]",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": true,
+   "id": "post-list-body-priv",
+   "params": {
+    "body": [
+     1,
+     2
+    ],
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "[1, 2]",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": false,
+   "id": "post-int-body-pub",
+   "params": {
+    "body": 5,
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "5",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": true,
+   "id": "post-int-body-priv",
+   "params": {
+    "body": 5,
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "5",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": false,
+   "id": "post-bool-body-pub",
+   "params": {
+    "body": true,
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "true",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": true,
+   "id": "post-bool-body-priv",
+   "params": {
+    "body": true,
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "true",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": false,
+   "id": "post-ct-upper-pub",
+   "params": {
+    "body": {
+     "a": 1
+    },
+    "headers": {
+     "Content-Type": "text/plain"
+    },
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "{\"a\": 1}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "text/plain"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": true,
+   "id": "post-ct-upper-priv",
+   "params": {
+    "body": {
+     "a": 1
+    },
+    "headers": {
+     "Content-Type": "text/plain"
+    },
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "{\"a\": 1}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "text/plain"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": false,
+   "id": "post-ct-lower-pub",
+   "params": {
+    "body": {
+     "a": 1
+    },
+    "headers": {
+     "content-type": "text/plain"
+    },
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "{\"a\": 1}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "text/plain"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": true,
+   "id": "post-ct-lower-priv",
+   "params": {
+    "body": {
+     "a": 1
+    },
+    "headers": {
+     "content-type": "text/plain"
+    },
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "{\"a\": 1}",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "text/plain"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": false,
+   "id": "post-ct-nobody-pub",
+   "params": {
+    "headers": {
+     "Content-Type": "text/plain"
+    },
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "text/plain"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": true,
+   "id": "post-ct-nobody-priv",
+   "params": {
+    "headers": {
+     "Content-Type": "text/plain"
+    },
+    "url": "https://public.example/x"
+   },
+   "request": {
+    "data": "",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "text/plain"
+    },
+    "method": "POST",
+    "url": "https://public.example/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": false,
+   "error_type": "ActionExecutionError",
+   "id": "post-private-pub",
+   "params": {
+    "body": "x",
+    "url": "http://10.0.0.1/x"
+   },
+   "stage": "action",
+   "verdict": "reject"
+  },
+  {
+   "action": "http_post_with_auth",
+   "allow_private": true,
+   "id": "post-private-priv",
+   "params": {
+    "body": "x",
+    "url": "http://10.0.0.1/x"
+   },
+   "request": {
+    "data": "x",
+    "headers": {
+     "authorization": "Bearer SECRET-TOKEN",
+     "content-type": "application/json"
+    },
+    "method": "POST",
+    "url": "http://10.0.0.1/x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "echo",
+   "allow_private": false,
+   "id": "echo-empty-pub",
+   "params": {},
+   "result": {
+    "leaked_secret": false,
+    "message": "lease ok; secret NOT returned",
+    "ok": true,
+    "secret_len": 12
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "echo",
+   "allow_private": true,
+   "id": "echo-empty-priv",
+   "params": {},
+   "result": {
+    "leaked_secret": false,
+    "message": "lease ok; secret NOT returned",
+    "ok": true,
+    "secret_len": 12
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "echo",
+   "allow_private": false,
+   "id": "echo-msg-pub",
+   "params": {
+    "message": "hello"
+   },
+   "result": {
+    "leaked_secret": false,
+    "message": "hello",
+    "ok": true,
+    "secret_len": 12
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "echo",
+   "allow_private": true,
+   "id": "echo-msg-priv",
+   "params": {
+    "message": "hello"
+   },
+   "result": {
+    "leaked_secret": false,
+    "message": "hello",
+    "ok": true,
+    "secret_len": 12
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "echo",
+   "allow_private": false,
+   "id": "echo-msg-int-pub",
+   "params": {
+    "message": 5
+   },
+   "result": {
+    "leaked_secret": false,
+    "message": 5,
+    "ok": true,
+    "secret_len": 12
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "echo",
+   "allow_private": true,
+   "id": "echo-msg-int-priv",
+   "params": {
+    "message": 5
+   },
+   "result": {
+    "leaked_secret": false,
+    "message": 5,
+    "ok": true,
+    "secret_len": 12
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "echo",
+   "allow_private": false,
+   "id": "echo-msg-null-pub",
+   "params": {
+    "message": null
+   },
+   "result": {
+    "leaked_secret": false,
+    "message": null,
+    "ok": true,
+    "secret_len": 12
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "echo",
+   "allow_private": true,
+   "id": "echo-msg-null-priv",
+   "params": {
+    "message": null
+   },
+   "result": {
+    "leaked_secret": false,
+    "message": null,
+    "ok": true,
+    "secret_len": 12
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "echo",
+   "allow_private": false,
+   "id": "echo-msg-obj-pub",
+   "params": {
+    "message": {
+     "a": [
+      1
+     ]
+    }
+   },
+   "result": {
+    "leaked_secret": false,
+    "message": {
+     "a": [
+      1
+     ]
+    },
+    "ok": true,
+    "secret_len": 12
+   },
+   "verdict": "accept"
+  },
+  {
+   "action": "echo",
+   "allow_private": true,
+   "id": "echo-msg-obj-priv",
+   "params": {
+    "message": {
+     "a": [
+      1
+     ]
+    }
+   },
+   "result": {
+    "leaked_secret": false,
+    "message": {
+     "a": [
+      1
+     ]
+    },
+    "ok": true,
+    "secret_len": 12
+   },
+   "verdict": "accept"
+  }
+ ],
+ "fake_dns": {
+  "127.0.0.1.nip.io": [
+   "127.0.0.1"
+  ],
+  "api.example.com": [
+   "93.184.216.34"
+  ],
+  "b\u00fccher.example": [
+   "93.184.216.34"
+  ],
+  "cgnat.example": [
+   "100.64.0.1"
+  ],
+  "internal.example": [
+   "10.0.0.5"
+  ],
+  "localhost": [
+   "127.0.0.1",
+   "::1"
+  ],
+  "loopback.example": [
+   "127.0.0.1"
+  ],
+  "mapped.example": [
+   "::ffff:10.0.0.1"
+  ],
+  "meta.example": [
+   "169.254.169.254"
+  ],
+  "mixed.example": [
+   "93.184.216.34",
+   "10.0.0.5"
+  ],
+  "public.example": [
+   "93.184.216.34"
+  ],
+  "public6.example": [
+   "2606:4700:4700::1111"
+  ],
+  "ula.example": [
+   "fd00::1"
+  ],
+  "xn--bcher-kva.example": [
+   "93.184.216.34"
+  ]
+ },
+ "headers": [
+  {
+   "headers": {},
+   "id": "empty",
+   "out": {},
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "Accept": "application/json",
+    "X-Trace": "abc"
+   },
+   "id": "plain",
+   "out": {
+    "Accept": "application/json",
+    "X-Trace": "abc"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "Host": "evil.example",
+    "X-A": "1"
+   },
+   "id": "host-dropped",
+   "out": {
+    "X-A": "1"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "host": "evil.example"
+   },
+   "id": "host-lower",
+   "out": {},
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "HoSt": "evil.example"
+   },
+   "id": "host-mixed",
+   "out": {},
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-N": 5
+   },
+   "id": "int-value",
+   "out": {
+    "X-N": "5"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-N": 1.5
+   },
+   "id": "float-value",
+   "out": {
+    "X-N": "1.5"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-B": true
+   },
+   "id": "bool-value",
+   "out": {
+    "X-B": "True"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-Z": null
+   },
+   "id": "null-value",
+   "out": {
+    "X-Z": "None"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-L": [
+     1,
+     2
+    ]
+   },
+   "id": "list-value",
+   "out": {
+    "X-L": "[1, 2]"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-O": {
+     "a": 1
+    }
+   },
+   "id": "obj-value",
+   "out": {
+    "X-O": "{'a': 1}"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-A": "ok\r\nInjected: 1"
+   },
+   "id": "crlf-value",
+   "out": {
+    "X-A": "ok\r\nInjected: 1"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-A": "ok\nInjected: 1"
+   },
+   "id": "lf-value",
+   "out": {
+    "X-A": "ok\nInjected: 1"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-A": "ok\u0000"
+   },
+   "id": "nul-value",
+   "out": {
+    "X-A": "ok\u0000"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-A\r\nInjected": "1"
+   },
+   "id": "crlf-name",
+   "out": {
+    "X-A\r\nInjected": "1"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X A": "1"
+   },
+   "id": "space-name",
+   "out": {
+    "X A": "1"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X:A": "1"
+   },
+   "id": "colon-name",
+   "out": {
+    "X:A": "1"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "": "1"
+   },
+   "id": "empty-name",
+   "out": {
+    "": "1"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "\uff38-A": "1"
+   },
+   "id": "unicode-name",
+   "out": {
+    "\uff38-A": "1"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-A": "h\u00e9llo"
+   },
+   "id": "unicode-value",
+   "out": {
+    "X-A": "h\u00e9llo"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-A": "a\tb"
+   },
+   "id": "tab-value",
+   "out": {
+    "X-A": "a\tb"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-A": "a\u0001b"
+   },
+   "id": "ctl-value",
+   "out": {
+    "X-A": "a\u0001b"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-A": "a\u007fb"
+   },
+   "id": "del-value",
+   "out": {
+    "X-A": "a\u007fb"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "Authorization": "Bearer attacker"
+   },
+   "id": "authorization",
+   "out": {
+    "Authorization": "Bearer attacker"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "authorization": "Bearer attacker"
+   },
+   "id": "authorization-lower",
+   "out": {
+    "authorization": "Bearer attacker"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "Proxy-Authorization": "x"
+   },
+   "id": "proxy-authorization",
+   "out": {
+    "Proxy-Authorization": "x"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "Content-Length": "5"
+   },
+   "id": "content-length",
+   "out": {
+    "Content-Length": "5"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "Transfer-Encoding": "chunked"
+   },
+   "id": "transfer-encoding",
+   "out": {
+    "Transfer-Encoding": "chunked"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "Connection": "close"
+   },
+   "id": "connection",
+   "out": {
+    "Connection": "close"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "Upgrade": "websocket"
+   },
+   "id": "upgrade",
+   "out": {
+    "Upgrade": "websocket"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "TE": "trailers"
+   },
+   "id": "te",
+   "out": {
+    "TE": "trailers"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "Expect": "100-continue"
+   },
+   "id": "expect",
+   "out": {
+    "Expect": "100-continue"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-Forwarded-For": "1.2.3.4"
+   },
+   "id": "x-forwarded-for",
+   "out": {
+    "X-Forwarded-For": "1.2.3.4"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "Forwarded": "for=1.2.3.4"
+   },
+   "id": "forwarded",
+   "out": {
+    "Forwarded": "for=1.2.3.4"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-Real-IP": "1.2.3.4"
+   },
+   "id": "x-real-ip",
+   "out": {
+    "X-Real-IP": "1.2.3.4"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "Cookie": "a=b"
+   },
+   "id": "cookie",
+   "out": {
+    "Cookie": "a=b"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "Content-Type": "text/plain"
+   },
+   "id": "content-type",
+   "out": {
+    "Content-Type": "text/plain"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-A": "1",
+    "x-a": "2"
+   },
+   "id": "dup-case",
+   "out": {
+    "X-A": "1",
+    "x-a": "2"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-A": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   "id": "long-value",
+   "out": {
+    "X-A": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX": "1"
+   },
+   "id": "long-name",
+   "out": {
+    "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX": "1"
+   },
+   "verdict": "accept"
+  },
+  {
+   "headers": {
+    "X-H0": "v",
+    "X-H1": "v",
+    "X-H10": "v",
+    "X-H11": "v",
+    "X-H12": "v",
+    "X-H13": "v",
+    "X-H14": "v",
+    "X-H15": "v",
+    "X-H16": "v",
+    "X-H17": "v",
+    "X-H18": "v",
+    "X-H19": "v",
+    "X-H2": "v",
+    "X-H20": "v",
+    "X-H21": "v",
+    "X-H22": "v",
+    "X-H23": "v",
+    "X-H24": "v",
+    "X-H25": "v",
+    "X-H26": "v",
+    "X-H27": "v",
+    "X-H28": "v",
+    "X-H29": "v",
+    "X-H3": "v",
+    "X-H30": "v",
+    "X-H31": "v",
+    "X-H32": "v",
+    "X-H33": "v",
+    "X-H34": "v",
+    "X-H35": "v",
+    "X-H36": "v",
+    "X-H37": "v",
+    "X-H38": "v",
+    "X-H39": "v",
+    "X-H4": "v",
+    "X-H5": "v",
+    "X-H6": "v",
+    "X-H7": "v",
+    "X-H8": "v",
+    "X-H9": "v"
+   },
+   "id": "many",
+   "out": {
+    "X-H0": "v",
+    "X-H1": "v",
+    "X-H10": "v",
+    "X-H11": "v",
+    "X-H12": "v",
+    "X-H13": "v",
+    "X-H14": "v",
+    "X-H15": "v",
+    "X-H16": "v",
+    "X-H17": "v",
+    "X-H18": "v",
+    "X-H19": "v",
+    "X-H2": "v",
+    "X-H20": "v",
+    "X-H21": "v",
+    "X-H22": "v",
+    "X-H23": "v",
+    "X-H24": "v",
+    "X-H25": "v",
+    "X-H26": "v",
+    "X-H27": "v",
+    "X-H28": "v",
+    "X-H29": "v",
+    "X-H3": "v",
+    "X-H30": "v",
+    "X-H31": "v",
+    "X-H32": "v",
+    "X-H33": "v",
+    "X-H34": "v",
+    "X-H35": "v",
+    "X-H36": "v",
+    "X-H37": "v",
+    "X-H38": "v",
+    "X-H39": "v",
+    "X-H4": "v",
+    "X-H5": "v",
+    "X-H6": "v",
+    "X-H7": "v",
+    "X-H8": "v",
+    "X-H9": "v"
+   },
+   "verdict": "accept"
+  },
+  {
+   "error_type": "ActionExecutionError",
+   "headers": [
+    [
+     "a",
+     "b"
+    ]
+   ],
+   "id": "not-object-list",
+   "verdict": "reject"
+  },
+  {
+   "error_type": "ActionExecutionError",
+   "headers": "X-A: 1",
+   "id": "not-object-str",
+   "verdict": "reject"
+  },
+  {
+   "error_type": "ActionExecutionError",
+   "headers": null,
+   "id": "not-object-null",
+   "verdict": "reject"
+  },
+  {
+   "error_type": "ActionExecutionError",
+   "headers": 3,
+   "id": "not-object-int",
+   "verdict": "reject"
+  },
+  {
+   "headers": {
+    "X-A_b.c~d`e|f": "1"
+   },
+   "id": "token-chars",
+   "out": {
+    "X-A_b.c~d`e|f": "1"
+   },
+   "verdict": "accept"
+  }
+ ],
+ "python": "3.12.3",
+ "source": "python/server/actions.py",
+ "urls": [
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-000-pub",
+   "url": "https://public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-000-priv",
+   "url": "https://public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-001-pub",
+   "url": "http://public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-001-priv",
+   "url": "http://public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-002-pub",
+   "url": "https://public.example:8443/p?q=1",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-002-priv",
+   "url": "https://public.example:8443/p?q=1",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-003-pub",
+   "url": "HTTPS://PUBLIC.EXAMPLE/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-003-priv",
+   "url": "HTTPS://PUBLIC.EXAMPLE/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-004-pub",
+   "url": "https://public.example./",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-004-priv",
+   "url": "https://public.example./",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-005-pub",
+   "url": "https://public.example//a//b",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-005-priv",
+   "url": "https://public.example//a//b",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-006-pub",
+   "url": "https://public.example/%2e%2e/x",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-006-priv",
+   "url": "https://public.example/%2e%2e/x",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-007-pub",
+   "url": "https://public.example/a?b=c#frag",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-007-priv",
+   "url": "https://public.example/a?b=c#frag",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-008-pub",
+   "url": "https://api.example.com/v1/x",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-008-priv",
+   "url": "https://api.example.com/v1/x",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-009-pub",
+   "url": "https://public6.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-009-priv",
+   "url": "https://public6.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-010-pub",
+   "url": "https://[2606:4700:4700::1111]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-010-priv",
+   "url": "https://[2606:4700:4700::1111]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-011-pub",
+   "url": "https://8.8.8.8/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-011-priv",
+   "url": "https://8.8.8.8/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-012-pub",
+   "url": "https://1.1.1.1:443/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-012-priv",
+   "url": "https://1.1.1.1:443/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-013-pub",
+   "url": "https://93.184.216.34/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-013-priv",
+   "url": "https://93.184.216.34/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-014-pub",
+   "url": "ftp://public.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-014-priv",
+   "url": "ftp://public.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-015-pub",
+   "url": "file:///etc/passwd",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-015-priv",
+   "url": "file:///etc/passwd",
+   "validation": "reject"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-016-pub",
+   "url": "gopher://public.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-016-priv",
+   "url": "gopher://public.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-017-pub",
+   "url": "javascript:alert(1)",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-017-priv",
+   "url": "javascript:alert(1)",
+   "validation": "reject"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-018-pub",
+   "url": "data:text/plain,hi",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-018-priv",
+   "url": "data:text/plain,hi",
+   "validation": "reject"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-019-pub",
+   "url": "//public.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-019-priv",
+   "url": "//public.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-020-pub",
+   "url": "public.example",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-020-priv",
+   "url": "public.example",
+   "validation": "reject"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-021-pub",
+   "url": "",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-021-priv",
+   "url": "",
+   "validation": "reject"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-022-pub",
+   "url": "   ",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-022-priv",
+   "url": "   ",
+   "validation": "reject"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-023-pub",
+   "url": "http:///",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-023-priv",
+   "url": "http:///",
+   "validation": "reject"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-024-pub",
+   "url": "https://",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-024-priv",
+   "url": "https://",
+   "validation": "reject"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-025-pub",
+   "url": "https://:443/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-025-priv",
+   "url": "https://:443/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-026-pub",
+   "url": "http:public.example",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-026-priv",
+   "url": "http:public.example",
+   "validation": "reject"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-027-pub",
+   "url": "https:/public.example",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-027-priv",
+   "url": "https:/public.example",
+   "validation": "reject"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-028-pub",
+   "url": "https:public.example",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-028-priv",
+   "url": "https:public.example",
+   "validation": "reject"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-029-pub",
+   "url": "ws://public.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-029-priv",
+   "url": "ws://public.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-030-pub",
+   "url": "wss://public.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-030-priv",
+   "url": "wss://public.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-031-pub",
+   "url": "http://127.0.0.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-031-priv",
+   "url": "http://127.0.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-032-pub",
+   "url": "http://127.0.0.1:8080/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-032-priv",
+   "url": "http://127.0.0.1:8080/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-033-pub",
+   "url": "http://127.255.255.254/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-033-priv",
+   "url": "http://127.255.255.254/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-034-pub",
+   "url": "http://0.0.0.0/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-034-priv",
+   "url": "http://0.0.0.0/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-035-pub",
+   "url": "http://0.1.2.3/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-035-priv",
+   "url": "http://0.1.2.3/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-036-pub",
+   "url": "http://169.254.169.254/latest/meta-data/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-036-priv",
+   "url": "http://169.254.169.254/latest/meta-data/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-037-pub",
+   "url": "http://169.254.0.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-037-priv",
+   "url": "http://169.254.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-038-pub",
+   "url": "http://10.0.0.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-038-priv",
+   "url": "http://10.0.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-039-pub",
+   "url": "http://172.16.0.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-039-priv",
+   "url": "http://172.16.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-040-pub",
+   "url": "http://172.31.255.255/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-040-priv",
+   "url": "http://172.31.255.255/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-041-pub",
+   "url": "http://172.32.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-041-priv",
+   "url": "http://172.32.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-042-pub",
+   "url": "http://192.168.1.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-042-priv",
+   "url": "http://192.168.1.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-043-pub",
+   "url": "http://100.64.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-043-priv",
+   "url": "http://100.64.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-044-pub",
+   "url": "http://100.127.255.255/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-044-priv",
+   "url": "http://100.127.255.255/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-045-pub",
+   "url": "http://224.0.0.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-045-priv",
+   "url": "http://224.0.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-046-pub",
+   "url": "http://255.255.255.255/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-046-priv",
+   "url": "http://255.255.255.255/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-047-pub",
+   "url": "http://240.0.0.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-047-priv",
+   "url": "http://240.0.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-048-pub",
+   "url": "http://198.18.0.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-048-priv",
+   "url": "http://198.18.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-049-pub",
+   "url": "http://192.0.2.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-049-priv",
+   "url": "http://192.0.2.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-050-pub",
+   "url": "http://198.51.100.7/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-050-priv",
+   "url": "http://198.51.100.7/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-051-pub",
+   "url": "http://203.0.113.9/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-051-priv",
+   "url": "http://203.0.113.9/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-052-pub",
+   "url": "http://192.0.0.8/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-052-priv",
+   "url": "http://192.0.0.8/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-053-pub",
+   "url": "http://[::1]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-053-priv",
+   "url": "http://[::1]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-054-pub",
+   "url": "http://[::]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-054-priv",
+   "url": "http://[::]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-055-pub",
+   "url": "http://[fe80::1]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-055-priv",
+   "url": "http://[fe80::1]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-056-pub",
+   "url": "http://[fd00::1]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-056-priv",
+   "url": "http://[fd00::1]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-057-pub",
+   "url": "http://[fc00::1]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-057-priv",
+   "url": "http://[fc00::1]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-058-pub",
+   "url": "http://[fec0::1]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-058-priv",
+   "url": "http://[fec0::1]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-059-pub",
+   "url": "http://[ff02::1]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-059-priv",
+   "url": "http://[ff02::1]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-060-pub",
+   "url": "http://[::ffff:127.0.0.1]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-060-priv",
+   "url": "http://[::ffff:127.0.0.1]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-061-pub",
+   "url": "http://[::ffff:10.0.0.1]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-061-priv",
+   "url": "http://[::ffff:10.0.0.1]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-062-pub",
+   "url": "http://[::ffff:169.254.169.254]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-062-priv",
+   "url": "http://[::ffff:169.254.169.254]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-063-pub",
+   "url": "http://[::ffff:8.8.8.8]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-063-priv",
+   "url": "http://[::ffff:8.8.8.8]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-064-pub",
+   "url": "http://[::ffff:7f00:1]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-064-priv",
+   "url": "http://[::ffff:7f00:1]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-065-pub",
+   "url": "http://[::127.0.0.1]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-065-priv",
+   "url": "http://[::127.0.0.1]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-066-pub",
+   "url": "http://[64:ff9b::7f00:1]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-066-priv",
+   "url": "http://[64:ff9b::7f00:1]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-067-pub",
+   "url": "http://[64:ff9b::808:808]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-067-priv",
+   "url": "http://[64:ff9b::808:808]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-068-pub",
+   "url": "http://[2002:7f00:1::]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-068-priv",
+   "url": "http://[2002:7f00:1::]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-069-pub",
+   "url": "http://[2001:db8::1]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-069-priv",
+   "url": "http://[2001:db8::1]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-070-pub",
+   "url": "http://[2001::1]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-070-priv",
+   "url": "http://[2001::1]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-071-pub",
+   "url": "http://[100::1]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-071-priv",
+   "url": "http://[100::1]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-072-pub",
+   "url": "http://[4000::1]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-072-priv",
+   "url": "http://[4000::1]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-073-pub",
+   "url": "http://[0:0:0:0:0:0:0:1]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-073-priv",
+   "url": "http://[0:0:0:0:0:0:0:1]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-074-pub",
+   "url": "http://2130706433/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-074-priv",
+   "url": "http://2130706433/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-075-pub",
+   "url": "http://0x7f000001/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-075-priv",
+   "url": "http://0x7f000001/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-076-pub",
+   "url": "http://0177.0.0.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-076-priv",
+   "url": "http://0177.0.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-077-pub",
+   "url": "http://127.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-077-priv",
+   "url": "http://127.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-078-pub",
+   "url": "http://0x7f.0.0.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-078-priv",
+   "url": "http://0x7f.0.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-079-pub",
+   "url": "http://017700000001/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-079-priv",
+   "url": "http://017700000001/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-080-pub",
+   "url": "http://127.0.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-080-priv",
+   "url": "http://127.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-081-pub",
+   "url": "http://0x7f.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-081-priv",
+   "url": "http://0x7f.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-082-pub",
+   "url": "http://1.1.1.1.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-082-priv",
+   "url": "http://1.1.1.1.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-083-pub",
+   "url": "http://08.0.0.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-083-priv",
+   "url": "http://08.0.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-084-pub",
+   "url": "http://134744072/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-084-priv",
+   "url": "http://134744072/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-085-pub",
+   "url": "http://0x08080808/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-085-priv",
+   "url": "http://0x08080808/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-086-pub",
+   "url": "https://localhost/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-086-priv",
+   "url": "https://localhost/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-087-pub",
+   "url": "https://LOCALHOST/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-087-priv",
+   "url": "https://LOCALHOST/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-088-pub",
+   "url": "https://localhost./",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-088-priv",
+   "url": "https://localhost./",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-089-pub",
+   "url": "https://internal.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-089-priv",
+   "url": "https://internal.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-090-pub",
+   "url": "https://loopback.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-090-priv",
+   "url": "https://loopback.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-091-pub",
+   "url": "https://mixed.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-091-priv",
+   "url": "https://mixed.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-092-pub",
+   "url": "https://meta.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-092-priv",
+   "url": "https://meta.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-093-pub",
+   "url": "https://cgnat.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-093-priv",
+   "url": "https://cgnat.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-094-pub",
+   "url": "https://ula.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-094-priv",
+   "url": "https://ula.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-095-pub",
+   "url": "https://mapped.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-095-priv",
+   "url": "https://mapped.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-096-pub",
+   "url": "https://127.0.0.1.nip.io/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-096-priv",
+   "url": "https://127.0.0.1.nip.io/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-097-pub",
+   "url": "https://nx.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-097-priv",
+   "url": "https://nx.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-098-pub",
+   "url": "https://public.example:0/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-098-priv",
+   "url": "https://public.example:0/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-099-pub",
+   "url": "https://public.example:1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-099-priv",
+   "url": "https://public.example:1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-100-pub",
+   "url": "https://public.example:65535/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-100-priv",
+   "url": "https://public.example:65535/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ValueError",
+   "id": "url-101-pub",
+   "url": "https://public.example:65536/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "ValueError",
+   "id": "url-101-priv",
+   "url": "https://public.example:65536/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ValueError",
+   "id": "url-102-pub",
+   "url": "https://public.example:99999/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "ValueError",
+   "id": "url-102-priv",
+   "url": "https://public.example:99999/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ValueError",
+   "id": "url-103-pub",
+   "url": "https://public.example:abc/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "ValueError",
+   "id": "url-103-priv",
+   "url": "https://public.example:abc/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ValueError",
+   "id": "url-104-pub",
+   "url": "https://public.example:-1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "ValueError",
+   "id": "url-104-priv",
+   "url": "https://public.example:-1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-105-pub",
+   "url": "https://public.example:/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-105-priv",
+   "url": "https://public.example:/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ValueError",
+   "id": "url-106-pub",
+   "url": "https://public.example:80:80/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "ValueError",
+   "id": "url-106-priv",
+   "url": "https://public.example:80:80/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ValueError",
+   "id": "url-107-pub",
+   "url": "https://public.example:+443/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "ValueError",
+   "id": "url-107-priv",
+   "url": "https://public.example:+443/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-108-pub",
+   "url": "https://public.example:0443/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-108-priv",
+   "url": "https://public.example:0443/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-109-pub",
+   "url": "https://[2606:4700:4700::1111]:8443/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-109-priv",
+   "url": "https://[2606:4700:4700::1111]:8443/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ValueError",
+   "id": "url-110-pub",
+   "url": "https://127.0.0.1:65536/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "ValueError",
+   "id": "url-110-priv",
+   "url": "https://127.0.0.1:65536/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-111-pub",
+   "url": "https://user:pass@public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-111-priv",
+   "url": "https://user:pass@public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-112-pub",
+   "url": "https://user@public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-112-priv",
+   "url": "https://user@public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-113-pub",
+   "url": "https://@public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-113-priv",
+   "url": "https://@public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-114-pub",
+   "url": "https://public.example@internal.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-114-priv",
+   "url": "https://public.example@internal.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-115-pub",
+   "url": "https://internal.example@public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-115-priv",
+   "url": "https://internal.example@public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-116-pub",
+   "url": "https://user@10.0.0.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-116-priv",
+   "url": "https://user@10.0.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-117-pub",
+   "url": "https://a@b@public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-117-priv",
+   "url": "https://a@b@public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-118-pub",
+   "url": "https://public.example\\@internal.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-118-priv",
+   "url": "https://public.example\\@internal.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-119-pub",
+   "url": "https://internal.example\\@public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-119-priv",
+   "url": "https://internal.example\\@public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-120-pub",
+   "url": "https://internal.example#@public.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-120-priv",
+   "url": "https://internal.example#@public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-121-pub",
+   "url": "https://public.example#.internal.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-121-priv",
+   "url": "https://public.example#.internal.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-122-pub",
+   "url": "https://public.example?@internal.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-122-priv",
+   "url": "https://public.example?@internal.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-123-pub",
+   "url": "https://public.example:443@internal.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-123-priv",
+   "url": "https://public.example:443@internal.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-124-pub",
+   "url": "https://:@public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-124-priv",
+   "url": "https://:@public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-125-pub",
+   "url": "https://b\u00fccher.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-125-priv",
+   "url": "https://b\u00fccher.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-126-pub",
+   "url": "https://xn--bcher-kva.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-126-priv",
+   "url": "https://xn--bcher-kva.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-127-pub",
+   "url": "https://public\u3002example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-127-priv",
+   "url": "https://public\u3002example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-128-pub",
+   "url": "https://pub\u200blic.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-128-priv",
+   "url": "https://pub\u200blic.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-129-pub",
+   "url": "https://\uff50\uff55\uff42\uff4c\uff49\uff43.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-129-priv",
+   "url": "https://\uff50\uff55\uff42\uff4c\uff49\uff43.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-130-pub",
+   "url": "https://\uff11\uff12\uff17.0.0.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-130-priv",
+   "url": "https://\uff11\uff12\uff17.0.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-131-pub",
+   "url": "https://xn--nxasmq6b.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-131-priv",
+   "url": "https://xn--nxasmq6b.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-132-pub",
+   "url": "https://xn--/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-132-priv",
+   "url": "https://xn--/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-133-pub",
+   "url": "http://[fe80::1%25eth0]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-133-priv",
+   "url": "http://[fe80::1%25eth0]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-134-pub",
+   "url": "http://[fe80::1%eth0]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-134-priv",
+   "url": "http://[fe80::1%eth0]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-135-pub",
+   "url": "http://[::1%25lo]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-135-priv",
+   "url": "http://[::1%25lo]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-136-pub",
+   "url": "https://[2606:4700:4700::1111%25eth0]/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-136-priv",
+   "url": "https://[2606:4700:4700::1111%25eth0]/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-137-pub",
+   "url": "https://public%2eexample/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-137-priv",
+   "url": "https://public%2eexample/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-138-pub",
+   "url": "https://%31%32%37.0.0.1/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-138-priv",
+   "url": "https://%31%32%37.0.0.1/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-139-pub",
+   "url": "https://public.example%00/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-139-priv",
+   "url": "https://public.example%00/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-140-pub",
+   "url": "https://pub%6Cic.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-140-priv",
+   "url": "https://pub%6Cic.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-141-pub",
+   "url": "https://public.example/\r\nHost: evil",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-141-priv",
+   "url": "https://public.example/\r\nHost: evil",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-142-pub",
+   "url": "https://pub\nlic.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-142-priv",
+   "url": "https://pub\nlic.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-143-pub",
+   "url": "https://public.example/ path",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-143-priv",
+   "url": "https://public.example/ path",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-144-pub",
+   "url": "\thttps://public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-144-priv",
+   "url": "\thttps://public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-145-pub",
+   "url": " https://public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-145-priv",
+   "url": " https://public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-146-pub",
+   "url": "https://public.example/\t",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-146-priv",
+   "url": "https://public.example/\t",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-147-pub",
+   "url": "https://public.example\u0000.evil/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-147-priv",
+   "url": "https://public.example\u0000.evil/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-148-pub",
+   "url": "https://public.example/\u007f",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-148-priv",
+   "url": "https://public.example/\u007f",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-149-pub",
+   "url": "https://public.example/\u00e9",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-149-priv",
+   "url": "https://public.example/\u00e9",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-150-pub",
+   "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-150-priv",
+   "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "UnicodeError",
+   "id": "url-151-pub",
+   "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "UnicodeError",
+   "id": "url-151-priv",
+   "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-152-pub",
+   "url": "https://a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-152-priv",
+   "url": "https://a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-153-pub",
+   "url": "https://public.example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-153-priv",
+   "url": "https://public.example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "accept",
+   "id": "url-154-pub",
+   "url": "https://public.example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "validation": "accept"
+  },
+  {
+   "allow_private": true,
+   "e2e": "accept",
+   "id": "url-154-priv",
+   "url": "https://public.example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-155-pub",
+   "url": "https://-public.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-155-priv",
+   "url": "https://-public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-156-pub",
+   "url": "https://public-.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-156-priv",
+   "url": "https://public-.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-157-pub",
+   "url": "https://pub_lic.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-157-priv",
+   "url": "https://pub_lic.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "UnicodeError",
+   "id": "url-158-pub",
+   "url": "https://public..example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "UnicodeError",
+   "id": "url-158-priv",
+   "url": "https://public..example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "UnicodeError",
+   "id": "url-159-pub",
+   "url": "https://.public.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "UnicodeError",
+   "id": "url-159-priv",
+   "url": "https://.public.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "UnicodeError",
+   "id": "url-160-pub",
+   "url": "https://public.example../",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "UnicodeError",
+   "id": "url-160-priv",
+   "url": "https://public.example../",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-161-pub",
+   "url": "https://pub lic.example/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-161-priv",
+   "url": "https://pub lic.example/",
+   "validation": "accept"
+  },
+  {
+   "allow_private": false,
+   "e2e": "reject",
+   "error_type": "ActionExecutionError",
+   "id": "url-162-pub",
+   "url": "https://public.example!/",
+   "validation": "reject"
+  },
+  {
+   "allow_private": true,
+   "e2e": "reject",
+   "e2e_error_type": "gaierror",
+   "id": "url-162-priv",
+   "url": "https://public.example!/",
+   "validation": "accept"
+  }
+ ]
+}
