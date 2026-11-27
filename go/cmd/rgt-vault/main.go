@@ -247,7 +247,7 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 		Use:   "mcp",
 		Short: "Run a stdio MCP server bridging to the vault backend",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runMCP(strings.TrimSuffix(host, "/"), getToken(), stdin, stdout)
+			return runMCP(strings.TrimSuffix(host, "/"), getToken(), stdin, stdout, cmd.ErrOrStderr())
 		},
 	}
 

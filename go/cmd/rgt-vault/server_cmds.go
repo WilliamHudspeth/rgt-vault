@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/netip"
@@ -117,8 +118,12 @@ func runServe(addr, tokenPath string, allowNonLoopback bool, out io.Writer) erro
 	return srv.ListenAndServe()
 }
 
-func runMCP(host, token string, in io.Reader, out io.Writer) error {
-	return mcp.NewServer(host, token).Serve(in, out)
+// runMCP serves MCP on in/out. out is the protocol channel; backend error
+// details go to errOut (the command's stderr), never to out.
+func runMCP(host, token string, in io.Reader, out, errOut io.Writer) error {
+	s := mcp.NewServer(host, token)
+	s.SetLogger(log.New(errOut, "rgt-vault mcp: ", log.LstdFlags))
+	return s.Serve(in, out)
 }
 
 func runTUI(host, token, namespace string) error {
