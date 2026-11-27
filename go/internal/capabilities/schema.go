@@ -63,8 +63,14 @@ func dedupe(s []string) []string {
 // validator (no jsonschema installed) does: "required" fields must be
 // present; with "additionalProperties": false unknown keys are rejected;
 // a property's "type" of string / integer / boolean / object / array is
-// checked (other types and keywords are not enforced). Keys are checked in
-// sorted order (Python: payload order).
+// checked (other types and keywords are not enforced).
+//
+// Deliberate difference: payload keys are checked in sorted order. Python
+// checks them in payload (insertion) order, which a Go map does not keep.
+// The outcome is the same (any violation rejects the payload with a
+// ValidationError, and "required" is still checked first in schema order);
+// only WHICH violation the message names can differ when a payload breaks
+// several rules. Sorting makes that choice deterministic.
 type JSONSchema map[string]any
 
 // Validate implements Schema.

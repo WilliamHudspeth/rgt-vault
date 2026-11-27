@@ -184,8 +184,8 @@ func TestFromConfig(t *testing.T) {
 		{Config{}, "off", ""},
 		{Config{Mode: "OFF", FreezeFile: ff}, "off", ""},
 		{Config{Mode: "log"}, "log", ""},
-		{Config{Mode: "webhook", Webhook: &WebhookConfig{URL: "http://127.0.0.1:9/hook", TimeoutSeconds: 1}}, "webhook:http://127.0.0.1:9/hook", ""},
-		{Config{Mode: "webhook", Webhook: &WebhookConfig{URL: "https://user:pw@harness.example/h"}}, "webhook:https://user:xxxxx@harness.example/h", ""},
+		{Config{Mode: "webhook", Webhook: &WebhookConfig{URL: "http://127.0.0.1:9/hook", TimeoutSeconds: 1}}, "webhook:http://127.0.0.1:9", ""},
+		{Config{Mode: "webhook", Webhook: &WebhookConfig{URL: "https://user:pw@harness.example/h"}}, "webhook:https://harness.example", ""},
 		{Config{Mode: "webhook"}, "", "webhook hook requires config['webhook']['url']"},
 		{Config{Mode: "webhook", Webhook: &WebhookConfig{URL: "ftp://x"}}, "", "webhook hook url must be an absolute http(s) URL"},
 		{Config{Mode: "webhook", Webhook: &WebhookConfig{URL: "http://x", TimeoutSeconds: -1}}, "", "webhook timeout_seconds must be between 0 and 3600"},
@@ -244,10 +244,10 @@ func TestRedact(t *testing.T) {
 		t.Fatalf("nested: %v", n)
 	}
 	l := n["list"].([]any)
-	if l[0] != "short" || l[1] != "ABCD..."+Redacted {
+	if l[0] != "short" || l[1] != Redacted {
 		t.Fatalf("list: %v", l)
 	}
-	if out["blob"] != "<3 bytes redacted>" || out["strs"].([]any)[0] != "0123..."+Redacted {
+	if out["blob"] != "<3 bytes redacted>" || out["strs"].([]any)[0] != Redacted {
 		t.Fatalf("blob/strs: %v %v", out["blob"], out["strs"])
 	}
 	if h := out["hdrs"].(map[string]any); h["Authorization"] != Redacted || h["accept"] != "json" {

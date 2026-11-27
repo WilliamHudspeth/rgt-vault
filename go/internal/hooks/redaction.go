@@ -28,7 +28,8 @@ const Redacted = "[REDACTED]"
 func IsHighEntropy(s string) bool { return len(s) > 24 && highEntropy.MatchString(s) }
 
 // Redact returns a copy of v with sensitive keys, high-entropy strings and
-// byte slices redacted (python redact). It never mutates v.
+// byte slices redacted (python redact). It never mutates v. Unlike Python,
+// a high-entropy string is replaced entirely by [REDACTED], with no prefix.
 func Redact(v any) any {
 	switch x := v.(type) {
 	case map[string]any:
@@ -65,7 +66,10 @@ func Redact(v any) any {
 		return out
 	case string:
 		if IsHighEntropy(x) {
-			return x[:4] + "..." + Redacted
+			// Deliberate difference from Python, which keeps the first four
+			// characters (x[:4] + "...[REDACTED]"): any prefix of a key
+			// narrows it (key type, issuer, brute-force space).
+			return Redacted
 		}
 		return x
 	case []byte:

@@ -572,11 +572,16 @@ func TestExecuteCapabilityEdgeCases(t *testing.T) {
 	req := CapabilityRequest{Capability: "secrets.echo", Agent: "a", Token: tok}
 
 	v := newCapVault(t, nil, fakeRegistry{"secrets.echo": echoSpec()}, nilVerifier{})
-	if _, err := v.ExecuteCapability(ctx, req); !errors.Is(err, ErrPolicyDenied) {
+	if _, err := v.ExecuteCapability(ctx, req); !errors.Is(err, ErrPolicyDenied) || !errors.Is(err, ErrTokenVerifier) ||
+		err.Error() != "capability token rejected: token verifier returned no token" {
 		t.Fatalf("nil token from verifier: %v", err)
 	}
-	if rows := lastAudit(t, v, 1); !strings.Contains(rows[0].Details.String, `"reason": "token: TokenError"`) {
+	if rows := lastAudit(t, v, 1); rows[0].Details.String !=
+		`{"agent": "a", "capability": "secrets.echo", "capability_version": 1, "reason": "token: TokenVerifierError"}` {
 		t.Fatalf("row = %s", rows[0].Details.String)
+	}
+	if n := v.AuthFailureLimiter().Count("a"); n != 0 {
+		t.Fatalf("a verifier fault must not count as the agent's failure: %d", n)
 	}
 	if v.TokenVerifier() == nil || v.Capabilities() == nil {
 		t.Fatal("accessors")
@@ -653,5 +658,51 @@ func TestExecuteCapabilityReviewFixes(t *testing.T) {
 	_, err := v.ExecuteCapability(ctx, signedReq(t, ver, req))
 	if err == nil || strings.Contains(err.Error(), "hunter2") {
 		t.Fatalf("panic leaked: %v", err)
+	}
+}
+
+// TestAuthFailureLockoutBoundary pins Python's RGT-277 boundary
+// (python/vault.py: `if self.auth_failure_limiter.count(agent_id) >=
+// self.auth_failure_limiter.max_requests` before verifying, record() after a
+// failed verify): AuthFailureLimit failed verifications are allowed in the
+// window, the next attempt is refused without being verified, and a valid
+// token does not lift the lockout.
+func TestAuthFailureLockoutBoundary(t *testing.T) {
+	ctx := context.Background()
+	now := time.Unix(1_900_000_000, 0)
+	ver := verifierAt(t, now)
+	v := newCapVault(t, nil, fakeRegistry{"secrets.echo": echoSpec()}, ver)
+	bad := CapabilityRequest{Capability: "secrets.echo", Agent: "a", Token: "x.y"}
+	for i := 0; i < AuthFailureLimit-1; i++ {
+		v.authFailureLimiter.Record("a")
+	}
+	// Failure number AuthFailureLimit is still verified (and recorded).
+	if _, err := v.ExecuteCapability(ctx, bad); !errors.Is(err, ErrPolicyDenied) {
+		t.Fatal(err)
+	}
+	if rows := lastAudit(t, v, 1); !strings.Contains(rows[0].Details.String, `"reason": "token: TokenMalformedError"`) {
+		t.Fatalf("attempt %d must be verified: %s", AuthFailureLimit, rows[0].Details.String)
+	}
+	if n := v.AuthFailureLimiter().Count("a"); n != AuthFailureLimit {
+		t.Fatalf("count = %d, want %d", n, AuthFailureLimit)
+	}
+	// The next attempt is refused before verification, even with a valid token.
+	good := CapabilityRequest{Capability: "secrets.echo", Agent: "a", Token: signT(t, ver, "a", "secrets.echo", 1, nil)}
+	for _, r := range []CapabilityRequest{bad, good} {
+		_, err := v.ExecuteCapability(ctx, r)
+		if err == nil || err.Error() != "agent 'a' locked out: too many failed credential attempts" {
+			t.Fatalf("locked-out attempt: %v", err)
+		}
+		if rows := lastAudit(t, v, 1); !strings.Contains(rows[0].Details.String, `"reason": "too many failed credential verifications"`) {
+			t.Fatalf("row = %s", rows[0].Details.String)
+		}
+	}
+	if n := v.AuthFailureLimiter().Count("a"); n != AuthFailureLimit {
+		t.Fatalf("a refused attempt must not be recorded again: %d", n)
+	}
+	// Another agent is unaffected.
+	other := CapabilityRequest{Capability: "secrets.echo", Agent: "b", Token: signT(t, ver, "b", "secrets.echo", 1, nil)}
+	if _, err := v.ExecuteCapability(ctx, other); err != nil {
+		t.Fatalf("other agent: %v", err)
 	}
 }

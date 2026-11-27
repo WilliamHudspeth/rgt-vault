@@ -67,12 +67,14 @@ func NewWebhookHook(rawURL string, opts ...WebhookOption) (*WebhookHook, error) 
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, validationErr("webhook hook url must be an absolute http(s) URL")
 	}
-	// The hook id goes into every audit row: drop the query and fragment
-	// (they may carry an API key) and mask a URL password.
-	idURL := *u
-	idURL.RawQuery, idURL.ForceQuery, idURL.Fragment, idURL.RawFragment = "", false, "", ""
+	// The hook id goes into every audit row and denial message, so it is
+	// only scheme://host[:port]. Everything else may carry a credential:
+	// userinfo (a password, or a token used as the user name), the query,
+	// the fragment, and the path (Slack/Teams-style webhook URLs embed
+	// their secret there). Python used the full URL.
+	idURL := url.URL{Scheme: u.Scheme, Host: u.Host}
 	h := &WebhookHook{
-		Base:    NewBase("webhook:" + idURL.Redacted()),
+		Base:    NewBase("webhook:" + idURL.String()),
 		url:     rawURL,
 		timeout: DefaultWebhookTimeout,
 	}
