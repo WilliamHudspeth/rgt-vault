@@ -1,0 +1,48 @@
+package vault
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	"rgt-vault-server/internal/policy"
+	"rgt-vault-server/internal/validation"
+)
+
+// Simulate evaluates the ABAC policy without touching any secret (python
+// simulate): validation, hook "simulate", a SIMULATION_RUN audit row, then
+// the decision. An empty action means "read" (Python's default).
+func (v *Vault) Simulate(ctx context.Context, agent, namespace, purpose, action string) (policy.Decision, error) {
+	if err := validateParams(pAgent(agent), pNamespace(namespace), pPurpose(purpose, true)); err != nil {
+		return policy.Decision{}, err
+	}
+	if action == "" {
+		action = "read"
+	}
+	if err := validateParam("action", action, MaxPurposeChars, false); err != nil {
+		return policy.Decision{}, err
+	}
+	if _, err := validation.ValidateFreeText(action, MaxPurposeChars); err != nil {
+		return policy.Decision{}, err
+	}
+	if err := v.hookConsult(ctx, OpSimulate, agent, namespace, purpose, nil); err != nil {
+		return policy.Decision{}, err
+	}
+	if err := v.withR(func() error {
+		return v.logAudit(ctx, "SIMULATION_RUN", sql.NullString{},
+			fmt.Sprintf("Agent: %s, Namespace: %s, Action: %s", agent, namespace, action))
+	}); err != nil {
+		return policy.Decision{}, err
+	}
+	return v.engine.Evaluate(agent, namespace, purpose, action), nil
+}
+
+// Explain is Simulate rendered as Python's explain text:
+// "Access: ALLOWED|DENIED\nReason: ...\nMatched Rule: <json>|None".
+func (v *Vault) Explain(ctx context.Context, agent, namespace, purpose, action string) (string, error) {
+	d, err := v.Simulate(ctx, agent, namespace, purpose, action)
+	if err != nil {
+		return "", err
+	}
+	return d.Explain(), nil
+}
