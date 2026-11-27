@@ -429,7 +429,7 @@ func (mw *Middleware) AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if !p.Legacy {
-			if need := routeRequirement(r.URL.Path); !need.satisfiedBy(p) {
+			if need := routeRequirement(r); !need.satisfiedBy(p) {
 				if mw.Auditor != nil {
 					mw.Auditor.AuditDenied(r, p, "missing scope "+need.name)
 				}

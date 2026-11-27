@@ -667,3 +667,67 @@ func TestAuthzDeletedSecretAndVersionRollback(t *testing.T) {
 		t.Errorf("revoked secret still listed: %s", out)
 	}
 }
+
+// Route classification is by method + exact segments on the router's own
+// path (Kilo review on PR #53): a secret or namespace named "lease" is not
+// the lease route, and an encoded "/" cannot move a request off it.
+func TestAuthzLeaseRouteClassification(t *testing.T) {
+	e := newAuthzEnv(t, false)
+	for _, name := range []string{"lease", "my-lease", "lease-x"} {
+		if err := e.stack.Vault.SetSecret(context.Background(), vault.SetSecretRequest{
+			Name: name, Namespace: "alice-ns", Agent: "alice", Purpose: "seed", Value: []byte("V-" + name),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Fingerprint GET of a secret named "lease": agent scope is enough.
+	for _, name := range []string{"lease", "my-lease", "lease-x"} {
+		code, body, _ := e.do("GET", "/v1/secrets/alice-ns/"+name, e.alice, nil)
+		if code != 200 || !strings.Contains(body, `"fingerprint"`) || strings.Contains(body, "V-"+name) {
+			t.Errorf("fingerprint of %q with an agent token: %d %s", name, code, body)
+		}
+	}
+	// The lease POST of a secret named "lease": needs the lease scope.
+	if code, body, _ := e.do("POST", "/v1/secrets/alice-ns/lease/lease", e.alice, map[string]any{}); code != 403 || strings.Contains(body, "V-lease") {
+		t.Errorf("lease of 'lease' without the lease scope: %d %s", code, body)
+	}
+	if code, body, _ := e.do("POST", "/v1/secrets/alice-ns/lease/lease", e.aliceLease, map[string]any{}); code != 200 || !strings.Contains(body, `"V-lease"`) {
+		t.Errorf("lease of 'lease' with the lease scope: %d %s", code, body)
+	}
+	// use/revoke of a secret named "lease" are agent routes.
+	if code, body, _ := e.do("POST", "/v1/secrets/alice-ns/lease/use", e.alice, map[string]any{"action": "echo", "purpose": "p"}); code != 200 {
+		t.Errorf("use of 'lease': %d %s", code, body)
+	}
+	// A namespace named "lease" is not the lease route either (ABAC then
+	// denies alice there: 403 from POLICY, not from scope).
+	if code, body, _ := e.do("GET", "/v1/secrets/lease/k", e.alice, nil); code == 403 && strings.Contains(body, "insufficient scope") {
+		t.Errorf("namespace 'lease' mis-gated: %d %s", code, body)
+	}
+	// Encoded slashes: chi routes on the raw path, and so does the scope
+	// check, so an agent-only token never reaches the lease handler.
+	for _, p := range []string{"/v1/secrets/alice-ns/x%2Fy/lease", "/v1/secrets/a%2Fb/k/lease", "/v1/secrets/alice-ns/k%2Flease/lease"} {
+		code, body, _ := e.do("POST", p, e.alice, map[string]any{})
+		if code != 403 || !strings.Contains(body, "insufficient scope") {
+			t.Errorf("POST %s with an agent-only token: %d %s", p, code, body)
+		}
+	}
+	// Unit view of the classifier.
+	for _, c := range []struct {
+		method, path string
+		want         bool
+	}{
+		{"POST", "/v1/secrets/ns/k/lease", true},
+		{"POST", "/v1/secrets/ns/lease/lease", true},
+		{"GET", "/v1/secrets/ns/k/lease", false},
+		{"GET", "/v1/secrets/ns/lease", false},
+		{"POST", "/v1/secrets/ns/lease", false},
+		{"POST", "/v1/secrets/lease/k/use", false},
+		{"POST", "/v1/secrets/ns/k/lease/x", false},
+		{"POST", "/v1/secrets//k/lease", false},
+		{"POST", "/v2/secrets/ns/k/lease", false},
+	} {
+		if got := isLeaseRoute(c.method, c.path); got != c.want {
+			t.Errorf("isLeaseRoute(%s %s) = %v", c.method, c.path, got)
+		}
+	}
+}

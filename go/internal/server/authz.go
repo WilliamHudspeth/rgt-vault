@@ -55,15 +55,43 @@ var (
 	reqAgent    = requirement{allOf: []auth.Scope{auth.ScopeAgent}, name: "agent"}
 )
 
-// routeRequirement returns the scopes path needs. The path has already
-// passed PathMiddleware (no "..", "//" or backslashes).
-func routeRequirement(path string) requirement {
+// routePath is the path the router matches: chi routes on r.URL.RawPath
+// when it is set (the request used escapes such as %2F) and on r.URL.Path
+// otherwise. Authorization MUST classify the same string, or a request
+// could reach a handler under a different route's requirement (e.g. an
+// encoded "/" in a secret name changing the segment count).
+func routePath(r *http.Request) string {
+	if r.URL.RawPath != "" {
+		return r.URL.RawPath
+	}
+	return r.URL.Path
+}
+
+// isLeaseRoute reports whether method + path is exactly
+// POST /v1/secrets/{namespace}/{name}/lease: six "/"-separated parts
+// (leading empty one included) with non-empty namespace and name. A secret
+// or namespace merely NAMED "lease" (GET /v1/secrets/{ns}/lease, the
+// fingerprint route) is not the lease route.
+func isLeaseRoute(method, path string) bool {
+	if method != http.MethodPost {
+		return false
+	}
+	seg := strings.Split(path, "/")
+	return len(seg) == 6 && seg[0] == "" && seg[1] == "v1" && seg[2] == "secrets" &&
+		seg[3] != "" && seg[4] != "" && seg[5] == "lease"
+}
+
+// routeRequirement returns the scopes a request needs, classified on the
+// router's own path (routePath) by method and exact segments. The path has
+// already passed PathMiddleware (no "..", "//" or backslashes).
+func routeRequirement(r *http.Request) requirement {
+	path := routePath(r)
 	switch {
 	case operatorPath(path), path == "/v1/rotate":
 		return reqOperator
 	case path == "/v1/audit", path == "/v1/audit/verify":
 		return reqAudit
-	case strings.HasPrefix(path, "/v1/secrets/") && strings.HasSuffix(path, "/lease"):
+	case isLeaseRoute(r.Method, path):
 		return reqLease
 	default:
 		return reqAgent

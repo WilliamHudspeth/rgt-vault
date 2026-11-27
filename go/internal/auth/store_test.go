@@ -362,9 +362,11 @@ func TestUnwritableStoreDir(t *testing.T) {
 	if _, _, err := s.Mint(MintOptions{Agent: "bot", Scopes: []Scope{ScopeAgent}}); err == nil {
 		t.Error("mint under a file succeeded")
 	}
-	// Reading through a path whose parent is a file is a store error.
-	if _, err := s.Authenticate("Bearer x"); err == nil || errors.Is(err, ErrInvalidToken) {
-		t.Errorf("Authenticate = %v", err)
+	// Reading through a path whose parent is a file fails closed. On Unix
+	// stat says ENOTDIR (a store error); on Windows it says "path not
+	// found", which is an absent store: no token is valid either way.
+	if p, err := s.Authenticate("Bearer x"); err == nil || p.Agent != "" {
+		t.Errorf("Authenticate = %+v %v", p, err)
 	}
 }
 
