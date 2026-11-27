@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -45,8 +46,13 @@ func TestTokenCommands(t *testing.T) {
 		t.Fatalf("mint --out: %d %q", code, out)
 	}
 	assertMode0600(t, outFile)
-	if code, _, stderr := runCLI(t, "", "token", "mint", "--agent", "x", "--out", outFile); code != 1 || !strings.Contains(stderr, "not overwriting") {
+	// An existing --out file fails BEFORE the store changes (review L3):
+	// no orphan token nobody holds.
+	if code, _, stderr := runCLI(t, "", "token", "mint", "--agent", "x", "--out", outFile); code != 1 || !strings.Contains(stderr, "not overwriting") || !strings.Contains(stderr, "nothing was changed") {
 		t.Errorf("mint --out over an existing file: %d %q", code, stderr)
+	}
+	if infos, _ := auth.OpenStore(store).List(); len(infos) != 2 {
+		t.Errorf("a failed mint --out stored a token: %d tokens", len(infos))
 	}
 
 	// list: ids, agents, scopes, expiry; never a token or a hash.
@@ -58,7 +64,7 @@ func TestTokenCommands(t *testing.T) {
 	var listed struct {
 		Tokens []auth.TokenInfo `json:"tokens"`
 	}
-	if code != 0 || json.Unmarshal([]byte(jsonOut), &listed) != nil || len(listed.Tokens) != 3 {
+	if code != 0 || json.Unmarshal([]byte(jsonOut), &listed) != nil || len(listed.Tokens) != 2 {
 		t.Fatalf("list --json: %d %q", code, jsonOut)
 	}
 	for _, secret := range []string{tok, opsTok} {
@@ -75,6 +81,28 @@ func TestTokenCommands(t *testing.T) {
 			botID = in.ID
 		}
 	}
+
+	// rotate --out onto an existing file: refused, the old token still works.
+	if code, _, stderr := runCLI(t, "", "token", "rotate", botID, "--out", outFile); code != 1 || !strings.Contains(stderr, "nothing was changed") {
+		t.Errorf("rotate --out over an existing file: %d %q", code, stderr)
+	}
+	if _, err := auth.OpenStore(store).Authenticate(tok); err != nil {
+		t.Fatalf("a refused rotate killed the old token: %v", err)
+	}
+	// rotate --out to a new file: the new token is in the file, the old dead.
+	rotFile := filepath.Join(t.TempDir(), "rot.token")
+	if code, out, _ := runCLI(t, "", "token", "rotate", botID, "--out", rotFile); code != 0 || !strings.Contains(out, "written to") {
+		t.Fatalf("rotate --out: %d %q", code, out)
+	}
+	rotTok := strings.TrimSpace(string(mustRead(t, rotFile)))
+	rp, err := auth.OpenStore(store).Authenticate(rotTok)
+	if err != nil {
+		t.Fatalf("rotated token from --out: %v", err)
+	}
+	if _, err := auth.OpenStore(store).Authenticate(tok); err == nil {
+		t.Fatal("old token valid after rotate --out")
+	}
+	botID, tok = rp.TokenID, rotTok
 
 	// rotate: new token, old one dead, same agent/scopes.
 	code, out, stderr = runCLI(t, "", "token", "rotate", botID)
@@ -157,7 +185,8 @@ func TestInitTokenStore(t *testing.T) {
 	}
 	st := auth.OpenStore(store)
 	p, err := st.Authenticate(legacy)
-	if err != nil || p.Agent != "operator" || !p.Has(auth.ScopeOperator) || !p.Has(auth.ScopeLease) || !p.Has(auth.ScopeAgent) {
+	// Imported with its pre-H1 privilege only (review MEDIUM-2).
+	if err != nil || p.Agent != "operator" || len(p.Scopes) != 1 || !p.Has(auth.ScopeOperator) || p.Has(auth.ScopeLease) || p.Has(auth.ScopeAgent) {
 		t.Fatalf("imported operator token: %+v %v", p, err)
 	}
 	// Again: kept.
@@ -173,7 +202,8 @@ func TestInitTokenStore(t *testing.T) {
 		t.Error("replaced operator token still valid")
 	}
 	fresh := strings.TrimSpace(string(mustRead(t, op)))
-	if fp, err := st.Authenticate(fresh); err != nil || fp.Agent != "operator" {
+	// A freshly minted operator token: agent+audit+operator, never lease.
+	if fp, err := st.Authenticate(fresh); err != nil || fp.Agent != "operator" || !fp.Has(auth.ScopeOperator) || !fp.Has(auth.ScopeAgent) || fp.Has(auth.ScopeLease) {
 		t.Errorf("new operator token: %+v %v", fp, err)
 	}
 	if strings.Contains(out, fresh) {
@@ -215,34 +245,84 @@ func TestInitTokenStore(t *testing.T) {
 	}
 }
 
-// The CLI client token: flag > RGT_VAULT_TOKEN > RGT_VAULT_TOKEN_FILE >
-// operator.token > server.token.
+// The CLI client token: --token > RGT_VAULT_TOKEN > RGT_VAULT_TOKEN_FILE,
+// then operator.token only for operator commands, the legacy server.token
+// for all but mcp.
 func TestResolveToken(t *testing.T) {
 	isolateEnv(t)
 	home, _ := os.UserHomeDir()
 	cfg := filepath.Join(home, ".config", "rgt-vault")
-	if resolveToken("") != "" {
-		t.Error("no token anywhere")
+	for _, src := range []tokenSources{operatorCmd, agentCmd, explicitOnly} {
+		if resolveToken("", src) != "" {
+			t.Errorf("%+v: a token from nowhere", src)
+		}
 	}
 	mustWrite(t, mkdir(t, cfg), "server.token", "legacy\n")
-	if got := resolveToken(""); got != "legacy" {
-		t.Errorf("server.token: %q", got)
-	}
 	mustWrite(t, cfg, "operator.token", "op\n")
-	if got := resolveToken(""); got != "op" {
-		t.Errorf("operator.token first: %q", got)
+	for src, want := range map[tokenSources]string{operatorCmd: "op", agentCmd: "legacy", explicitOnly: ""} {
+		if got := resolveToken("", src); got != want {
+			t.Errorf("%+v: %q, want %q", src, got, want)
+		}
 	}
 	f := mustWrite(t, t.TempDir(), "agent.token", " file \n")
 	t.Setenv("RGT_VAULT_TOKEN_FILE", f)
-	if got := resolveToken(""); got != "file" {
+	if got := resolveToken("", explicitOnly); got != "file" {
 		t.Errorf("RGT_VAULT_TOKEN_FILE: %q", got)
 	}
 	t.Setenv("RGT_VAULT_TOKEN", "env")
-	if got := resolveToken(""); got != "env" {
+	if got := resolveToken("", explicitOnly); got != "env" {
 		t.Errorf("env: %q", got)
 	}
-	if got := resolveToken("flag"); got != "flag" {
+	if got := resolveToken("flag", explicitOnly); got != "flag" {
 		t.Errorf("flag: %q", got)
+	}
+}
+
+// Regression for the review of PR #53 (HIGH-1): an agent-facing command with
+// no explicit token never falls back to the full operator token.
+func TestAgentCommandsNeverFallBackToOperatorToken(t *testing.T) {
+	isolateEnv(t)
+	home, _ := os.UserHomeDir()
+	mustWrite(t, mkdir(t, filepath.Join(home, ".config", "rgt-vault")), "operator.token", "OPERATOR-TOKEN\n")
+	if got := resolveToken("", agentCmd); got == "OPERATOR-TOKEN" {
+		t.Errorf("agent command falls back to the operator token")
+	}
+	if got := resolveToken("", explicitOnly); got != "" {
+		t.Errorf("mcp falls back to a file: %q", got)
+	}
+	srv, seen := recordingServer(t, 200, `{"ok":true}`)
+	// mcp: refuses to start, before touching the backend.
+	code, _, stderr := runCLI(t, "", "--host", srv.URL, "mcp")
+	if code != 1 || !strings.Contains(stderr, "no bearer token") {
+		t.Errorf("mcp without a token: %d %q", code, stderr)
+	}
+	if code, _, stderr := runCLI(t, "", "--host", srv.URL, "--as-operator", "mcp"); code != 1 || !strings.Contains(stderr, "never runs on the operator token") {
+		t.Errorf("mcp --as-operator: %d %q", code, stderr)
+	}
+	// agent commands: refuse without a token, never send the operator token.
+	for _, args := range [][]string{{"list"}, {"get", "k"}, {"revoke", "k"}, {"fingerprint", "k"}, {"simulate", "--namespace", "n"}} {
+		code, _, stderr := runCLI(t, "", append([]string{"--host", srv.URL}, args...)...)
+		if code != 1 || !strings.Contains(stderr, "--as-operator") {
+			t.Errorf("%v without a token: %d %q", args, code, stderr)
+		}
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("requests were sent without an explicit token: %+v", *seen)
+	}
+	// --as-operator opts in; operator commands use the operator file.
+	if code, _, stderr := runCLI(t, "", "--host", srv.URL, "--as-operator", "list"); code != 0 {
+		t.Errorf("list --as-operator: %d %q", code, stderr)
+	}
+	if code, _, stderr := runCLI(t, "", "--host", srv.URL, "verify-audit"); code != 0 {
+		t.Errorf("verify-audit (operator command): %d %q", code, stderr)
+	}
+	for _, r := range *seen {
+		if r.Auth != "Bearer OPERATOR-TOKEN" {
+			t.Errorf("%s %s used %q", r.Method, r.Path, r.Auth)
+		}
+	}
+	if len(*seen) != 2 {
+		t.Errorf("requests = %d, want 2", len(*seen))
 	}
 }
 
@@ -252,4 +332,47 @@ func mkdir(t *testing.T, p string) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// init refuses to import an operator token file that other users could
+// read (Unix), unless --force-import; it warns either way.
+func TestInitRefusesExposedOperatorToken(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits; Windows relies on the profile directory ACL")
+	}
+	isolateEnv(t)
+	dir := t.TempDir()
+	store := filepath.Join(dir, "tokens.json")
+	op := filepath.Join(dir, "operator.token")
+	legacy, _ := auth.GenerateToken()
+	if err := os.WriteFile(op, []byte(legacy+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(op, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"init", "--tokens-only", "--token-store", store, "--operator-token-file", op}
+	code, out, stderr := runCLI(t, "", args...)
+	if code != 1 || !strings.Contains(stderr, "readable by other users") || strings.Contains(out+stderr, legacy) {
+		t.Fatalf("exposed file: %d %q %q", code, out, stderr)
+	}
+	if _, found, _ := auth.OpenStore(store).Contains(legacy); found {
+		t.Fatal("an exposed token was imported")
+	}
+	if fi, _ := os.Stat(op); fi.Mode().Perm() != 0o644 {
+		t.Error("the refused file was silently chmodded")
+	}
+	code, out, _ = runCLI(t, "", append(args, "--force-import")...)
+	if code != 0 || !strings.Contains(out, "WARNING") || !strings.Contains(out, "operator scope only") {
+		t.Fatalf("--force-import: %d %q", code, out)
+	}
+	assertMode0600(t, op)
+	// --force instead mints a new token and leaves no trace of the old one.
+	_ = os.Chmod(op, 0o640)
+	if code, out, _ := runCLI(t, "", append(args, "--force")...); code != 0 || !strings.Contains(out, "revoked") {
+		t.Fatalf("--force: %d %q", code, out)
+	}
+	if _, found, _ := auth.OpenStore(store).Contains(legacy); found {
+		t.Error("--force kept the exposed token")
+	}
 }

@@ -336,7 +336,7 @@ func assertMode0600(t *testing.T, path string) {
 func TestMCPSubcommandUsesInjectedStreams(t *testing.T) {
 	isolateEnv(t)
 	var out bytes.Buffer
-	code := run([]string{"--host", "http://127.0.0.1:1/", "mcp"},
+	code := run([]string{"--host", "http://127.0.0.1:1/", "--token", "x", "mcp"},
 		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`+"\n"), &out, io.Discard)
 	if code != 0 || !strings.Contains(out.String(), `"id":1`) {
 		t.Fatalf("exit %d out %q", code, out.String())
@@ -381,13 +381,13 @@ func TestMCPAgentFlagAndEnv(t *testing.T) {
 
 	// An invalid label is refused before serving.
 	var errOut bytes.Buffer
-	if code := run([]string{"--host", srv.URL, "mcp", "--agent", "bad agent"}, strings.NewReader(""), io.Discard, &errOut); code != 1 || !strings.Contains(errOut.String(), "agent label") {
+	if code := run([]string{"--host", srv.URL, "--token", "x", "mcp", "--agent", "bad agent"}, strings.NewReader(""), io.Discard, &errOut); code != 1 || !strings.Contains(errOut.String(), "agent label") {
 		t.Errorf("bad agent: exit %d stderr %q", code, errOut.String())
 	}
 	// ...and an invalid label from the env var is refused the same way.
 	t.Setenv("RGT_VAULT_MCP_AGENT", "bad agent")
 	errOut.Reset()
-	if code := run([]string{"--host", srv.URL, "mcp"}, strings.NewReader(""), io.Discard, &errOut); code != 1 || !strings.Contains(errOut.String(), "RGT_VAULT_MCP_AGENT") {
+	if code := run([]string{"--host", srv.URL, "--token", "x", "mcp"}, strings.NewReader(""), io.Discard, &errOut); code != 1 || !strings.Contains(errOut.String(), "RGT_VAULT_MCP_AGENT") {
 		t.Errorf("bad env agent: exit %d stderr %q", code, errOut.String())
 	}
 }

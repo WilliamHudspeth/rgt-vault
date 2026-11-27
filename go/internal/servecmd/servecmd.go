@@ -197,6 +197,7 @@ type Flags struct {
 	AllowNonLoopback    bool
 	TokenStore          string
 	LegacySharedToken   bool
+	LegacyPrivileged    bool
 	TokenFile           string
 	OperatorTokenFile   string
 	RequireApproval     bool
@@ -216,9 +217,11 @@ type config struct {
 	// files (tokenFile / operatorTokenFile) instead.
 	tokenStore string
 	legacy     bool
-	origins    []string
-	rejected   []string
-	maxBody    int64
+	// legacyPrivileged lets the shared token reach lease/rotate/audit.
+	legacyPrivileged bool
+	origins          []string
+	rejected         []string
+	maxBody          int64
 
 	vault               Resolved
 	operatorTokenFile   string
@@ -254,12 +257,17 @@ func parseConfig(f Flags, vf *VaultFlags, getenv func(string) string) (config, e
 		maxBody:   server.DefaultMaxBodyBytes,
 		legacy:    f.LegacySharedToken,
 
+		legacyPrivileged: f.LegacyPrivileged,
+
 		vault:               res,
 		requireApproval:     f.RequireApproval,
 		totpSecretFile:      firstNonEmpty(f.TOTPSecretFile, getenv("RGT_VAULT_TOTP_SECRET_FILE")),
 		approvalTimeout:     f.ApprovalTimeout,
 		harnessKeyFile:      firstNonEmpty(f.HarnessKeyFile, getenv("RGT_VAULT_HARNESS_KEY_FILE")),
 		allowPrivateNetwork: f.AllowPrivateNetwork,
+	}
+	if cfg.legacyPrivileged && !cfg.legacy {
+		return config{}, errors.New("--legacy-allow-privileged-routes needs --legacy-shared-token")
 	}
 	if cfg.legacy {
 		cfg.tokenFile = firstNonEmpty(f.TokenFile, getenv("RGT_VAULT_TOKEN_FILE"), DefaultTokenPath())
@@ -367,7 +375,8 @@ func NewCommand(env Env, vf *VaultFlags) *cobra.Command {
 	fs.StringVar(&f.Port, "port", "", "listen port (env RGT_VAULT_PORT, default "+DefaultPort+")")
 	fs.BoolVar(&f.AllowNonLoopback, "allow-non-loopback", false, "permit a non-loopback --host (plain HTTP: put a TLS reverse proxy in front)")
 	fs.StringVar(&f.TokenStore, "token-store", "", "per-agent token store (env RGT_VAULT_TOKEN_STORE, default ~/.config/rgt-vault/tokens.json; see `rgt-vault token`)")
-	fs.BoolVar(&f.LegacySharedToken, "legacy-shared-token", false, "DEPRECATED: authenticate with one shared token file and the self-asserted agent field (pre-H1 behaviour)")
+	fs.BoolVar(&f.LegacySharedToken, "legacy-shared-token", false, "DEPRECATED: authenticate with one shared token file and the self-asserted agent field (pre-H1 behaviour); the lease route, /v1/rotate and the audit log are then refused")
+	fs.BoolVar(&f.LegacyPrivileged, "legacy-allow-privileged-routes", false, "with --legacy-shared-token: let the shared token also reach the plaintext lease route, /v1/rotate and the audit log (full pre-H1 exposure)")
 	fs.StringVar(&f.TokenFile, "token-file", "", "legacy only: shared agent token file (env RGT_VAULT_TOKEN_FILE, default ~/.config/rgt-vault/server.token; created 0600 if missing)")
 	fs.StringVar(&f.OperatorTokenFile, "operator-token-file", "", "legacy only: operator token for approve/deny (env RGT_VAULT_OPERATOR_TOKEN_FILE)")
 	fs.BoolVar(&f.RequireApproval, "require-approval", false, "require live operator approval for every unseal")
@@ -425,6 +434,10 @@ const LegacyWarning = "WARNING: --legacy-shared-token is DEPRECATED and insecure
 	"act as any other. Mint per-agent tokens (`rgt-vault token mint --agent NAME`) and drop the flag; see " +
 	"docs/guides/agent-identity-migration.md"
 
+// LegacyPrivilegedWarning is logged with --legacy-allow-privileged-routes.
+const LegacyPrivilegedWarning = "WARNING: --legacy-allow-privileged-routes: EVERY holder of the shared token can read " +
+	"plaintext secrets (as any agent it names), rotate keys and read the audit log; there is no scope enforcement"
+
 // loadAuth prepares authentication. The tokens themselves are never printed.
 func loadAuth(cfg config, logger *log.Logger) (authSetup, string, error) {
 	if !cfg.legacy {
@@ -459,6 +472,12 @@ func loadAuth(cfg config, logger *log.Logger) (authSetup, string, error) {
 	}
 
 	logger.Print(LegacyWarning)
+	if cfg.legacyPrivileged {
+		logger.Print(LegacyPrivilegedWarning)
+	} else {
+		logger.Print("Legacy mode: the lease route, /v1/rotate and the audit log are refused for the shared token " +
+			"(use get/verify-audit --offline, or --legacy-allow-privileged-routes)")
+	}
 	path, token, err := loadToken(cfg.tokenFile, "agent token")
 	if err != nil {
 		return authSetup{}, "", err
@@ -537,15 +556,16 @@ func Run(ctx context.Context, cfg config, env Env) error {
 	}
 
 	router, err := server.New(server.Config{
-		Vault:          stack.Vault,
-		Tokens:         authn.store,
-		AgentTokens:    authn.agent,
-		OperatorTokens: authn.operator,
-		Broker:         stack.Broker,
-		Actions:        stack.Actions,
-		Capabilities:   stack.Capabilities,
-		AllowedOrigins: cfg.origins,
-		MaxBodyBytes:   cfg.maxBody,
+		Vault:                  stack.Vault,
+		Tokens:                 authn.store,
+		LegacyPrivilegedRoutes: cfg.legacyPrivileged,
+		AgentTokens:            authn.agent,
+		OperatorTokens:         authn.operator,
+		Broker:                 stack.Broker,
+		Actions:                stack.Actions,
+		Capabilities:           stack.Capabilities,
+		AllowedOrigins:         cfg.origins,
+		MaxBodyBytes:           cfg.maxBody,
 	})
 	if err != nil {
 		return err

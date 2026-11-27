@@ -31,6 +31,10 @@ type Config struct {
 	// (Python's behaviour without --operator-token-file; an agent could
 	// then self-approve).
 	OperatorTokens *auth.TokenStore
+	// LegacyPrivilegedRoutes (legacy mode only) lets the shared token reach
+	// POST .../lease, /v1/rotate and /v1/audit*, as before H1. Default off:
+	// those routes answer 403 in legacy mode.
+	LegacyPrivilegedRoutes bool
 	// AuthFailureLimit / AuthFailureWindow bound audited authentication
 	// failures per source address (zero = DefaultAuthFailureLimit per
 	// DefaultAuthFailureWindow); beyond them failures get 429.
@@ -67,6 +71,9 @@ func New(cfg Config) (http.Handler, error) {
 	if cfg.Tokens != nil && cfg.OperatorTokens != nil {
 		return nil, errors.New("server: Config.OperatorTokens applies to the legacy shared token only; use an operator-scoped token")
 	}
+	if cfg.Tokens != nil && cfg.LegacyPrivilegedRoutes {
+		return nil, errors.New("server: Config.LegacyPrivilegedRoutes applies to the legacy shared token only")
+	}
 	h := &handlers.Handlers{
 		Vault:        cfg.Vault,
 		Actions:      cfg.Actions,
@@ -79,6 +86,7 @@ func New(cfg Config) (http.Handler, error) {
 	} else {
 		mw = NewMiddleware(cfg.AgentTokens)
 		mw.OperatorTokenStore = cfg.OperatorTokens
+		mw.LegacyPrivilegedRoutes = cfg.LegacyPrivilegedRoutes
 	}
 	mw.Auditor = h
 	mw.SetAuthFailureLimit(cfg.AuthFailureLimit, cfg.AuthFailureWindow)

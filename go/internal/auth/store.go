@@ -413,6 +413,12 @@ type MintOptions struct {
 	Scopes []Scope
 	// TTL > 0 sets expires_at = now + TTL; 0 means no expiry.
 	TTL time.Duration
+	// BeforeCommit, if set, receives the new plaintext token while the
+	// store lock is held and BEFORE the store file is written (Mint and
+	// RotateWith). An error aborts: nothing is stored. Use it to persist
+	// the token (e.g. `--out FILE`) so a failure can never leave a stored
+	// token nobody holds, or a rotated-out token with its successor lost.
+	BeforeCommit func(token string) error
 }
 
 func (s *Store) newRecord(token string, o MintOptions) (record, error) {
@@ -454,7 +460,7 @@ func (s *Store) Mint(o MintOptions) (string, TokenInfo, error) {
 	if err != nil {
 		return "", TokenInfo{}, err
 	}
-	info, err := s.add(token, o)
+	info, err := s.add(token, o, o.BeforeCommit)
 	if err != nil {
 		return "", TokenInfo{}, err
 	}
@@ -468,7 +474,7 @@ func (s *Store) Import(token string, o MintOptions) (TokenInfo, error) {
 	if token == "" {
 		return TokenInfo{}, ErrEmptyToken
 	}
-	return s.add(token, o)
+	return s.add(token, o, nil)
 }
 
 // Contains reports whether token is in the store (expired or not).
@@ -483,7 +489,7 @@ func (s *Store) Contains(token string) (TokenInfo, bool, error) {
 	return r.info(), ok, nil
 }
 
-func (s *Store) add(token string, o MintOptions) (TokenInfo, error) {
+func (s *Store) add(token string, o MintOptions, before func(string) error) (TokenInfo, error) {
 	r, err := s.newRecord(token, o)
 	if err != nil {
 		return TokenInfo{}, err
@@ -492,6 +498,11 @@ func (s *Store) add(token string, o MintOptions) (TokenInfo, error) {
 		for _, have := range ff.Tokens {
 			if have.Hash == r.Hash {
 				return ErrDuplicateToken
+			}
+		}
+		if before != nil {
+			if err := before(token); err != nil {
+				return err
 			}
 		}
 		ff.Tokens = append(ff.Tokens, r)
@@ -528,6 +539,13 @@ func (s *Store) Revoke(id string) (TokenInfo, error) {
 // moment the new one exists. ttl > 0 sets a new expiry; ttl == 0 keeps the
 // old token's lifetime (expires_at - created_at), or none.
 func (s *Store) Rotate(id string, ttl time.Duration) (string, TokenInfo, error) {
+	return s.RotateWith(id, ttl, nil)
+}
+
+// RotateWith is Rotate with a BeforeCommit hook (see MintOptions): the new
+// token is handed to before() first, and the old one is replaced only if it
+// succeeds.
+func (s *Store) RotateWith(id string, ttl time.Duration, before func(token string) error) (string, TokenInfo, error) {
 	token, err := GenerateToken()
 	if err != nil {
 		return "", TokenInfo{}, err
@@ -545,6 +563,11 @@ func (s *Store) Rotate(id string, ttl time.Duration) (string, TokenInfo, error) 
 			nr, err := s.newRecord(token, MintOptions{Agent: r.Agent, Scopes: r.Scopes, TTL: life})
 			if err != nil {
 				return err
+			}
+			if before != nil {
+				if err := before(token); err != nil {
+					return err
+				}
 			}
 			fresh = nr
 			ff.Tokens[i] = nr

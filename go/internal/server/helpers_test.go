@@ -145,7 +145,7 @@ func newEnv(t *testing.T, o envOpts) *testEnv {
 	agentStore, agentTok := newToken(t, filepath.Join(dir, "agent.token"))
 	e.agentTok = agentTok
 	cfg := Config{
-		Vault: stack.Vault, AgentTokens: agentStore, Broker: stack.Broker,
+		Vault: stack.Vault, AgentTokens: agentStore, LegacyPrivilegedRoutes: true, Broker: stack.Broker,
 		Actions: stack.Actions, Capabilities: stack.Capabilities,
 		MaxBodyBytes: o.maxBody, AllowedOrigins: o.origins,
 	}

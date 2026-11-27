@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 
 	"github.com/spf13/cobra"
 
@@ -25,6 +26,7 @@ type initOptions struct {
 	harnessKeyFile    string
 	tokensOnly        bool
 	force             bool
+	forceImport       bool
 }
 
 func newInitCmd(vf *servecmd.VaultFlags, stdout io.Writer) *cobra.Command {
@@ -60,6 +62,7 @@ func newInitCmd(vf *servecmd.VaultFlags, stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&o.harnessKeyFile, "harness-key-file", "", "also create an HMAC key for v2 capability tokens at this path (0600)")
 	cmd.Flags().BoolVar(&o.tokensOnly, "tokens-only", false, "create only the token files, not the vault")
 	cmd.Flags().BoolVar(&o.force, "force", false, "replace existing token files / harness key with new ones (never touches the vault)")
+	cmd.Flags().BoolVar(&o.forceImport, "force-import", false, "import an existing operator token file even though other users could read it (Unix group/other bits); prefer --force, which mints a new one")
 	return cmd
 }
 
@@ -203,8 +206,30 @@ func runInit(cmd *cobra.Command, vf *servecmd.VaultFlags, o initOptions, out io.
 	return nil
 }
 
-// operatorScopes are the scopes of the operator token init creates.
-var operatorScopes = []auth.Scope{auth.ScopeAgent, auth.ScopeOperator, auth.ScopeAudit, auth.ScopeLease}
+// operatorScopes are the scopes of the operator token init MINTS: the
+// operator's own CLI/TUI identity (approve, rotate, audit, and set/list/use
+// as agent "operator"). No lease scope: the operator reads plaintext with
+// `get --offline`, and an agent that picks up this token cannot lease.
+var operatorScopes = []auth.Scope{auth.ScopeAgent, auth.ScopeOperator, auth.ScopeAudit}
+
+// importedOperatorScopes are the scopes an existing (pre-H1) operator token
+// file is imported with: exactly its old privilege, the approval endpoints
+// (review of PR #53, MEDIUM-2). Anything more needs a freshly minted token.
+var importedOperatorScopes = []auth.Scope{auth.ScopeOperator}
+
+// looseMode reports whether a file is readable or writable by group/other
+// (Unix). Windows has no such bits: there the profile directory's ACL is
+// the protection.
+func looseMode(path string) (bool, error) {
+	if runtime.GOOS == "windows" {
+		return false, nil
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+	return fi.Mode().Perm()&0o077 != 0, nil
+}
 
 // initTokenStore makes sure the store holds an operator token whose
 // plaintext is in the operator token file. It returns summary lines.
@@ -242,24 +267,38 @@ func initTokenStore(o initOptions) ([]string, error) {
 	storeLine := fmt.Sprintf("%-16s %s (0600, hashes only)", "token store:", storePath)
 
 	if old != "" && !o.force {
-		if err := servecmd.TightenFile(opPath); err != nil {
-			return nil, fmt.Errorf("restricting operator token file %s: %w", opPath, err)
-		}
 		if err := servecmd.ValidateToken(old); err != nil {
 			return nil, fmt.Errorf("existing operator token file %s: %w; pass --force to replace it", opPath, err)
+		}
+		loose, err := looseMode(opPath)
+		if err != nil {
+			return nil, fmt.Errorf("operator token file %s: %w", opPath, err)
 		}
 		info, found, err := st.Contains(old)
 		if err != nil {
 			return nil, err
 		}
+		var warn []string
+		if loose {
+			if !found && !o.forceImport {
+				return nil, fmt.Errorf("operator token file %s is readable by other users, so the token may be exposed: "+
+					"not importing it. Run `rgt-vault init --force` to mint a new operator token (recommended), or pass "+
+					"--force-import to import it anyway", opPath)
+			}
+			warn = append(warn, fmt.Sprintf("WARNING: %s was readable by other users (now 0600); the token may be exposed: "+
+				"rotate it with `rgt-vault init --force`", opPath))
+		}
+		if err := servecmd.TightenFile(opPath); err != nil {
+			return nil, fmt.Errorf("restricting operator token file %s: %w", opPath, err)
+		}
 		state := "kept (in the store as " + info.ID + ")"
 		if !found {
-			if info, err = st.Import(old, mintOpts); err != nil {
+			if info, err = st.Import(old, auth.MintOptions{Agent: o.operatorAgent, Scopes: importedOperatorScopes}); err != nil {
 				return nil, err
 			}
-			state = "imported into the store as " + info.ID
+			state = "imported into the store as " + info.ID + " with the operator scope only (its pre-H1 privilege)"
 		}
-		return []string{storeLine, fmt.Sprintf("%-16s %s  %s", "operator token:", opPath, state)}, nil
+		return append([]string{storeLine, fmt.Sprintf("%-16s %s  %s", "operator token:", opPath, state)}, warn...), nil
 	}
 
 	tok, info, err := st.Mint(mintOpts)

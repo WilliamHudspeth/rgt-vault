@@ -35,6 +35,7 @@ import (
 	"rgt-vault-server/internal/capabilities"
 	"rgt-vault-server/internal/hooks/pyfmt"
 	"rgt-vault-server/internal/store"
+	"rgt-vault-server/internal/validation"
 	"rgt-vault-server/internal/vault"
 )
 
@@ -84,14 +85,14 @@ func (h *Handlers) AuditHTTP(next http.Handler) http.Handler {
 			return
 		}
 		event := "HTTP_API"
-		if isOperatorRoute(r.URL.Path) {
+		if isOperatorRoute(RoutePath(r)) {
 			event = "HTTP_OPERATOR"
 		}
 		agent := sql.NullString{}
 		if p.Agent != "" {
 			agent = sql.NullString{String: p.Agent, Valid: true}
 		}
-		details := "token=" + p.TokenID + " ip=" + ClientIP(r) + " " + r.Method + " " + r.URL.Path
+		details := "token=" + p.TokenID + " ip=" + ClientIP(r) + " " + r.Method + " " + AuditPath(r)
 		if err := h.Vault.Audit(r.Context(), event, sql.NullString{}, details, agent); err != nil {
 			writeError(w, r, err)
 			return
@@ -445,10 +446,21 @@ func (h *Handlers) LeaseSecret(w http.ResponseWriter, r *http.Request) {
 // GET /v1/secrets/{namespace}/{name}  (fingerprint; Go-only, RGT-502)
 // ---------------------------------------------------------------------------
 
-// GetSecret handles GET /v1/secrets/{namespace}/{name}[?version=N]: the
-// ciphertext fingerprint (python get_fingerprint, sha256(ciphertext)[:8]).
-// It never returns the value and, as in Python, is not policy-gated (a
-// fingerprint leaks no plaintext); honeytokens still trigger.
+// errSecretNotFound is the ONE answer of the fingerprint route for a secret
+// the caller may not see, one that does not exist, a revoked one and a
+// missing version: no existence or version oracle across agents.
+var errSecretNotFound = newAppError(http.StatusNotFound, "SecretNotFoundError", "secret not found")
+
+// GetSecret handles GET /v1/secrets/{namespace}/{name}[?version=N][&purpose=]:
+// the ciphertext fingerprint (python get_fingerprint, sha256(ciphertext)[:8]).
+// It never returns the value.
+//
+// With per-agent tokens it is ABAC-gated like a list (action "read" for the
+// token's agent, the namespace and ?purpose=), because a fingerprint still
+// reveals that a secret and its versions exist (review of PR #53,
+// MEDIUM-1). A denied request and a missing secret get the same 404; the
+// denial is audited (AUTHZ_DENIED). The legacy shared-token mode keeps
+// Python's ungated fingerprint.
 func (h *Handlers) GetSecret(w http.ResponseWriter, r *http.Request) {
 	namespace, name := r.PathValue("namespace"), r.PathValue("name")
 	version, e := queryInt(r, "version", 0)
@@ -459,7 +471,37 @@ func (h *Handlers) GetSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, e)
 		return
 	}
+	if _, err := validation.ValidateNamespace(namespace); err != nil {
+		writeError(w, r, err)
+		return
+	}
+	if _, err := validation.ValidateName(name); err != nil {
+		writeError(w, r, err)
+		return
+	}
+	p, ok := PrincipalFromContext(r.Context())
+	if !ok {
+		writeError(w, r, newAppError(http.StatusUnauthorized, "ServerAuthError", "invalid credentials"))
+		return
+	}
+	if !p.Legacy {
+		if _, ok := r.URL.Query()["agent"]; ok {
+			if _, ok := h.querySubject(w, r, "agent", "", false); !ok {
+				return
+			}
+		}
+		purpose := r.URL.Query().Get("purpose")
+		if d := h.Vault.Policy().Evaluate(p.Agent, namespace, purpose, "read"); !d.Allowed {
+			h.AuditDenied(r, p, "policy denies fingerprint of "+namespace+"/"+name)
+			writeError(w, r, errSecretNotFound)
+			return
+		}
+	}
 	fp, err := h.Vault.Fingerprint(r.Context(), namespace, name, int64(version))
+	if errors.Is(err, vault.ErrNotFound) {
+		writeError(w, r, errSecretNotFound)
+		return
+	}
 	if err != nil {
 		writeError(w, r, err)
 		return

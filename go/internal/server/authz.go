@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"rgt-vault-server/internal/auth"
+	"rgt-vault-server/internal/server/handlers"
 )
 
 // Route authorization (batch H1). Every authenticated route requires a
@@ -60,12 +61,7 @@ var (
 // otherwise. Authorization MUST classify the same string, or a request
 // could reach a handler under a different route's requirement (e.g. an
 // encoded "/" in a secret name changing the segment count).
-func routePath(r *http.Request) string {
-	if r.URL.RawPath != "" {
-		return r.URL.RawPath
-	}
-	return r.URL.Path
-}
+func routePath(r *http.Request) string { return handlers.RoutePath(r) }
 
 // isLeaseRoute reports whether method + path is exactly
 // POST /v1/secrets/{namespace}/{name}/lease: six "/"-separated parts
@@ -96,6 +92,15 @@ func routeRequirement(r *http.Request) requirement {
 	default:
 		return reqAgent
 	}
+}
+
+// legacyPrivileged reports whether a legacy shared-token request targets a
+// route that the shared token reaches only with LegacyPrivilegedRoutes: the
+// plaintext lease, key rotation and the audit log (review of PR #53,
+// MEDIUM-3). /v1/requests* keeps its legacy operator-file rule.
+func legacyPrivileged(r *http.Request) bool {
+	path := routePath(r)
+	return path == "/v1/rotate" || path == "/v1/audit" || path == "/v1/audit/verify" || isLeaseRoute(r.Method, path)
 }
 
 // Defaults of the per-source authentication-failure limiter.

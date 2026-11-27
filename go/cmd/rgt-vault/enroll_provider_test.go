@@ -316,11 +316,21 @@ func TestServeSubcommandPersists(t *testing.T) {
 	stop()
 	addr, stop = start()
 	defer stop()
-	// The CLI finds the operator token on its own via $RGT_VAULT_TOKEN_FILE.
-	t.Setenv("RGT_VAULT_TOKEN_FILE", opFile)
+	// Plaintext over HTTP needs a lease-scoped token for the agent that
+	// owns the secret ("operator", which set it); the CLI reads it from
+	// $RGT_VAULT_TOKEN_FILE. The operator token itself has no lease scope.
+	if code, _, stderr := runCLI(t, "", "--host", "http://"+addr, "--token", token, "get", "k", "--namespace", "p"); code == 0 || !strings.Contains(stderr, "403") {
+		t.Errorf("operator token leased plaintext: %d %q", code, stderr)
+	}
+	leaseFile := filepath.Join(e.dir, "op-lease.token")
+	if code, _, stderr := runCLI(t, "", "token", "mint", "--store", store, "--agent", "operator", "--scope", "agent,lease", "--out", leaseFile); code != 0 {
+		t.Fatalf("mint lease token: %s", stderr)
+	}
+	t.Setenv("RGT_VAULT_TOKEN_FILE", leaseFile)
 	if code, out, stderr := runCLI(t, "", "--host", "http://"+addr, "get", "k", "--namespace", "p"); code != 0 || out != "persist-me\n" {
 		t.Fatalf("after restart: exit %d out %q err %q", code, out, stderr)
 	}
+	t.Setenv("RGT_VAULT_TOKEN_FILE", "")
 	// A minted agent-only token cannot read plaintext or the audit log.
 	code, out, stderr := runCLI(t, "", "token", "mint", "--store", store, "--agent", "bot", "--out", filepath.Join(e.dir, "bot.token"))
 	if code != 0 || strings.Contains(out, "\n"+strings.TrimSpace(string(mustRead(t, filepath.Join(e.dir, "bot.token"))))) {

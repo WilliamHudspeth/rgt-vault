@@ -378,7 +378,7 @@ func TestServerPersistsAcrossRestarts(t *testing.T) {
 			e["RGT_VAULT_TOKEN_FILE"] = tokenPath
 		}
 		go func() {
-			done <- execute(ctx, []string{"--port", "0"}, Env{
+			done <- execute(ctx, []string{"--port", "0", "--legacy-allow-privileged-routes"}, Env{
 				Getenv: env(e), Stdout: out, Logger: log.New(logs, "", 0), Ready: func(a string) { ready <- a },
 				NewProvider: func(string) (vault.MasterProvider, error) { return prov, nil },
 			})

@@ -103,7 +103,7 @@ func startRealBackend(t *testing.T) *realBackend {
 	}
 	rb.AgentToken = tok
 	h, err := server.New(server.Config{
-		Vault: stack.Vault, AgentTokens: ts, Broker: stack.Broker,
+		Vault: stack.Vault, AgentTokens: ts, LegacyPrivilegedRoutes: true, Broker: stack.Broker,
 		Actions: stack.Actions, Capabilities: stack.Capabilities,
 	})
 	if err != nil {

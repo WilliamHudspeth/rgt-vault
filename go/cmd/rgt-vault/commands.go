@@ -35,6 +35,8 @@ func exitCode(err error) int {
 
 // cli is the per-invocation environment shared by the HTTP subcommands.
 type cli struct {
+	// err, when set, is returned by every request (no usable token).
+	err    error
 	host   string
 	token  string
 	stdin  io.Reader
@@ -58,6 +60,9 @@ func (c *cli) secretURL(namespace, name, suffix string) string {
 // ---------------------------------------------------------------------------
 
 func (c *cli) do(method, reqURL string, body any) ([]byte, int, error) {
+	if c.err != nil {
+		return nil, 0, c.err
+	}
 	var bodyReader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)

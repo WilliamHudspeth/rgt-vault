@@ -80,6 +80,12 @@ type Middleware struct {
 	// requests.
 	OperatorTokenStore *auth.TokenStore
 
+	// LegacyPrivilegedRoutes lets the legacy shared token reach the lease
+	// route, /v1/rotate and the audit log, as before H1. Off by default:
+	// legacy mode then refuses them (403) and the operator uses the offline
+	// commands (get --offline, verify-audit --offline).
+	LegacyPrivilegedRoutes bool
+
 	// Auditor receives AUTH_FAILED / AUTH_RATE_LIMITED / AUTHZ_DENIED rows.
 	// Nil: not audited (tests of the bare middleware).
 	Auditor AuthAuditor
@@ -365,7 +371,7 @@ func (mw *Middleware) authenticate(r *http.Request) (auth.Principal, error) {
 	}
 	// Legacy shared token files: the route picks the file, as before H1.
 	ts := mw.TokenStore
-	if operatorPath(r.URL.Path) && mw.OperatorTokenStore != nil {
+	if operatorPath(handlers.RoutePath(r)) && mw.OperatorTokenStore != nil {
 		ts = mw.OperatorTokenStore
 	}
 	if ts == nil {
@@ -413,7 +419,7 @@ func (mw *Middleware) AuthMiddleware(next http.Handler) http.Handler {
 					id = "-"
 				}
 				event := handlers.EventAuthFailed
-				details := "ip=" + handlers.ClientIP(r) + " " + r.Method + " " + r.URL.Path + " reason=" + reason + " token=" + id
+				details := "ip=" + handlers.ClientIP(r) + " " + r.Method + " " + handlers.AuditPath(r) + " reason=" + reason + " token=" + id
 				if limited {
 					event = handlers.EventAuthRateLimited
 					details += " (further failures from this source are not logged until the window ends)"
@@ -426,6 +432,14 @@ func (mw *Middleware) AuthMiddleware(next http.Handler) http.Handler {
 				return
 			}
 			writeUnauthorized(w, msg)
+			return
+		}
+		if p.Legacy && !mw.LegacyPrivilegedRoutes && legacyPrivileged(r) {
+			if mw.Auditor != nil {
+				mw.Auditor.AuditDenied(r, p, "route disabled in legacy shared-token mode")
+			}
+			WriteJSONError(w, http.StatusForbidden, "AuthorizationError",
+				"this route is disabled in legacy shared-token mode: use a per-agent token (or the offline command)")
 			return
 		}
 		if !p.Legacy {

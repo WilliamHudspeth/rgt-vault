@@ -47,6 +47,22 @@ func PrincipalFromContext(ctx context.Context) (auth.Principal, bool) {
 	return p, ok
 }
 
+// AuditPath is the request path as it may appear in an audit row or log:
+// percent-encoded (url.URL.EscapedPath), so a client cannot forge fields
+// with spaces ("%20reason=expired") or split lines with CR/LF, U+0085 or
+// U+2028: those are always escaped there. Never write r.URL.Path (the
+// DECODED path) into audit details.
+func AuditPath(r *http.Request) string { return r.URL.EscapedPath() }
+
+// RoutePath is the path the router (chi) matches: r.URL.RawPath when set,
+// else r.URL.Path. Route-dependent decisions classify this string.
+func RoutePath(r *http.Request) string {
+	if r.URL.RawPath != "" {
+		return r.URL.RawPath
+	}
+	return r.URL.Path
+}
+
 // ClientIP is the request's peer address without the port ("?" if unknown).
 func ClientIP(r *http.Request) string {
 	client, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -71,7 +87,7 @@ func (h *Handlers) AuditDenied(r *http.Request, p auth.Principal, reason string)
 	if h.Vault == nil {
 		return
 	}
-	details := "token=" + p.TokenID + " ip=" + ClientIP(r) + " " + r.Method + " " + r.URL.Path + " reason=" + reason
+	details := "token=" + p.TokenID + " ip=" + ClientIP(r) + " " + r.Method + " " + AuditPath(r) + " reason=" + reason
 	agent := sql.NullString{}
 	if p.Agent != "" {
 		agent = sql.NullString{String: p.Agent, Valid: true}

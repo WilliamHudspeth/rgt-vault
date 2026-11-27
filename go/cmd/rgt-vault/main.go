@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -50,11 +51,42 @@ func serveEnv(stdout io.Writer) servecmd.Env {
 	return servecmd.Env{Stdout: stdout, NewProvider: newProvider, KDFParams: kdfParams, Ready: serveReady}
 }
 
-// resolveToken returns the bearer token from flag > $RGT_VAULT_TOKEN >
-// the file $RGT_VAULT_TOKEN_FILE > ~/.config/rgt-vault/operator.token (the
-// operator token `rgt-vault init` mints into the token store) >
-// ~/.config/rgt-vault/server.token (the legacy shared token).
-func resolveToken(flagVal string) string {
+// tokenSources says which implicit token files a command may fall back to
+// after the explicit sources (--token, $RGT_VAULT_TOKEN, $RGT_VAULT_TOKEN_FILE).
+type tokenSources struct {
+	// operatorFile: ~/.config/rgt-vault/operator.token (the full operator
+	// token `init` mints). Only operator commands, or --as-operator.
+	operatorFile bool
+	// legacyFile: ~/.config/rgt-vault/server.token (the pre-H1 shared token).
+	legacyFile bool
+}
+
+var (
+	// operatorCmd: tui, audit, verify-audit, rotate.
+	operatorCmd = tokenSources{operatorFile: true, legacyFile: true}
+	// agentCmd: set, get, list, revoke, simulate, fingerprint. An agent that
+	// shells out to the CLI with a missing token variable must not silently
+	// become the operator (review of PR #53, HIGH-1).
+	agentCmd = tokenSources{legacyFile: true}
+	// explicitOnly: mcp. An MCP server is always an agent: never a file
+	// fallback.
+	explicitOnly = tokenSources{}
+)
+
+// errNoToken explains where a token comes from.
+func errNoToken(src tokenSources) error {
+	msg := "no bearer token: pass --token, or set RGT_VAULT_TOKEN or RGT_VAULT_TOKEN_FILE (a token minted for this agent: rgt-vault token mint --agent NAME --out FILE)"
+	if !src.operatorFile && src.legacyFile {
+		msg += "; an operator may add --as-operator to use ~/.config/rgt-vault/operator.token"
+	}
+	return errors.New(msg)
+}
+
+// resolveToken returns the bearer token from --token > $RGT_VAULT_TOKEN >
+// the file $RGT_VAULT_TOKEN_FILE, then (as src allows)
+// ~/.config/rgt-vault/operator.token and the legacy
+// ~/.config/rgt-vault/server.token. "" means none was found.
+func resolveToken(flagVal string, src tokenSources) string {
 	if flagVal != "" {
 		return flagVal
 	}
@@ -68,7 +100,14 @@ func resolveToken(flagVal string) string {
 	if err != nil {
 		return ""
 	}
-	for _, name := range []string{"operator.token", "server.token"} {
+	var names []string
+	if src.operatorFile {
+		names = append(names, "operator.token")
+	}
+	if src.legacyFile {
+		names = append(names, "server.token")
+	}
+	for _, name := range names {
 		if t := readTokenFile(filepath.Join(home, ".config", "rgt-vault", name)); t != "" {
 			return t
 		}
@@ -146,19 +185,35 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 	}
 
 	rootCmd.PersistentFlags().StringVar(&host, "host", defaultHost, "server base URL (client subcommands)")
-	rootCmd.PersistentFlags().StringVar(&token, "token", "", "bearer token (overrides env RGT_VAULT_TOKEN, $RGT_VAULT_TOKEN_FILE, ~/.config/rgt-vault/operator.token and the legacy server.token)")
+	rootCmd.PersistentFlags().StringVar(&token, "token", "", "bearer token (overrides env RGT_VAULT_TOKEN and $RGT_VAULT_TOKEN_FILE; operator commands then fall back to ~/.config/rgt-vault/operator.token, all but mcp to the legacy server.token)")
+	var asOperator bool
+	rootCmd.PersistentFlags().BoolVar(&asOperator, "as-operator", false, "let an agent command (set, get, list, revoke, simulate, fingerprint) fall back to ~/.config/rgt-vault/operator.token")
 
 	// --db / --policy / --provider select the vault for every subcommand that
 	// opens the vault files (Python's global options).
 	var vf servecmd.VaultFlags
 	vf.Register(rootCmd, true)
 
-	// Helper to get resolved token at command runtime.
-	getToken := func() string { return resolveToken(token) }
-	// newCLI resolves the per-invocation HTTP environment at run time.
-	newCLI := func() *cli {
-		return &cli{host: strings.TrimSuffix(host, "/"), token: getToken(), stdin: stdin, stdout: stdout, client: newHTTPClient()}
+	// tokenFor resolves the token of one command class at run time.
+	tokenFor := func(src tokenSources) (string, error) {
+		if asOperator {
+			src.operatorFile = true
+		}
+		t := resolveToken(token, src)
+		if t == "" {
+			return "", errNoToken(src)
+		}
+		return t, nil
 	}
+	// newCLI (agent commands) / newOperatorCLI resolve the per-invocation
+	// HTTP environment; without a usable token every request fails with
+	// that error, before anything is sent.
+	mkCLI := func(src tokenSources) *cli {
+		t, err := tokenFor(src)
+		return &cli{err: err, host: strings.TrimSuffix(host, "/"), token: t, stdin: stdin, stdout: stdout, client: newHTTPClient()}
+	}
+	newCLI := func() *cli { return mkCLI(agentCmd) }
+	newOperatorCLI := func() *cli { return mkCLI(operatorCmd) }
 
 	// -----------------------------------------------------------------------
 	// set  — write a secret (value from stdin or --value-file)
@@ -267,7 +322,7 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 	rotateCmd := &cobra.Command{
 		Use:   "rotate",
 		Short: "Rotate the master key or DEK",
-		RunE:  func(cmd *cobra.Command, args []string) error { return newCLI().runRotate(rotateTarget) },
+		RunE:  func(cmd *cobra.Command, args []string) error { return newOperatorCLI().runRotate(rotateTarget) },
 	}
 	rotateCmd.Flags().StringVar(&rotateTarget, "target", "master", "what to rotate: master | dek")
 
@@ -286,7 +341,7 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 			if verifyOffline || cmd.Flags().Changed("db") {
 				return runVerifyAuditOffline(cmd.Context(), &vf, stdout)
 			}
-			return newCLI().runVerifyAudit()
+			return newOperatorCLI().runVerifyAudit()
 		},
 	}
 	verifyAuditCmd.Flags().BoolVar(&verifyOffline, "offline", false, "verify the database file directly (read-only)")
@@ -298,7 +353,7 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 	auditCmd := &cobra.Command{
 		Use:   "audit",
 		Short: "Print audit log entries",
-		RunE:  func(cmd *cobra.Command, args []string) error { return newCLI().runAudit(auditLimit) },
+		RunE:  func(cmd *cobra.Command, args []string) error { return newOperatorCLI().runAudit(auditLimit) },
 	}
 	auditCmd.Flags().IntVar(&auditLimit, "limit", 100, "maximum entries to return")
 
@@ -333,7 +388,14 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 		Use:   "mcp",
 		Short: "Run a stdio MCP server bridging to the vault backend",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runMCP(strings.TrimSuffix(host, "/"), getToken(), mcpAgentLabel(mcpAgent), stdin, stdout, cmd.ErrOrStderr())
+			if asOperator {
+				return errors.New("mcp never runs on the operator token: give it a token minted for its agent (--token / RGT_VAULT_TOKEN / RGT_VAULT_TOKEN_FILE)")
+			}
+			t := resolveToken(token, explicitOnly)
+			if t == "" {
+				return errNoToken(explicitOnly)
+			}
+			return runMCP(strings.TrimSuffix(host, "/"), t, mcpAgentLabel(mcpAgent), stdin, stdout, cmd.ErrOrStderr())
 		},
 	}
 
@@ -347,7 +409,11 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 		Use:   "tui",
 		Short: "Launch the interactive dashboard (read-only by default)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTUI(strings.TrimSuffix(host, "/"), getToken(), tuiNamespace)
+			t, err := tokenFor(operatorCmd)
+			if err != nil {
+				return err
+			}
+			return runTUI(strings.TrimSuffix(host, "/"), t, tuiNamespace)
 		},
 	}
 	tuiCmd.Flags().StringVar(&tuiNamespace, "namespace", "default", "namespace to display")

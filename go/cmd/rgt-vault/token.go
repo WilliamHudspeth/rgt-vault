@@ -40,23 +40,60 @@ func tokenStorePath(flagVal string) (string, error) {
 	return server.ExpandHome(p)
 }
 
-// emitToken shows a new token exactly once: written to outFile (0600, never
-// overwriting) or else printed. It is written with Write, not a formatted
-// print, and nowhere else.
-func emitToken(out io.Writer, token, outFile string) error {
-	if outFile != "" {
-		p, err := server.ExpandHome(outFile)
-		if err != nil {
-			return err
-		}
-		created, err := writeSecretFile(p, []byte(token+"\n"), false)
+// tokenOut writes a new token to an --out file BEFORE the store commits it
+// (review of PR #53, L3): the destination is checked up front, written with
+// no-clobber semantics inside the store's commit hook, and removed again if
+// the store write then fails. Without --out the token is printed once,
+// after the commit.
+type tokenOut struct {
+	path    string // expanded --out, or ""
+	created bool
+}
+
+func newTokenOut(outFile string) (*tokenOut, error) {
+	if outFile == "" {
+		return &tokenOut{}, nil
+	}
+	p, err := server.ExpandHome(outFile)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Lstat(p); err == nil {
+		return nil, fmt.Errorf("%s already exists; not overwriting it (nothing was changed)", p)
+	}
+	return &tokenOut{path: p}, nil
+}
+
+// hook is the store's BeforeCommit (nil without --out).
+func (o *tokenOut) hook() func(string) error {
+	if o.path == "" {
+		return nil
+	}
+	return func(token string) error {
+		created, err := writeSecretFile(o.path, []byte(token+"\n"), false)
 		if err != nil {
 			return err
 		}
 		if !created {
-			return fmt.Errorf("%s already exists; not overwriting it (the token was stored: revoke or rotate it)", p)
+			return fmt.Errorf("%s already exists; not overwriting it (nothing was changed)", o.path)
 		}
-		fmt.Fprintf(out, "token written to %s (0600)\n", p)
+		o.created = true
+		return nil
+	}
+}
+
+// finish reports the outcome: on a failed commit it removes the file the
+// hook wrote; on success it prints the token once (no --out) or says where
+// it went. It is written with Write, not a formatted print, and nowhere else.
+func (o *tokenOut) finish(out io.Writer, token string, commitErr error) error {
+	if commitErr != nil {
+		if o.created {
+			_ = os.Remove(o.path)
+		}
+		return commitErr
+	}
+	if o.path != "" {
+		fmt.Fprintf(out, "token written to %s (0600)\n", o.path)
 		return nil
 	}
 	fmt.Fprintln(out, "token (shown once; store it now, it cannot be recovered):")
@@ -117,12 +154,15 @@ func newTokenCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			tok, info, err := st.Mint(auth.MintOptions{Agent: mintAgent, Scopes: scopes, TTL: mintTTL})
+			to, err := newTokenOut(mintOut)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(stdout, "minted "+describe(info))
-			return emitToken(stdout, tok, mintOut)
+			tok, info, err := st.Mint(auth.MintOptions{Agent: mintAgent, Scopes: scopes, TTL: mintTTL, BeforeCommit: to.hook()})
+			if err == nil {
+				fmt.Fprintln(stdout, "minted "+describe(info))
+			}
+			return to.finish(stdout, tok, err)
 		},
 	}
 	mint.Flags().StringVar(&mintAgent, "agent", "", "agent id the token acts as (required)")
@@ -200,12 +240,15 @@ func newTokenCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			tok, info, err := st.Rotate(args[0], rotTTL)
+			to, err := newTokenOut(rotOut)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(stdout, "rotated "+args[0]+" -> "+describe(info))
-			return emitToken(stdout, tok, rotOut)
+			tok, info, err := st.RotateWith(args[0], rotTTL, to.hook())
+			if err == nil {
+				fmt.Fprintln(stdout, "rotated "+args[0]+" -> "+describe(info))
+			}
+			return to.finish(stdout, tok, err)
 		},
 	}
 	rotate.Flags().DurationVar(&rotTTL, "expires", 0, "new lifetime (default: the old token's lifetime, or none)")

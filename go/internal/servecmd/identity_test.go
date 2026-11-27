@@ -2,6 +2,7 @@ package servecmd
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -80,22 +81,52 @@ func TestServeCorruptStoreRefused(t *testing.T) {
 	}
 }
 
-// --legacy-shared-token keeps the pre-H1 behaviour and warns at startup.
+// --legacy-shared-token keeps the pre-H1 identity model and warns at
+// startup, but refuses the lease route, rotation and the audit log unless
+// --legacy-allow-privileged-routes is also given (review MEDIUM-3).
 func TestServeLegacyWarns(t *testing.T) {
-	addr, tokenPath, out, logs, stop := startServer(t, []string{"--port", "0"}, map[string]string{})
-	defer stop()
-	if !strings.Contains(logs.String(), LegacyWarning) || !strings.Contains(out.String(), "LEGACY shared bearer token") {
-		t.Errorf("no legacy warning:\nlogs %s\nout %s", logs.String(), out.String())
+	for _, privileged := range []bool{false, true} {
+		args := []string{"--port", "0"}
+		if privileged {
+			args = append(args, "--legacy-allow-privileged-routes")
+		}
+		addr, tokenPath, out, logs, stop := startServer(t, args, map[string]string{})
+		if !strings.Contains(logs.String(), LegacyWarning) || !strings.Contains(out.String(), "LEGACY shared bearer token") {
+			t.Errorf("no legacy warning:\nlogs %s\nout %s", logs.String(), out.String())
+		}
+		if privileged != strings.Contains(logs.String(), LegacyPrivilegedWarning) {
+			t.Errorf("privileged=%v: logs %s", privileged, logs.String())
+		}
+		raw, _ := os.ReadFile(tokenPath)
+		tok := strings.TrimSpace(string(raw))
+		do := func(method, path, body string) (int, string) {
+			req, _ := http.NewRequest(method, "http://"+addr+path, strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+tok)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			b, _ := io.ReadAll(resp.Body)
+			return resp.StatusCode, string(b)
+		}
+		for _, c := range []struct{ method, path, body string }{
+			{"GET", "/v1/audit", ""}, {"POST", "/v1/audit/verify", ""},
+			{"POST", "/v1/rotate", `{"target":"dek"}`}, {"POST", "/v1/secrets/default/k/lease", `{"agent":"a"}`},
+		} {
+			code, body := do(c.method, c.path, c.body)
+			refused := code == 403 && strings.Contains(body, "legacy shared-token mode")
+			if refused != !privileged {
+				t.Errorf("legacy privileged=%v %s %s: %d %s", privileged, c.method, c.path, code, body)
+			}
+		}
+		if code, _ := do("GET", "/v1/actions", ""); code != 200 {
+			t.Errorf("legacy agent route: %d", code)
+		}
+		stop()
 	}
-	raw, _ := os.ReadFile(tokenPath)
-	req, _ := http.NewRequest("GET", "http://"+addr+"/v1/audit", nil)
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(raw)))
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != 200 { // legacy: the shared token reaches everything but /v1/requests
-		t.Errorf("legacy audit: %d", resp.StatusCode)
+	if _, err := parse(flagsOf(func(f *Flags) { f.LegacyPrivileged = true }), env(nil)); err == nil {
+		t.Error("--legacy-allow-privileged-routes without --legacy-shared-token accepted")
 	}
 }

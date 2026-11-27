@@ -29,6 +29,7 @@ func hardenedServer(t *testing.T, tweak func(*Middleware)) (http.Handler, string
 		t.Fatal(err)
 	}
 	mw := NewMiddleware(ts)
+	mw.LegacyPrivilegedRoutes = true // the pre-H1 hardening suite drives rotate/audit
 	if tweak != nil {
 		tweak(mw)
 	}

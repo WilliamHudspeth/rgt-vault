@@ -125,7 +125,7 @@ func (e *vaultEnv) startServer() (url, token string) {
 	if err := ts.Write(tok); err != nil {
 		e.t.Fatal(err)
 	}
-	h, err := server.New(server.Config{Vault: stack.Vault, AgentTokens: ts, Actions: stack.Actions, Capabilities: stack.Capabilities})
+	h, err := server.New(server.Config{Vault: stack.Vault, AgentTokens: ts, LegacyPrivilegedRoutes: true, Actions: stack.Actions, Capabilities: stack.Capabilities})
 	if err != nil {
 		e.t.Fatal(err)
 	}
