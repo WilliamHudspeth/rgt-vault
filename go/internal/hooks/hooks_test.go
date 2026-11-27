@@ -259,8 +259,10 @@ func TestRedact(t *testing.T) {
 	if in["api_key"] != "abc" {
 		t.Fatal("Redact mutated its input")
 	}
-	if IsHighEntropy(strings.Repeat("a", 24)) || !IsHighEntropy(strings.Repeat("a", 25)) || IsHighEntropy(strings.Repeat("a", 30)+" ") {
-		t.Fatal("IsHighEntropy boundaries")
+	// Boundaries are pinned in TestHighEntropyBoundary (Go redacts from 24
+	// characters; Python's len > 24 started at 25).
+	if IsHighEntropy(strings.Repeat("a", 30) + " ") {
+		t.Fatal("IsHighEntropy with a space")
 	}
 	if Redact(42) != 42 {
 		t.Fatal("scalar")

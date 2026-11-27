@@ -24,12 +24,16 @@ var highEntropy = regexp.MustCompile(`^[A-Za-z0-9+/=_-]{24,}$`)
 // Redacted is the replacement for a sensitive value.
 const Redacted = "[REDACTED]"
 
-// IsHighEntropy is the heuristic for long base64/hex-looking strings.
-func IsHighEntropy(s string) bool { return len(s) > 24 && highEntropy.MatchString(s) }
+// IsHighEntropy is the heuristic for long base64/hex-looking strings: 24 or
+// more characters from the base64/hex alphabet. Deliberate difference from
+// Python, whose `len(s) > 24 and fullmatch(...{24,})` lets a 24-character
+// secret through unredacted; Go uses the regex's own lower bound.
+func IsHighEntropy(s string) bool { return highEntropy.MatchString(s) }
 
 // Redact returns a copy of v with sensitive keys, high-entropy strings and
 // byte slices redacted (python redact). It never mutates v. Unlike Python,
-// a high-entropy string is replaced entirely by [REDACTED], with no prefix.
+// a high-entropy string is replaced entirely by [REDACTED], with no prefix,
+// and strings of exactly 24 such characters count (see IsHighEntropy).
 func Redact(v any) any {
 	switch x := v.(type) {
 	case map[string]any:

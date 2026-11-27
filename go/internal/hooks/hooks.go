@@ -32,7 +32,8 @@
 //   - TwoFactorHook checks for a replay before evicting and purges expired
 //     ids on every accept (Python evicts first, only when full).
 //   - Redact replaces a high-entropy string entirely by [REDACTED]; Python
-//     keeps its first four characters.
+//     keeps its first four characters. A string counts as high-entropy
+//     from 24 characters (Python: from 25, so a 24-character secret leaked).
 //   - A freeze file that cannot be stat'ed (other than "does not exist")
 //     counts as frozen.
 //   - LogHook keeps at most MaxLogConsultations entries (Python's list is

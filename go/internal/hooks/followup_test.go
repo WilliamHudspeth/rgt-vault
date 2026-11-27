@@ -137,3 +137,35 @@ func TestReplayCachePurgesExpiredOnEveryAccept(t *testing.T) {
 		t.Fatalf("expired token accepted after purge: %+v", r)
 	}
 }
+
+// TestHighEntropyBoundary: redaction starts at 24 characters, the regex's own
+// lower bound. Python's `len(s) > 24` left a 24-character secret readable;
+// that boundary is deliberately not ported.
+func TestHighEntropyBoundary(t *testing.T) {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=_-"
+	for _, c := range []struct {
+		s    string
+		want bool
+	}{
+		{alphabet[:23], false},
+		{alphabet[:24], true},
+		{alphabet[:25], true},
+		{strings.Repeat("f", 24), true},          // hex
+		{"ghp_" + strings.Repeat("x", 20), true}, // 24 chars, token-shaped
+		{strings.Repeat("a", 23) + "!", false},   // 24 chars, '!' outside the charset
+		{strings.Repeat("a", 12) + " " + strings.Repeat("b", 12), false},
+		{strings.Repeat("é", 24), false},
+		{"", false},
+	} {
+		if got := IsHighEntropy(c.s); got != c.want {
+			t.Errorf("IsHighEntropy(%q) [len %d] = %v, want %v", c.s, len(c.s), got, c.want)
+		}
+		r := Redact(c.s)
+		if c.want && r != Redacted {
+			t.Errorf("Redact(%q) = %v, want %s", c.s, r, Redacted)
+		}
+		if !c.want && r != c.s {
+			t.Errorf("Redact(%q) = %v, want unchanged", c.s, r)
+		}
+	}
+}
