@@ -62,37 +62,49 @@ rgt-vault --version
 
 ## 5-minute quickstart
 
-1. Initialise the local token store (writes token to `~/.config/rgt-vault/server.token`; subsequent commands read it automatically):
+1. Create the vault and the token files (`~/.config/rgt-vault/server.token` and `operator.token`, mode 0600; later commands read the agent token automatically). The master secret goes into the OS keyring. Safe to repeat: nothing existing is overwritten:
    ```bash
    rgt-vault init
    ```
 
-2. Start the vault server in the background:
+2. Write a policy. With no policy every request is denied, so for this quickstart allow everything (use real rules for anything else, see the policies guide):
    ```bash
-   rgt-vault serve --addr :8080 &
+   cat > policy.yaml <<'YAML'
+   rules:
+     - effect: allow
+       agent: "*"
+       namespace: "*"
+       purpose: "*"
+       action: "*"
+   YAML
    ```
 
-3. Check the server health:
+3. Start the vault server in the background (127.0.0.1:8765; data persists in `~/.secure-vault/` across restarts):
+   ```bash
+   rgt-vault serve --policy policy.yaml &
+   ```
+
+4. Check the server health:
    ```bash
    rgt-vault status
    ```
 
-4. Store a secret under the `prod` namespace:
+5. Store a secret under the `prod` namespace:
    ```bash
    echo "my-secret-value" | rgt-vault set api-key --namespace prod
    ```
 
-5. List secrets in `prod`:
+6. List secrets in `prod`:
    ```bash
    rgt-vault list --namespace prod
    ```
 
-6. Retrieve the secret:
+7. Retrieve the secret:
    ```bash
    rgt-vault get api-key --namespace prod
    ```
 
-7. Verify the audit log integrity:
+8. Verify the audit log integrity:
    ```bash
    rgt-vault verify-audit
    ```

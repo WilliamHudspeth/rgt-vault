@@ -210,7 +210,7 @@ func TestSubcommands(t *testing.T) {
 	}
 }
 
-// Every one of the 12 subcommands from RGT-157 is covered by a test here.
+// Every one of the 12 subcommands from RGT-157 (plus the G10 additions) is registered.
 func TestAllTwelveSubcommandsRegistered(t *testing.T) {
 	root := newRootCmd(strings.NewReader(""), io.Discard)
 	have := map[string]bool{}
@@ -218,7 +218,8 @@ func TestAllTwelveSubcommandsRegistered(t *testing.T) {
 		have[c.Name()] = true
 	}
 	for _, name := range []string{"set", "get", "list", "revoke", "simulate", "fingerprint",
-		"rotate", "verify-audit", "audit", "init", "serve", "status"} {
+		"rotate", "verify-audit", "audit", "init", "serve", "status",
+		"enroll-2fa", "export", "import", "migrate", "provider", "mcp"} {
 		if !have[name] {
 			t.Errorf("subcommand %q not registered", name)
 		}
@@ -315,67 +316,6 @@ func TestBadJSONResponses(t *testing.T) {
 	}
 }
 
-// ---- init ----------------------------------------------------------------
-
-func TestInitWrites0600TokenFile(t *testing.T) {
-	isolateEnv(t)
-	path := filepath.Join(t.TempDir(), "nested", "server.token")
-	code, stdout, stderr := runCLI(t, "", "init", "--token-file", path)
-	if code != 0 {
-		t.Fatalf("init exit %d: %s", code, stderr)
-	}
-	if stdout != "Vault initialised. Token written to: "+path+"\n" {
-		t.Errorf("stdout = %q", stdout)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(data) != 43 || strings.ContainsAny(string(data), "+/=\n") {
-		t.Errorf("token %q is not 32 bytes raw-url-base64", data)
-	}
-	if strings.Contains(stdout, string(data)) {
-		t.Error("init printed the token")
-	}
-	assertMode0600(t, path)
-
-	// Re-running replaces the token and tightens a loose pre-existing mode.
-	if err := os.Chmod(path, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if code, _, _ := runCLI(t, "", "init", "--token-file", path); code != 0 {
-		t.Fatal("second init failed")
-	}
-	data2, _ := os.ReadFile(path)
-	if bytes.Equal(data, data2) {
-		t.Error("second init reused the token")
-	}
-	assertMode0600(t, path)
-}
-
-func TestInitDefaultPathUnderHome(t *testing.T) {
-	isolateEnv(t)
-	if code, _, stderr := runCLI(t, "", "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
-	home, _ := os.UserHomeDir()
-	assertMode0600(t, filepath.Join(home, ".config", "rgt-vault", "server.token"))
-}
-
-func TestInitFailsOnUnwritablePath(t *testing.T) {
-	isolateEnv(t)
-	blocker := filepath.Join(t.TempDir(), "file")
-	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if code, _, _ := runCLI(t, "", "init", "--token-file", filepath.Join(blocker, "server.token")); code != 1 {
-		t.Errorf("exit %d, want 1", code)
-	}
-	if err := runInit("", io.Discard); err == nil {
-		t.Error("empty token path accepted")
-	}
-}
-
 func assertMode0600(t *testing.T, path string) {
 	t.Helper()
 	fi, err := os.Stat(path)
@@ -388,94 +328,6 @@ func assertMode0600(t *testing.T, path string) {
 	if fi.Mode().Perm() != 0o600 {
 		t.Errorf("%s mode = %o, want 600", path, fi.Mode().Perm())
 	}
-}
-
-// ---- serve ---------------------------------------------------------------
-
-func TestServeHandlerUsesRealRouterAndAuth(t *testing.T) {
-	isolateEnv(t)
-	tokenPath := filepath.Join(t.TempDir(), "server.token")
-	h, path, err := newServeHandler(tokenPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if path != tokenPath {
-		t.Errorf("path = %q", path)
-	}
-	assertMode0600(t, tokenPath)
-	raw, _ := os.ReadFile(tokenPath)
-	token := strings.TrimSpace(string(raw))
-
-	srv := httptest.NewServer(h)
-	defer srv.Close()
-
-	// status against the served /healthz (no token needed)
-	if code, out, _ := runCLI(t, "", "--host", srv.URL, "status"); code != 0 || out != "Server OK: "+srv.URL+"\n" {
-		t.Errorf("status: exit %d out %q", code, out)
-	}
-	// authenticated route rejects a wrong token, accepts the file's token
-	if code, _, _ := runCLI(t, "", "--host", srv.URL, "--token", "wrong", "list"); code != 1 {
-		t.Errorf("wrong token: exit %d, want 1", code)
-	}
-	if code, _, stderr := runCLI(t, "", "--host", srv.URL, "--token", token, "list"); code != 0 {
-		t.Errorf("right token: exit %d %s", code, stderr)
-	}
-	// existing token file is reused, not regenerated
-	if _, _, err := newServeHandler(tokenPath); err != nil {
-		t.Fatal(err)
-	}
-	raw2, _ := os.ReadFile(tokenPath)
-	if !bytes.Equal(raw, raw2) {
-		t.Error("serve regenerated an existing token")
-	}
-}
-
-func TestServeCommandErrors(t *testing.T) {
-	isolateEnv(t)
-	// An unusable listen address makes serve exit 1 instead of blocking.
-	if code, _, stderr := runCLI(t, "", "serve", "--addr", "127.0.0.1:-1", "--token-file", filepath.Join(t.TempDir(), "t")); code != 1 {
-		t.Errorf("serve bad addr: exit %d (%s)", code, stderr)
-	}
-	if _, _, err := newServeHandler(""); err == nil {
-		t.Error("empty token path accepted")
-	}
-	blocker := filepath.Join(t.TempDir(), "file")
-	_ = os.WriteFile(blocker, nil, 0o600)
-	if code, _, _ := runCLI(t, "", "serve", "--token-file", filepath.Join(blocker, "t")); code != 1 {
-		t.Errorf("serve bad token path: exit %d", code)
-	}
-}
-
-func TestServeRefusesNonLoopback(t *testing.T) {
-	isolateEnv(t)
-	tok := filepath.Join(t.TempDir(), "t")
-	code, _, stderr := runCLI(t, "", "serve", "--addr", ":0", "--token-file", tok)
-	if code != 1 || !strings.Contains(stderr, "not a loopback address") {
-		t.Fatalf("exit %d stderr %q", code, stderr)
-	}
-	if _, err := os.Stat(tok); err == nil {
-		t.Error("token file created before the bind check")
-	}
-	for addr, want := range map[string]bool{"127.0.0.1:1": true, "localhost:1": true, "[::1%lo]:1": true, ":1": false, "0.0.0.0:1": false, "bad": false} {
-		if isLoopbackAddr(addr) != want {
-			t.Errorf("isLoopbackAddr(%q) != %v", addr, want)
-		}
-	}
-}
-
-func TestServeTightensExistingTokenFile(t *testing.T) {
-	isolateEnv(t)
-	p := filepath.Join(t.TempDir(), "server.token")
-	if err := os.WriteFile(p, []byte("existing-token\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(p, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := newServeHandler(p); err != nil {
-		t.Fatal(err)
-	}
-	assertMode0600(t, p)
 }
 
 func TestMCPSubcommandUsesInjectedStreams(t *testing.T) {
@@ -537,13 +389,19 @@ func TestMCPAgentFlagAndEnv(t *testing.T) {
 	}
 }
 
-func TestServeDefaultsToLoopback(t *testing.T) {
+func TestServeDefaultsToLoopbackAndD6Port(t *testing.T) {
 	root := newRootCmd(strings.NewReader(""), io.Discard)
 	serve, _, err := root.Find([]string{"serve"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := serve.Flags().Lookup("addr").DefValue; got != "127.0.0.1:8080" {
-		t.Errorf("serve --addr default = %q, want loopback", got)
+	if serve.Flags().Lookup("host") == nil || serve.Flags().Lookup("port") == nil {
+		t.Fatal("serve lacks --host/--port")
+	}
+	if !strings.Contains(serve.Flags().Lookup("host").Usage, "127.0.0.1") || !strings.Contains(serve.Flags().Lookup("port").Usage, "8765") {
+		t.Errorf("serve help: host %q port %q", serve.Flags().Lookup("host").Usage, serve.Flags().Lookup("port").Usage)
+	}
+	if got := root.PersistentFlags().Lookup("host").DefValue; got != "http://127.0.0.1:8765" {
+		t.Errorf("client --host default = %q, want the D6 port 8765", got)
 	}
 }

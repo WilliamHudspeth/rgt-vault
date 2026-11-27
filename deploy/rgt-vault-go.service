@@ -1,5 +1,5 @@
 [Unit]
-Description=rgt-vault Go server (secrets daemon, bearer-token API)
+Description=rgt-vault Go server (persistent vault, bearer-token API)
 Documentation=https://github.com/WilliamHudspeth/rgt-vault
 After=network.target
 
@@ -13,20 +13,60 @@ Type=simple
 User=rgtvault
 Group=rgtvault
 
-# State (the 0600 bearer-token file) lives in /var/lib/rgt-vault, mode 0700,
-# created and owned by the service user via StateDirectory=.
+# State lives in /var/lib/rgt-vault, mode 0700, created and owned by the
+# service user via StateDirectory=: the vault (vault.db + keychain.json), the
+# 0600 bearer-token files and, if used, the sealed master-secret blobs.
 StateDirectory=rgt-vault
 StateDirectoryMode=0700
 WorkingDirectory=/var/lib/rgt-vault
 UMask=0077
 
+# --- the vault (RGT-505) ------------------------------------------------ #
+# `rgt-vault serve` opens a REAL, persistent vault; nothing is kept in memory.
+#   --db        under the state dir (ProtectHome hides ~/.secure-vault)
+#   --policy    ABAC policy YAML, read-only under /etc. Without it every
+#               request is denied (default deny), so a missing file is an
+#               error here on purpose: create /etc/rgt-vault/policy.yaml first.
+#   --provider  platform. There is no session D-Bus for a Secret Service
+#               keyring under systemd, so the default `keyring` provider cannot
+#               work. On Linux `platform` is the TPM 2.0: provision it ONCE,
+#               as the service user, before the first start:
+#                 sudo -u rgtvault rgt-vault provider seal tpm --generate \
+#                      --out-dir /var/lib/rgt-vault/sealed
+#                 sudo -u rgtvault rgt-vault init --provider platform \
+#                      --db /var/lib/rgt-vault/vault.db \
+#                      --token-file /var/lib/rgt-vault/server.token \
+#                      --operator-token-file /var/lib/rgt-vault/operator.token
+#               The sealed blobs are found through VAULT_TPM_PRIV/VAULT_TPM_PUB.
+#               (Python's equivalent is `seal_master_secret`; Windows uses DPAPI,
+#               macOS the Keychain: `rgt-vault provider seal --help`.)
+#   --port      8765, Python's port (decision D6; the unit used 8080 before).
+# The TPM device is the one hole in PrivateDevices=true below: it is bound in
+# and allowed explicitly. NOT verified on real TPM hardware (no CI runner has
+# one): check `systemctl status` / the journal on the first start.
+Environment=VAULT_TPM_PRIV=/var/lib/rgt-vault/sealed/master_secret.priv
+Environment=VAULT_TPM_PUB=/var/lib/rgt-vault/sealed/master_secret.pub
+SupplementaryGroups=tss
+BindPaths=-/dev/tpmrm0
+DeviceAllow=/dev/tpmrm0 rw
+
 # Loopback only (the Go server's default; stated explicitly on purpose).
-# Put a TLS reverse proxy in front if you must expose it. The bearer token is
-# never logged: the journal shows only the token file path and a short id.
-Environment=RGT_VAULT_TOKEN_FILE=/var/lib/rgt-vault/server.token
+# Put a TLS reverse proxy in front if you must expose it. The bearer tokens are
+# never logged: the journal shows only the token file paths and short ids.
 # CORS is denied unless exact origins are listed, for example:
 # Environment=CORS_ALLOWED_ORIGINS=https://dashboard.example
-ExecStart=/opt/rgt-vault/bin/rgt-vault-server --host 127.0.0.1 --port 8080
+#
+# Optional, append to ExecStart after creating the files (see
+# `rgt-vault enroll-2fa --help`):
+#   --operator-token-file /var/lib/rgt-vault/operator.token \
+#   --require-approval --totp-secret-file /var/lib/rgt-vault/totp.secret \
+#   --harness-key-file /var/lib/rgt-vault/harness.key
+ExecStart=/opt/rgt-vault/bin/rgt-vault serve \
+    --db /var/lib/rgt-vault/vault.db \
+    --policy /etc/rgt-vault/policy.yaml \
+    --provider platform \
+    --token-file /var/lib/rgt-vault/server.token \
+    --host 127.0.0.1 --port 8765
 
 Restart=on-failure
 RestartSec=2

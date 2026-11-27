@@ -1,0 +1,505 @@
+// Package servecmd is the one implementation of `rgt-vault serve`: it opens
+// the real vault (server.OpenStack), builds the HTTP handler (server.New)
+// and serves it on a loopback address until the context is cancelled.
+//
+// Both binaries use it: go/cmd/rgt-vault (`rgt-vault serve`) and the
+// deprecated alias go/cmd/server (`rgt-vault-server`).
+//
+// Flags (decision D6: Python's default port 8765):
+//
+//	--db / RGT_VAULT_DB                   default ~/.secure-vault/vault.db
+//	--policy / RGT_VAULT_POLICY           ABAC policy YAML; unset = deny everything
+//	--provider / RGT_VAULT_PROVIDER       keyring (default) or platform
+//	--host / RGT_VAULT_HOST               listen address, default 127.0.0.1
+//	--port / RGT_VAULT_PORT               listen port, default 8765
+//	--allow-non-loopback                  permit a non-loopback --host
+//	--token-file / RGT_VAULT_TOKEN_FILE   agent bearer token, default
+//	                                      ~/.config/rgt-vault/server.token
+//	--operator-token-file / RGT_VAULT_OPERATOR_TOKEN_FILE
+//	                                      token for /v1/requests* (approve/deny)
+//	--require-approval                    live approval of every unseal
+//	--totp-secret-file / RGT_VAULT_TOTP_SECRET_FILE   base32 secret (2FA approvals)
+//	--approval-timeout                    default 120s
+//	--harness-key-file / RGT_VAULT_HARNESS_KEY_FILE   HMAC key for v2 capability
+//	                                      tokens; unset = capability execution
+//	                                      fails closed
+//	--allow-private-network               built-in HTTP actions may reach private
+//	                                      addresses (SSRF risk)
+//	CORS_ALLOWED_ORIGINS                  comma-separated exact origins; unset = no CORS
+//	RGT_VAULT_MAX_BODY_BYTES              request body limit, default 1 MiB
+//
+// The bearer tokens are NEVER printed or logged. Only the token file paths
+// and short token ids (a hash prefix) appear in output.
+package servecmd
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"net/netip"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"rgt-vault-server/internal/auth"
+	"rgt-vault-server/internal/kdf"
+	"rgt-vault-server/internal/server"
+	"rgt-vault-server/internal/server/handlers"
+	"rgt-vault-server/internal/vault"
+)
+
+// Defaults of Python's `rgt-vault serve` (decision D6).
+const (
+	DefaultHost = "127.0.0.1"
+	DefaultPort = "8765"
+	// DefaultApprovalTimeout is how long an approval request waits.
+	DefaultApprovalTimeout = 120 * time.Second
+)
+
+// DefaultTokenPath is ~/.config/rgt-vault/server.token ("" if there is no
+// home directory).
+func DefaultTokenPath() string { return configPath("server.token") }
+
+// DefaultOperatorTokenPath is ~/.config/rgt-vault/operator.token.
+func DefaultOperatorTokenPath() string { return configPath("operator.token") }
+
+// DefaultTOTPPath is ~/.config/rgt-vault/totp.secret.
+func DefaultTOTPPath() string { return configPath("totp.secret") }
+
+func configPath(name string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".config", "rgt-vault", name)
+}
+
+// Env carries the process-level dependencies of the command, so tests can
+// replace them. The zero value is usable: it reads the real environment and
+// uses the real master-secret providers.
+type Env struct {
+	// Getenv reads environment variables (default os.Getenv).
+	Getenv func(string) string
+	// Stdout receives the startup banner (default os.Stdout).
+	Stdout io.Writer
+	// Logger receives warnings and progress (default log.Default()).
+	Logger *log.Logger
+	// NewProvider builds the named master-secret provider (default
+	// server.NewProvider).
+	NewProvider func(name string) (vault.MasterProvider, error)
+	// KDFParams are the Argon2 parameters for a NEW keychain (tests only;
+	// zero means Python's defaults).
+	KDFParams kdf.Params
+	// Ready, if set, is called with the bound address once the listener is
+	// up (tests).
+	Ready func(addr string)
+}
+
+func (e Env) getenv(k string) string {
+	if e.Getenv != nil {
+		return e.Getenv(k)
+	}
+	return os.Getenv(k)
+}
+
+func (e Env) stdout() io.Writer {
+	if e.Stdout != nil {
+		return e.Stdout
+	}
+	return os.Stdout
+}
+
+func (e Env) logger() *log.Logger {
+	if e.Logger != nil {
+		return e.Logger
+	}
+	return log.Default()
+}
+
+func (e Env) newProvider(name string) (vault.MasterProvider, error) {
+	if e.NewProvider != nil {
+		return e.NewProvider(name)
+	}
+	return server.NewProvider(name)
+}
+
+// VaultFlags are the flags that select a vault: --db, --policy, --provider.
+// `rgt-vault` registers them once as persistent root flags (like Python's
+// global options); `rgt-vault-server` registers them on its own command.
+type VaultFlags struct {
+	DB       string
+	Policy   string
+	Provider string
+}
+
+// Register adds the flags to cmd.
+func (v *VaultFlags) Register(cmd *cobra.Command, persistent bool) {
+	fs := cmd.Flags()
+	if persistent {
+		fs = cmd.PersistentFlags()
+	}
+	fs.StringVar(&v.DB, "db", "", "vault database (env RGT_VAULT_DB, default "+server.DefaultDBPath+")")
+	fs.StringVar(&v.Policy, "policy", "", "ABAC policy YAML (env RGT_VAULT_POLICY; default: deny everything)")
+	fs.StringVar(&v.Provider, "provider", "", "master-secret provider: keyring or platform (env RGT_VAULT_PROVIDER, default keyring)")
+}
+
+// Resolved are the vault-selection settings after flag > environment >
+// default resolution.
+type Resolved struct {
+	DB       string
+	Policy   string
+	Provider string
+}
+
+// Resolve applies flag > environment > default.
+func (v *VaultFlags) Resolve(getenv func(string) string) (Resolved, error) {
+	r := Resolved{
+		DB:       firstNonEmpty(v.DB, getenv("RGT_VAULT_DB"), server.DefaultDBPath),
+		Policy:   firstNonEmpty(v.Policy, getenv("RGT_VAULT_POLICY")),
+		Provider: firstNonEmpty(v.Provider, getenv("RGT_VAULT_PROVIDER"), server.ProviderKeyring),
+	}
+	if r.Provider != server.ProviderKeyring && r.Provider != server.ProviderPlatform {
+		return Resolved{}, fmt.Errorf("unknown provider %q: use 'keyring' or 'platform'", r.Provider)
+	}
+	db, err := server.ExpandHome(r.DB)
+	if err != nil {
+		return Resolved{}, err
+	}
+	r.DB = db
+	return r, nil
+}
+
+// Flags holds the raw `serve` flag values.
+type Flags struct {
+	Host                string
+	Port                string
+	AllowNonLoopback    bool
+	TokenFile           string
+	OperatorTokenFile   string
+	RequireApproval     bool
+	TOTPSecretFile      string
+	ApprovalTimeout     time.Duration
+	HarnessKeyFile      string
+	AllowPrivateNetwork bool
+}
+
+// config is the resolved server configuration.
+type config struct {
+	host      string
+	port      string
+	allowNonL bool
+	tokenFile string
+	origins   []string
+	rejected  []string
+	maxBody   int64
+
+	vault               Resolved
+	operatorTokenFile   string
+	requireApproval     bool
+	totpSecretFile      string
+	approvalTimeout     time.Duration
+	harnessKeyFile      string
+	allowPrivateNetwork bool
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// parseConfig resolves flags, then environment, then defaults.
+func parseConfig(f Flags, vf *VaultFlags, getenv func(string) string) (config, error) {
+	if f.ApprovalTimeout <= 0 {
+		return config{}, fmt.Errorf("invalid --approval-timeout %s", f.ApprovalTimeout)
+	}
+	res, err := vf.Resolve(getenv)
+	if err != nil {
+		return config{}, err
+	}
+	cfg := config{
+		host:      firstNonEmpty(f.Host, getenv("RGT_VAULT_HOST"), DefaultHost),
+		port:      firstNonEmpty(f.Port, getenv("RGT_VAULT_PORT"), DefaultPort),
+		allowNonL: f.AllowNonLoopback,
+		tokenFile: firstNonEmpty(f.TokenFile, getenv("RGT_VAULT_TOKEN_FILE"), DefaultTokenPath()),
+		maxBody:   server.DefaultMaxBodyBytes,
+
+		vault:               res,
+		operatorTokenFile:   firstNonEmpty(f.OperatorTokenFile, getenv("RGT_VAULT_OPERATOR_TOKEN_FILE")),
+		requireApproval:     f.RequireApproval,
+		totpSecretFile:      firstNonEmpty(f.TOTPSecretFile, getenv("RGT_VAULT_TOTP_SECRET_FILE")),
+		approvalTimeout:     f.ApprovalTimeout,
+		harnessKeyFile:      firstNonEmpty(f.HarnessKeyFile, getenv("RGT_VAULT_HARNESS_KEY_FILE")),
+		allowPrivateNetwork: f.AllowPrivateNetwork,
+	}
+	if cfg.tokenFile == "" {
+		return cfg, errors.New("no token path: home directory unknown, pass --token-file")
+	}
+	if cfg.totpSecretFile != "" && !cfg.requireApproval {
+		return config{}, errors.New("--totp-secret-file needs --require-approval")
+	}
+	if p, err := strconv.Atoi(cfg.port); err != nil || p < 0 || p > 65535 {
+		return config{}, fmt.Errorf("invalid port %q", cfg.port)
+	}
+	if v := getenv("RGT_VAULT_MAX_BODY_BYTES"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n <= 0 {
+			return config{}, fmt.Errorf("invalid RGT_VAULT_MAX_BODY_BYTES %q", v)
+		}
+		cfg.maxBody = n
+	}
+	cfg.origins, cfg.rejected = server.ParseAllowedOrigins(getenv("CORS_ALLOWED_ORIGINS"))
+	return cfg, nil
+}
+
+// writeTimeout bounds writing a response. A request waiting for operator
+// approval holds its response until the broker decides (up to the approval
+// timeout), so the limit must outlast it or an approved lease could not be
+// answered.
+func writeTimeout(cfg config) time.Duration {
+	const base = 60 * time.Second
+	if cfg.requireApproval {
+		return cfg.approvalTimeout + base
+	}
+	return base
+}
+
+// IsLoopbackHost reports whether host is "localhost" or a loopback address.
+func IsLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip, err := netip.ParseAddr(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"))
+	return err == nil && ip.IsLoopback()
+}
+
+// NewCommand returns the `serve` command. vf are the shared vault flags
+// (already registered by the caller on a parent); nil registers --db,
+// --policy and --provider on the command itself.
+func NewCommand(env Env, vf *VaultFlags) *cobra.Command {
+	var f Flags
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Run the HTTP server on the real vault (loopback only by default)",
+		Long: "Open the vault at --db (creating it on first use), serve the HTTP API on --host:--port and\n" +
+			"keep every secret on disk, so data persists across restarts.\n\n" +
+			"Without --policy every request is denied (default deny). Without --harness-key-file\n" +
+			"/v1/capabilities/execute fails closed.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := parseConfig(f, vf, env.getenv)
+			if err != nil {
+				return err
+			}
+			return Run(cmd.Context(), cfg, env)
+		},
+	}
+	if vf == nil {
+		vf = &VaultFlags{}
+		vf.Register(cmd, false)
+	}
+	fs := cmd.Flags()
+	fs.StringVar(&f.Host, "host", "", "listen address (env RGT_VAULT_HOST, default "+DefaultHost+")")
+	fs.StringVar(&f.Port, "port", "", "listen port (env RGT_VAULT_PORT, default "+DefaultPort+")")
+	fs.BoolVar(&f.AllowNonLoopback, "allow-non-loopback", false, "permit a non-loopback --host (plain HTTP: put a TLS reverse proxy in front)")
+	fs.StringVar(&f.TokenFile, "token-file", "", "agent bearer token file (env RGT_VAULT_TOKEN_FILE, default ~/.config/rgt-vault/server.token; created 0600 if missing)")
+	fs.StringVar(&f.OperatorTokenFile, "operator-token-file", "", "operator token for approve/deny (env RGT_VAULT_OPERATOR_TOKEN_FILE)")
+	fs.BoolVar(&f.RequireApproval, "require-approval", false, "require live operator approval for every unseal")
+	fs.StringVar(&f.TOTPSecretFile, "totp-secret-file", "", "base32 TOTP secret for 2FA approvals (env RGT_VAULT_TOTP_SECRET_FILE; see enroll-2fa)")
+	fs.DurationVar(&f.ApprovalTimeout, "approval-timeout", DefaultApprovalTimeout, "how long an approval request waits before it is denied")
+	fs.StringVar(&f.HarnessKeyFile, "harness-key-file", "", "HMAC key for v2 capability tokens (env RGT_VAULT_HARNESS_KEY_FILE)")
+	fs.BoolVar(&f.AllowPrivateNetwork, "allow-private-network", false, "let built-in HTTP actions reach loopback/private addresses (SSRF risk)")
+	return cmd
+}
+
+// Main runs cmd as a process main: it cancels the context on SIGINT/SIGTERM
+// and returns the process exit code.
+func Main(cmd *cobra.Command, args []string) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	cmd.SetArgs(args)
+	if err := cmd.ExecuteContext(ctx); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Error:", handlers.LogSafe(err.Error()))
+		return 1
+	}
+	return 0
+}
+
+// loadToken reads (creating it 0600 if missing) a bearer token file and
+// rejects a weak token. The token itself is never echoed.
+func loadToken(path, what string) (string, string, error) {
+	p, err := server.ExpandHome(path)
+	if err != nil {
+		return "", "", err
+	}
+	p, token, err := auth.LoadOrCreateToken(p)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to load/create %s: %w", what, err)
+	}
+	if err := ValidateToken(token); err != nil {
+		return "", "", fmt.Errorf("%s %s: %w", what, p, err)
+	}
+	// An existing file is reused as-is; make sure no other user can read it.
+	if err := TightenFile(p); err != nil {
+		return "", "", fmt.Errorf("restricting %s: %w", what, err)
+	}
+	return p, token, nil
+}
+
+// Run opens the vault described by cfg and serves until ctx is cancelled.
+func Run(ctx context.Context, cfg config, env Env) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	logger := env.logger()
+	stdout := env.stdout()
+
+	if !IsLoopbackHost(cfg.host) && !cfg.allowNonL {
+		return fmt.Errorf("refusing to bind %s: not a loopback address (pass --allow-non-loopback to override)", cfg.host)
+	}
+
+	// Load or create the bearer token. The token itself is never printed.
+	path, token, err := loadToken(cfg.tokenFile, "agent token")
+	if err != nil {
+		return err
+	}
+	tokenID := auth.TokenID(token)
+	logger.Printf("Token file: %s", handlers.LogSafe(path))
+	logger.Printf("Token ID: %s", tokenID)
+	for _, bad := range cfg.rejected {
+		logger.Printf("WARNING: ignoring CORS origin %q (wildcards and \"null\" are not accepted)", handlers.LogSafe(bad))
+	}
+
+	tokenStore := auth.NewTokenStore(path)
+
+	var operatorStore *auth.TokenStore
+	if cfg.operatorTokenFile != "" {
+		opPath, opToken, err := loadToken(cfg.operatorTokenFile, "operator token")
+		if err != nil {
+			return err
+		}
+		if opToken == token {
+			return errors.New("the operator token must differ from the agent token")
+		}
+		operatorStore = auth.NewTokenStore(opPath)
+		logger.Printf("Operator token file: %s (id %s)", handlers.LogSafe(opPath), auth.TokenID(opToken))
+	} else if cfg.requireApproval {
+		logger.Printf("WARNING: --require-approval is on but no --operator-token-file was given. " +
+			"The approve/deny endpoints will accept the agent token, so an agent could " +
+			"self-approve. Pass --operator-token-file to separate the operator scope.")
+	}
+	if cfg.allowPrivateNetwork {
+		logger.Printf("WARNING: --allow-private-network enables the built-in HTTP actions to call " +
+			"loopback / RFC1918 addresses. Any caller with a valid bearer token can use this to " +
+			"probe internal services (SSRF). Only enable on trusted networks.")
+	}
+
+	prov, err := env.newProvider(cfg.vault.Provider)
+	if err != nil {
+		return err
+	}
+	stack, err := server.OpenStack(ctx, server.StackOptions{
+		DBPath:              cfg.vault.DB,
+		PolicyFile:          cfg.vault.Policy,
+		MasterProvider:      prov,
+		RequireApproval:     cfg.requireApproval,
+		TOTPSecretFile:      cfg.totpSecretFile,
+		ApprovalTimeout:     cfg.approvalTimeout,
+		HarnessKeyFile:      cfg.harnessKeyFile,
+		AllowPrivateNetwork: cfg.allowPrivateNetwork,
+		KDFParams:           env.KDFParams,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to open vault: %w", err)
+	}
+	defer func() {
+		if cerr := stack.Close(); cerr != nil {
+			logger.Printf("closing vault: %v", handlers.LogSafe(cerr.Error()))
+		}
+	}()
+	if cfg.vault.Policy == "" {
+		logger.Printf("WARNING: no --policy given: every secret request is denied (default deny)")
+	}
+	if cfg.harnessKeyFile == "" {
+		logger.Printf("No --harness-key-file: /v1/capabilities/execute fails closed")
+	}
+
+	router, err := server.New(server.Config{
+		Vault:          stack.Vault,
+		AgentTokens:    tokenStore,
+		OperatorTokens: operatorStore,
+		Broker:         stack.Broker,
+		Actions:        stack.Actions,
+		Capabilities:   stack.Capabilities,
+		AllowedOrigins: cfg.origins,
+		MaxBodyBytes:   cfg.maxBody,
+	})
+	if err != nil {
+		return err
+	}
+
+	ln, err := net.Listen("tcp", net.JoinHostPort(cfg.host, cfg.port))
+	if err != nil {
+		return err
+	}
+	addr := ln.Addr().String()
+
+	if !IsLoopbackHost(cfg.host) {
+		logger.Printf("WARNING: listening on non-loopback address %s over plain HTTP; "+
+			"put a TLS reverse proxy in front and firewall the port", addr)
+	}
+
+	fmt.Fprintln(stdout, "==============================================")
+	fmt.Fprintln(stdout, "  rgt-vault server")
+	fmt.Fprintf(stdout, "  Listening on %s\n", addr)
+	fmt.Fprintf(stdout, "  Vault: %s (id %s, epoch %d)\n", stack.DBPath, stack.Vault.VaultID(), stack.Vault.KeyEpoch())
+	fmt.Fprintf(stdout, "  Health check: http://%s/healthz\n", addr)
+	fmt.Fprintf(stdout, "  Auth: Bearer token from %s (id %s)\n", path, tokenID)
+	fmt.Fprintln(stdout, "==============================================")
+
+	srv := &http.Server{
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      writeTimeout(cfg),
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Serve(ln) }()
+	logger.Printf("Starting HTTP server on %s", addr)
+	if env.Ready != nil {
+		env.Ready(addr)
+	}
+
+	select {
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			// Graceful drain timed out: force-close remaining connections.
+			logger.Printf("graceful shutdown incomplete (%v); closing connections", err)
+			_ = srv.Close()
+		}
+		return nil
+	}
+}

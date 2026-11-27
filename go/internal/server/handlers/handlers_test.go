@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -16,31 +15,6 @@ import (
 	"rgt-vault-server/internal/approval"
 	"rgt-vault-server/internal/capabilities"
 )
-
-// The deprecated ephemeral store is a real vault in a temp dir.
-func TestEphemeralStore(t *testing.T) {
-	s := NewStore()
-	h := NewHandlers(s, nil)
-	if h.Vault != s.Vault || h.Actions == nil {
-		t.Fatal("NewHandlers did not wire the store")
-	}
-	if _, err := os.Stat(s.dir); err != nil {
-		t.Fatal(err)
-	}
-	m, err := (&memoryMaster{secret: []byte("abc")}).GetMasterSecret()
-	if err != nil || string(m) != "abc" {
-		t.Errorf("memory master = %q %v", m, err)
-	}
-	if len(h.capabilityList()) != 2 {
-		t.Errorf("ephemeral capabilities = %d", len(h.capabilityList()))
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(s.dir); !os.IsNotExist(err) {
-		t.Errorf("temp dir not removed: %v", err)
-	}
-}
 
 func TestSchemaKeys(t *testing.T) {
 	if got := schemaKeys(capabilities.ParamList{"b", "a"}); strings.Join(got, ",") != "b,a" {
