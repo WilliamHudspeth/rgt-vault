@@ -66,7 +66,7 @@ func TestWebhookReviewFixes(t *testing.T) {
 	}
 	// Query string and fragment never reach the hook id.
 	wh, _ = NewWebhookHook("https://u:pw@soar.example/hook?token=secret123#frag")
-	if wh.ID() != "webhook:https://u:xxxxx@soar.example/hook" {
+	if wh.ID() != "webhook:https://soar.example" {
 		t.Fatalf("hook id = %q", wh.ID())
 	}
 }

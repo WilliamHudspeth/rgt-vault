@@ -176,10 +176,10 @@ func (h *TwoFactorHook) consultV2(req vault.HookRequest) vault.HookResponse {
 }
 
 // accept is the bounded replay cache shared by v1 and v2 (python
-// _accept_token): when full, expired ids are purged and then the half with
-// the earliest expiry is dropped (an evicted, still-valid id can then be
-// replayed: the documented trade-off of an in-process cache; the signature
-// check stays authoritative).
+// _accept_token): expired ids are purged on every call; when still full,
+// the half with the earliest expiry is dropped (an evicted, still-valid id
+// can then be replayed: the documented trade-off of an in-process cache;
+// the signature check stays authoritative).
 func (h *TwoFactorHook) accept(tokenID string, expiresAt int64, reason string) vault.HookResponse {
 	h.seenMu.Lock()
 	defer h.seenMu.Unlock()
@@ -189,12 +189,14 @@ func (h *TwoFactorHook) accept(tokenID string, expiresAt int64, reason string) v
 	if _, dup := h.seen[tokenID]; dup {
 		return deny("capability_token replay detected")
 	}
-	if len(h.seen) >= h.maxCache {
-		now := h.now().Unix()
-		for id, exp := range h.seen {
-			if exp > 0 && exp < now {
-				delete(h.seen, id)
-			}
+	// Purge expired ids on every accept (at most maxCache entries, so this
+	// is cheap), so stale ids never pile up until the cache is full. An
+	// expired token is rejected by its own expiry check before it reaches
+	// the cache, so forgetting it cannot enable a replay.
+	now := h.now().Unix()
+	for id, exp := range h.seen {
+		if exp > 0 && exp < now {
+			delete(h.seen, id)
 		}
 	}
 	if len(h.seen) >= h.maxCache {

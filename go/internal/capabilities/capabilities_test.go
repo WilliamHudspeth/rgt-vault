@@ -2,6 +2,7 @@ package capabilities
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -509,5 +510,54 @@ func TestReviewFixes(t *testing.T) {
 	}
 	if !pyTruthy(int64(2)) || !pyTruthy(jsonNum("bogus")) || !pyTruthy(struct{}{}) {
 		t.Fatal("pyTruthy truthy values")
+	}
+}
+
+// TestJSONSchemaMultiErrorOutcome: with several violations, Go's sorted key
+// order may name a different violation than Python's insertion order, but
+// the outcome is identical (rejected, ValidationError) for every order the
+// payload could have arrived in, and the named violation is deterministic.
+func TestJSONSchemaMultiErrorOutcome(t *testing.T) {
+	s := JSONSchema{
+		"required": []any{"id"},
+		"properties": map[string]any{
+			"id": map[string]any{"type": "integer"}, "name": map[string]any{"type": "string"},
+			"tags": map[string]any{"type": "array"},
+		},
+		"additionalProperties": false,
+	}
+	// Each JSON document is the same set of violations in a different key
+	// order (what Python would iterate).
+	docs := []string{
+		`{"id": "x", "name": 5, "tags": "t", "zzz": 1}`,
+		`{"zzz": 1, "tags": "t", "name": 5, "id": "x"}`,
+		`{"name": 5, "zzz": 1, "id": "x", "tags": "t"}`,
+	}
+	var first string
+	for _, d := range docs {
+		var p map[string]any
+		if err := json.Unmarshal([]byte(d), &p); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 20; i++ { // map iteration order varies run to run
+			err := s.Validate("c", p)
+			if !errors.Is(err, vault.ErrValidation) {
+				t.Fatalf("%s: not rejected: %v", d, err)
+			}
+			if first == "" {
+				first = err.Error()
+			}
+			if err.Error() != first {
+				t.Fatalf("non-deterministic message: %q vs %q", err.Error(), first)
+			}
+		}
+	}
+	if first != "Payload validation failed: 'id' must be an integer" {
+		t.Fatalf("first violation in sorted order = %q", first)
+	}
+	// Missing required fields are reported before any type error, as in Python.
+	err := s.Validate("c", map[string]any{"name": 5})
+	if err == nil || err.Error() != "Payload validation failed: Missing required field 'id'" {
+		t.Fatalf("required first: %v", err)
 	}
 }

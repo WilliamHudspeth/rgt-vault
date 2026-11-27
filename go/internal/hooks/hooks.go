@@ -27,7 +27,15 @@
 //   - WebhookHook dials through netguard: link-local / cloud-metadata
 //     addresses are always refused, and non-loopback hosts need
 //     WithAllowRemote (WebhookConfig.AllowRemote). Proxies from the
-//     environment are not used. The hook id redacts a URL password.
+//     environment are not used. Redirects are not followed and only 2xx
+//     answers count. The hook id is only scheme://host[:port].
+//   - TwoFactorHook checks for a replay before evicting and purges expired
+//     ids on every accept (Python evicts first, only when full).
+//   - Redact replaces a high-entropy string entirely by [REDACTED]; Python
+//     keeps its first four characters. A string counts as high-entropy
+//     from 24 characters (Python: from 25, so a 24-character secret leaked).
+//   - A freeze file that cannot be stat'ed (other than "does not exist")
+//     counts as frozen.
 //   - LogHook keeps at most MaxLogConsultations entries (Python's list is
 //     unbounded).
 //   - The shared secret for two_factor may be given only via config or an

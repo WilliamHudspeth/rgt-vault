@@ -36,6 +36,12 @@ var (
 	// execution fails closed. It also matches ErrValidation (Python raises
 	// ValidationError).
 	ErrNoTokenVerifier = errors.New("vault: no token verifier configured")
+	// ErrTokenVerifier means the configured TokenVerifier misbehaved: it
+	// returned neither a token nor an error. The call is denied (it also
+	// matches ErrPolicyDenied) and audited as "token: TokenVerifierError";
+	// the agent's failed-credential count is NOT incremented, because the
+	// fault is the server's, not the presented token's.
+	ErrTokenVerifier = errors.New("vault: token verifier returned no token")
 	// ErrCapabilityFailed wraps an error returned (or a panic raised) by a
 	// capability handler: a server fault, not an authorization failure.
 	ErrCapabilityFailed = errors.New("vault: capability handler failed")
@@ -163,8 +169,11 @@ func (v *Vault) ExecuteCapability(ctx context.Context, req CapabilityRequest) (a
 	}
 
 	// 3. RGT-277 failed-credential cap, checked before verifying another
-	// guess. Count-then-Record is not atomic (see python/vault.py): the
-	// cap can overshoot by the concurrency level, then self-corrects.
+	// guess. Same boundary as Python (`count(agent) >= max_requests`): with
+	// AuthFailureLimit = 100, 100 failed verifications are allowed in the
+	// window and the 101st attempt is refused without verifying.
+	// Count-then-Record is not atomic (see python/vault.py): the cap can
+	// overshoot by the concurrency level, then self-corrects.
 	if v.authFailureLimiter.Count(agent) >= v.authFailureLimiter.max {
 		return nil, deny(deniedErr("agent '%s' locked out: too many failed credential attempts", agent), "too many failed credential verifications")
 	}
@@ -172,7 +181,8 @@ func (v *Vault) ExecuteCapability(ctx context.Context, req CapabilityRequest) (a
 	// 4. Signature, envelope and expiry.
 	tok, verr := v.tokenVerifier.Verify(token)
 	if verr == nil && tok == nil {
-		verr = errors.New("token verifier returned no token")
+		return nil, deny(newErr([]error{ErrTokenVerifier, ErrPolicyDenied}, nil,
+			"capability token rejected: token verifier returned no token"), "token: TokenVerifierError")
 	}
 	if verr != nil {
 		v.authFailureLimiter.Record(agent)
@@ -382,6 +392,15 @@ func errorClass(err error) string {
 // ContextHash is the audit context_hash of a payload:
 // sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"),
 // default=str))[:16], with Python's ensure_ascii escaping.
+//
+// The 16-hex-character (64-bit) truncation is a frozen cross-implementation
+// format: the value is part of the CAPABILITY_EXECUTED / CAPABILITY_FAILED
+// details, which are hashed into the audit chain, and Python writes exactly
+// this width (python/vault.py execute_capability). Widening it would make
+// Go-written rows differ from Python's (TestPythonExecuteCapabilityParity)
+// and is an audit-format change (RGT-489). It is a correlation aid, not a
+// security control: nothing is authorized by matching it, so a birthday
+// collision (~2^32 payloads) only makes two rows look alike.
 func ContextHash(payload map[string]any) string {
 	var b strings.Builder
 	pyCompactSorted(&b, payload)
