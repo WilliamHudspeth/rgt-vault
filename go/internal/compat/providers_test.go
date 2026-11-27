@@ -23,15 +23,6 @@ func fixedSecret() []byte {
 	return b
 }
 
-func secretHex(t *testing.T, m map[string]any) []byte {
-	t.Helper()
-	b, err := hex.DecodeString(fmt.Sprint(m["secret_hex"]))
-	if err != nil {
-		t.Fatalf("bad secret_hex in %v: %v", m, err)
-	}
-	return b
-}
-
 // TestPythonDPAPIInterop (Windows only): Python seals the master secret with
 // CryptProtectData (pywin32), Go unseals it with CryptUnprotectData, and the
 // reverse, with and without entropy; a wrong entropy is refused by Go.
@@ -72,9 +63,8 @@ func TestPythonDPAPIInterop(t *testing.T) {
 			if err := providers.SealDPAPI(secret, goBlob, ent); err != nil {
 				t.Fatal(err)
 			}
-			r := runPython(t, py, nil, "dpapi-unseal", goBlob, entHex)
-			if got := secretHex(t, r); !bytes.Equal(got, secret) {
-				t.Fatalf("Python unseal of Go's blob: %x", got)
+			if r := runPython(t, py, nil, "dpapi-unseal", goBlob, entHex, hex.EncodeToString(secret)); r["match"] != true {
+				t.Fatalf("Python's unseal of Go's blob differs from the sealed secret: %v", r)
 			}
 		})
 	}
@@ -102,9 +92,8 @@ func TestPythonMacOSKeychainInterop(t *testing.T) {
 	if err := providers.SealMacOSKeychain([]byte(secret), service, "go-seals", false); err != nil {
 		t.Fatal(err)
 	}
-	r := runPython(t, py, nil, "macos-unseal", service, "go-seals")
-	if got := secretHex(t, r); string(got) != secret {
-		t.Fatalf("Python reads Go's keychain item as %q", got)
+	if r := runPython(t, py, nil, "macos-unseal", service, "go-seals", secret); r["match"] != true {
+		t.Fatalf("Python's read of Go's keychain item differs from the sealed secret: %v", r)
 	}
 }
 
@@ -139,8 +128,7 @@ func TestPythonTPMInterop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r = runPython(t, py, nil, "tpm-unseal", priv, pub)
-	if got := secretHex(t, r); !bytes.Equal(got, secret) {
-		t.Fatalf("Python unseal of Go's TPM blob: %x", got)
+	if r := runPython(t, py, nil, "tpm-unseal", priv, pub, hex.EncodeToString(secret)); r["match"] != true {
+		t.Fatalf("Python's unseal of Go's TPM blob differs from the sealed secret: %v", r)
 	}
 }

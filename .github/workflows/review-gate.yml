@@ -264,7 +264,7 @@ jobs:
             tpm2_getcap properties-fixed | head -5
             S="$(python -c "import secrets; print(secrets.token_hex(32))")"; D="$(mktemp -d)"
             python ../go/internal/compat/testdata/pycompat.py tpm-seal "$D" "$S"
-            python ../go/internal/compat/testdata/pycompat.py tpm-unseal "$D/master_secret.priv" "$D/master_secret.pub"
+            python ../go/internal/compat/testdata/pycompat.py tpm-unseal "$D/master_secret.priv" "$D/master_secret.pub" "$S"
             go test -count=1 -v -timeout 10m ./internal/providers -run TestLiveTPM
             go test -count=1 -v -timeout 10m ./internal/compat -run TestPythonTPMInterop
           '
