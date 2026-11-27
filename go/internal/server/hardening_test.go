@@ -29,6 +29,7 @@ func hardenedServer(t *testing.T, tweak func(*Middleware)) (http.Handler, string
 		t.Fatal(err)
 	}
 	mw := NewMiddleware(ts)
+	mw.LegacyPrivilegedRoutes = true // the pre-H1 hardening suite drives rotate/audit
 	if tweak != nil {
 		tweak(mw)
 	}
@@ -447,41 +448,6 @@ func TestListSecretsNeverReturnsValue(t *testing.T) {
 	rec = do(h, "GET", "/v1/secrets", token, nil, "")
 	if rec.Code != 200 || strings.Contains(rec.Body.String(), "value") {
 		t.Errorf("default list: %d %s", rec.Code, rec.Body.String())
-	}
-}
-
-// TODO(D5/H1): remove this test with the transitional plaintext-by-name path.
-func TestTransitionalNameLookupKeepsCLIWorking(t *testing.T) {
-	h, token := hardenedServer(t, nil)
-	do(h, "POST", "/v1/secrets", token, nil, `{"name":"k","value":"v1","namespace":"ns"}`)
-	do(h, "POST", "/v1/secrets", token, nil, `{"name":"other","value":"v2","namespace":"ns"}`)
-
-	// Exact shape the CLI (runGet) and MCP (lease_secret) parse.
-	rec := do(h, "GET", "/v1/secrets?namespace=ns&name=k", token, nil, "")
-	var resp struct {
-		Secrets []struct {
-			Name  string `json:"name"`
-			Value string `json:"value"`
-		} `json:"secrets"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if len(resp.Secrets) != 1 || resp.Secrets[0].Name != "k" || resp.Secrets[0].Value != "v1" {
-		t.Errorf("name lookup = %s", rec.Body.String())
-	}
-	if strings.Contains(rec.Body.String(), "v2") {
-		t.Error("name lookup returned a different secret")
-	}
-	// Missing name: empty list, no value, no error.
-	rec = do(h, "GET", "/v1/secrets?namespace=ns&name=missing", token, nil, "")
-	if rec.Code != 200 || strings.Contains(rec.Body.String(), "value") {
-		t.Errorf("missing lookup = %d %s", rec.Code, rec.Body.String())
-	}
-	// The read was audited.
-	rec = do(h, "GET", "/v1/audit?limit=1000", token, nil, "")
-	if !strings.Contains(rec.Body.String(), "SECRET_READ") {
-		t.Errorf("plaintext read not audited: %s", rec.Body.String())
 	}
 }
 

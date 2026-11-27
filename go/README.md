@@ -29,7 +29,7 @@ approval with TOTP, capability tokens and the built-in actions. Data persists ac
 cd go/
 go build -o rgt-vault ./cmd/rgt-vault
 
-./rgt-vault init                          # vault (+ master secret in the OS keyring), agent + operator tokens (0600)
+./rgt-vault init                          # vault (+ master secret in the OS keyring), token store + operator token (0600)
 cat > policy.yaml <<'YAML'
 rules:
   - effect: allow
@@ -45,6 +45,8 @@ echo "my-secret" | ./rgt-vault set api-key --namespace prod
 ./rgt-vault verify-audit
 ```
 
+Every token belongs to one agent and carries scopes; mint one per agent with `rgt-vault token mint --agent NAME`
+(breaking change in batch H1: [`docs/guides/agent-identity-migration.md`](../docs/guides/agent-identity-migration.md)).
 `init` is idempotent and never overwrites an existing vault or token (see [`docs/guides/cli.md`](../docs/guides/cli.md)
 for every subcommand and flag: `serve`, `init`, `status`, `enroll-2fa`, `export`/`import`,
 `migrate check`, `provider seal`, offline `get`/`verify-audit`).

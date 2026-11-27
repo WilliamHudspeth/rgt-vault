@@ -35,8 +35,11 @@ UMask=0077
 #                      --out-dir /var/lib/rgt-vault/sealed
 #                 sudo -u rgtvault rgt-vault init --provider platform \
 #                      --db /var/lib/rgt-vault/vault.db \
-#                      --token-file /var/lib/rgt-vault/server.token \
+#                      --token-store /var/lib/rgt-vault/tokens.json \
 #                      --operator-token-file /var/lib/rgt-vault/operator.token
+#               then one token per agent (batch H1, per-agent identity):
+#                 sudo -u rgtvault rgt-vault token mint --store \
+#                      /var/lib/rgt-vault/tokens.json --agent NAME --out FILE
 #               The sealed blobs are found through VAULT_TPM_PRIV/VAULT_TPM_PUB.
 #               (Python's equivalent is `seal_master_secret`; Windows uses DPAPI,
 #               macOS the Keychain: `rgt-vault provider seal --help`.)
@@ -57,15 +60,15 @@ DeviceAllow=/dev/tpmrm0 rw
 # Environment=CORS_ALLOWED_ORIGINS=https://dashboard.example
 #
 # Optional, append to ExecStart after creating the files (see
-# `rgt-vault enroll-2fa --help`):
-#   --operator-token-file /var/lib/rgt-vault/operator.token \
+# `rgt-vault enroll-2fa --help`; approvals need an operator-scoped token in
+# the store, which `init` creates):
 #   --require-approval --totp-secret-file /var/lib/rgt-vault/totp.secret \
 #   --harness-key-file /var/lib/rgt-vault/harness.key
 ExecStart=/opt/rgt-vault/bin/rgt-vault serve \
     --db /var/lib/rgt-vault/vault.db \
     --policy /etc/rgt-vault/policy.yaml \
     --provider platform \
-    --token-file /var/lib/rgt-vault/server.token \
+    --token-store /var/lib/rgt-vault/tokens.json \
     --host 127.0.0.1 --port 8765
 
 Restart=on-failure

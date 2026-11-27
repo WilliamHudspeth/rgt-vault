@@ -62,7 +62,7 @@ rgt-vault --version
 
 ## 5-minute quickstart
 
-1. Create the vault and the token files (`~/.config/rgt-vault/server.token` and `operator.token`, mode 0600; later commands read the agent token automatically). The master secret goes into the OS keyring. Safe to repeat: nothing existing is overwritten:
+1. Create the vault, the per-agent token store (`~/.config/rgt-vault/tokens.json`, hashes only) and an operator token (`~/.config/rgt-vault/operator.token`, mode 0600; later commands read it automatically). Give each agent its own token with `rgt-vault token mint --agent NAME` (see `docs/guides/agent-identity-migration.md`). The master secret goes into the OS keyring. Safe to repeat: nothing existing is overwritten:
    ```bash
    rgt-vault init
    ```
@@ -109,7 +109,7 @@ rgt-vault --version
    rgt-vault verify-audit
    ```
 
-> **Remote hosts:** when connecting to a remote rgt-vault server, pass `--token <token>` or set `RGT_VAULT_TOKEN` in your environment. After `rgt-vault init` the token is read from `~/.config/rgt-vault/server.token` automatically.
+> **Remote hosts:** when connecting to a remote rgt-vault server, pass `--token <token>` or set `RGT_VAULT_TOKEN` in your environment. After `rgt-vault init` the operator token is read from `~/.config/rgt-vault/operator.token` automatically (`RGT_VAULT_TOKEN_FILE` selects another file).
 
 ## Verifying the download
 

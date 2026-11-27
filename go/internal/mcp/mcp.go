@@ -59,9 +59,11 @@ type Server struct {
 	httpClient    *http.Client
 	serverName    string
 	serverVersion string
-	// agent is the agent label sent on execute_secret. It is operator
-	// configuration, not an authenticated identity: per-agent identity
-	// (token-derived agent) arrives with H1.
+	// agent is an optional agent label sent with execute_secret,
+	// lease_secret and the capability tools. Empty (the default) sends none:
+	// the server uses the agent bound to the bearer token (batch H1) and
+	// refuses a label that differs. Only a legacy shared-token server needs
+	// it set.
 	agent string
 	// logger receives backend error details; stdout is the protocol channel,
 	// so it must never point there. Defaults to the standard logger (stderr).
@@ -91,7 +93,6 @@ func NewServer(backendURL, token string) *Server {
 		},
 		serverName:    "rgt-vault-mcp",
 		serverVersion: "0.3.0",
-		agent:         DefaultAgent,
 		logger:        log.Default(),
 	}
 }
@@ -472,37 +473,38 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 	case "lease_secret":
 		ns := getStr("namespace")
 		nm := getStr("name")
-		// TODO(D5/G9): the server's transitional plaintext path is the
-		// exact-name filter on the list route; it returns that one secret
-		// with its value (audited). Unfiltered lists and the single-secret
-		// GET are metadata only. This moves when G9/G10 replace the route.
-		reqURL := s.backendURL + "/v1/secrets?namespace=" + url.QueryEscape(ns) + "&name=" + url.QueryEscape(nm)
-		resp, body, err := s.do("GET", reqURL, nil)
+		// RGT-504: the one plaintext route, POST .../lease. The server leases
+		// as the token's agent and needs a token with the agent AND lease
+		// scopes; an agent-only token gets 403 here.
+		reqURL := s.backendURL + "/v1/secrets/" + url.PathEscape(ns) + "/" + url.PathEscape(nm) + "/lease"
+		leaseBody := map[string]any{}
+		if s.agent != "" {
+			leaseBody["agent"] = s.agent
+		}
+		lb, err := json.Marshal(leaseBody)
+		if err != nil {
+			return "encode error", true
+		}
+		resp, body, err := s.do("POST", reqURL, lb)
 		if err != nil {
 			return s.unreachable(name, err)
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			return "secret not found", true
 		}
 		if resp.StatusCode != http.StatusOK {
 			return s.backendError("lease_secret", resp, body)
 		}
 		var res struct {
-			Secrets []struct {
-				Name  string  `json:"name"`
-				Value *string `json:"value"`
-			} `json:"secrets"`
+			Value *string `json:"value"`
 		}
 		if err := json.Unmarshal(body, &res); err != nil {
 			return "backend returned an invalid response", true
 		}
-		for _, sec := range res.Secrets {
-			if sec.Name != nm {
-				continue
-			}
-			if sec.Value == nil {
-				return "backend did not return a secret value", true
-			}
-			return *sec.Value, false
+		if res.Value == nil {
+			return "backend did not return a secret value", true
 		}
-		return "secret not found", true
+		return *res.Value, false
 
 	case "revoke_secret":
 		ns := getStr("namespace")
@@ -555,9 +557,11 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 		reqURL := s.backendURL + "/v1/secrets/" + url.PathEscape(ns) + "/" + url.PathEscape(nm) + "/use"
 		reqBody := map[string]any{
 			"action":  act,
-			"agent":   s.agent,
 			"purpose": purpose,
 			"params":  actionParams,
+		}
+		if s.agent != "" {
+			reqBody["agent"] = s.agent
 		}
 		bodyBytes, err := json.Marshal(reqBody)
 		if err != nil {
@@ -599,7 +603,9 @@ func (s *Server) backendError(tool string, resp *http.Response, body []byte) (st
 	return "backend error: " + resp.Status, true
 }
 
-// DefaultAgent is the agent label used when none is configured.
+// DefaultAgent was the agent label sent before H1. It is no longer applied
+// automatically: with per-agent tokens the token decides the agent. Pass it
+// to SetAgent (or --agent) only for a legacy shared-token server.
 const DefaultAgent = "mcp-client"
 
 const (
@@ -607,9 +613,14 @@ const (
 	maxPurposeLen  = 256
 )
 
-// SetAgent sets the agent label sent with execute_secret, validated with
-// the vault's agent rules (1-128 chars of [A-Za-z0-9_.@-]).
+// SetAgent sets the agent label sent with the secret and capability tools,
+// validated with the vault's agent rules (1-128 chars of [A-Za-z0-9_.@-]).
+// "" clears it (the token's agent is used).
 func (s *Server) SetAgent(agent string) error {
+	if agent == "" {
+		s.agent = ""
+		return nil
+	}
 	a, err := validation.ValidateAgent(agent)
 	if err != nil {
 		return err

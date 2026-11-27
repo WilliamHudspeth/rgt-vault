@@ -74,7 +74,7 @@ func TestPrecedenceFlagOverEnvOverDefault(t *testing.T) {
 		"RGT_VAULT_DB": "/e/v.db", "RGT_VAULT_POLICY": "/e/p.yaml", "RGT_VAULT_PROVIDER": "platform",
 		"RGT_VAULT_OPERATOR_TOKEN_FILE": "/e/op", "RGT_VAULT_TOTP_SECRET_FILE": "/e/totp", "RGT_VAULT_HARNESS_KEY_FILE": "/e/hk",
 	})
-	cfg, err := parse(flagsOf(func(f *Flags) { f.RequireApproval = true }), e)
+	cfg, err := parse(flagsOf(func(f *Flags) { f.RequireApproval, f.LegacySharedToken = true, true }), e)
 	if err != nil || cfg.host != "10.0.0.5" || cfg.port != "9000" || cfg.tokenFile != "/tmp/x.token" ||
 		cfg.vault.DB != "/e/v.db" || cfg.vault.Policy != "/e/p.yaml" || cfg.vault.Provider != "platform" ||
 		cfg.operatorTokenFile != "/e/op" || cfg.totpSecretFile != "/e/totp" || cfg.harnessKeyFile != "/e/hk" {
@@ -104,11 +104,26 @@ func TestParseConfigErrors(t *testing.T) {
 		}
 	}
 	// --require-approval without an operator token would let the agent token approve.
-	if _, err := parse(flagsOf(func(f *Flags) { f.RequireApproval = true }), env(nil)); err == nil || !strings.Contains(err.Error(), "--operator-token-file") {
-		t.Errorf("--require-approval without operator token: %v", err)
+	legacy := func(f *Flags) { f.LegacySharedToken, f.TokenFile = true, "/agent" }
+	if _, err := parse(flagsOf(func(f *Flags) { legacy(f); f.RequireApproval = true }), env(nil)); err == nil || !strings.Contains(err.Error(), "--operator-token-file") {
+		t.Errorf("legacy --require-approval without operator token: %v", err)
 	}
-	if _, err := parse(flagsOf(func(f *Flags) { f.RequireApproval, f.OperatorTokenFile = true, "/op" }), env(nil)); err != nil {
-		t.Errorf("--require-approval with operator token: %v", err)
+	if _, err := parse(flagsOf(func(f *Flags) { legacy(f); f.RequireApproval, f.OperatorTokenFile = true, "/op" }), env(nil)); err != nil {
+		t.Errorf("legacy --require-approval with operator token: %v", err)
+	}
+	// Per-agent mode: approval needs no operator token FILE (operator scope
+	// lives in the store), and the legacy file flags are refused.
+	if _, err := parse(flagsOf(func(f *Flags) { f.RequireApproval, f.TokenStore = true, "/s.json" }), env(nil)); err != nil {
+		t.Errorf("store --require-approval: %v", err)
+	}
+	for _, mod := range []func(*Flags){
+		func(f *Flags) { f.TokenFile = "/x" },
+		func(f *Flags) { f.OperatorTokenFile = "/x" },
+		func(f *Flags) { legacy(f); f.TokenStore = "/s.json" },
+	} {
+		if _, err := parse(flagsOf(mod), env(nil)); err == nil {
+			t.Errorf("mixed legacy/store flags accepted: %+v", flagsOf(mod))
+		}
 	}
 	if _, err := parseConfig(flagsOf(nil), &VaultFlags{Provider: "tpm"}, env(nil)); err == nil {
 		t.Error("unknown provider accepted")
@@ -155,7 +170,7 @@ func TestDefaultPaths(t *testing.T) {
 func startServer(t *testing.T, args []string, e map[string]string) (addr, tokenPath string, out, logs *bytes.Buffer, stop func()) {
 	t.Helper()
 	tokenPath = e["RGT_VAULT_TOKEN_FILE"]
-	if tokenPath == "" {
+	if tokenPath == "" && e["RGT_VAULT_TOKEN_STORE"] == "" {
 		tokenPath = filepath.Join(t.TempDir(), "srv.token")
 		e["RGT_VAULT_TOKEN_FILE"] = tokenPath
 	}
@@ -206,6 +221,11 @@ func execute(ctx context.Context, args []string, e Env) error {
 	}
 	if e.Logger == nil {
 		e.Logger = log.New(io.Discard, "", 0)
+	}
+	// The pre-H1 tests here drive the shared token files: they run in the
+	// (explicit) legacy mode. Store-mode tests pass --token-store.
+	if e.Getenv != nil && e.Getenv("RGT_VAULT_TOKEN_FILE") != "" && !hasArg(args, "--token-store") {
+		args = append([]string{"--legacy-shared-token"}, args...)
 	}
 	cmd := NewCommand(e, nil)
 	cmd.SilenceUsage, cmd.SilenceErrors = true, true
@@ -358,7 +378,7 @@ func TestServerPersistsAcrossRestarts(t *testing.T) {
 			e["RGT_VAULT_TOKEN_FILE"] = tokenPath
 		}
 		go func() {
-			done <- execute(ctx, []string{"--port", "0"}, Env{
+			done <- execute(ctx, []string{"--port", "0", "--legacy-allow-privileged-routes"}, Env{
 				Getenv: env(e), Stdout: out, Logger: log.New(logs, "", 0), Ready: func(a string) { ready <- a },
 				NewProvider: func(string) (vault.MasterProvider, error) { return prov, nil },
 			})
@@ -403,7 +423,7 @@ func TestServerPersistsAcrossRestarts(t *testing.T) {
 
 	addr2, _, _, stop2 := run()
 	defer stop2()
-	if code, body := call(addr2, "GET", "/v1/secrets?namespace=p&name=k", ""); code != 200 || !strings.Contains(body, `"persisted"`) {
+	if code, body := call(addr2, "POST", "/v1/secrets/p/k/lease", `{"agent":"a"}`); code != 200 || !strings.Contains(body, `"persisted"`) {
 		t.Fatalf("after restart: %d %s", code, body)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "vault", "keychain.json")); err != nil {
@@ -654,4 +674,13 @@ func TestTokensEqualAndListenContext(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "listen on 203.0.113.9:0") {
 		t.Errorf("listen error lacks the address: %v", err)
 	}
+}
+
+func hasArg(args []string, a string) bool {
+	for _, x := range args {
+		if x == a || strings.HasPrefix(x, a+"=") {
+			return true
+		}
+	}
+	return false
 }

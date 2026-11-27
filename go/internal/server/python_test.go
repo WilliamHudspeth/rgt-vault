@@ -71,7 +71,7 @@ func TestPythonServerParity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(Config{Vault: stack.Vault, AgentTokens: agentStore, Actions: stack.Actions, Capabilities: stack.Capabilities})
+	h, err := New(Config{Vault: stack.Vault, AgentTokens: agentStore, LegacyPrivilegedRoutes: true, Actions: stack.Actions, Capabilities: stack.Capabilities})
 	if err != nil {
 		t.Fatal(err)
 	}

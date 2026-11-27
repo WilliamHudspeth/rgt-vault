@@ -282,18 +282,21 @@ func mustWrite(t *testing.T, dir, name, content string) string {
 	return p
 }
 
-// `serve` through the CLI root: the real vault, persistent across restarts.
+// `serve` through the CLI root: the real vault, persistent across restarts,
+// on the per-agent token store `init` creates (batch H1).
 func TestServeSubcommandPersists(t *testing.T) {
 	e := newVaultEnv(t)
-	tok := filepath.Join(e.dir, "srv.token")
-	run1 := func(ctx context.Context) {}
-	_ = run1
+	store := filepath.Join(e.dir, "cfg", "tokens.json")
+	opFile := filepath.Join(e.dir, "cfg", "operator.token")
+	if code, _, stderr := runCLI(t, "", e.args("init", "--token-store", store, "--operator-token-file", opFile)...); code != 0 {
+		t.Fatalf("init: %s", stderr)
+	}
 	start := func() (addr string, stop func()) {
 		ctx, cancel := context.WithCancel(context.Background())
 		ready := make(chan string, 1)
 		done := make(chan int, 1)
 		go func() {
-			done <- runServeForTest(ctx, e.args("serve", "--port", "0", "--token-file", tok), ready)
+			done <- runServeForTest(ctx, e.args("serve", "--port", "0", "--token-store", store), ready)
 		}()
 		select {
 		case addr = <-ready:
@@ -303,8 +306,9 @@ func TestServeSubcommandPersists(t *testing.T) {
 		return addr, func() { cancel(); <-done }
 	}
 	addr, stop := start()
-	token := strings.TrimSpace(string(mustRead(t, tok)))
-	assertMode0600(t, tok)
+	token := strings.TrimSpace(string(mustRead(t, opFile)))
+	assertMode0600(t, store)
+	assertMode0600(t, opFile)
 	url := "http://" + addr
 	if code, out, stderr := runCLI(t, "persist-me\n", "--host", url, "--token", token, "set", "k", "--namespace", "p"); code != 0 {
 		t.Fatalf("set: %d %s %s", code, out, stderr)
@@ -312,7 +316,31 @@ func TestServeSubcommandPersists(t *testing.T) {
 	stop()
 	addr, stop = start()
 	defer stop()
-	if code, out, stderr := runCLI(t, "", "--host", "http://"+addr, "--token", token, "get", "k", "--namespace", "p"); code != 0 || out != "persist-me\n" {
+	// Plaintext over HTTP needs a lease-scoped token for the agent that
+	// owns the secret ("operator", which set it); the CLI reads it from
+	// $RGT_VAULT_TOKEN_FILE. The operator token itself has no lease scope.
+	if code, _, stderr := runCLI(t, "", "--host", "http://"+addr, "--token", token, "get", "k", "--namespace", "p"); code == 0 || !strings.Contains(stderr, "403") {
+		t.Errorf("operator token leased plaintext: %d %q", code, stderr)
+	}
+	leaseFile := filepath.Join(e.dir, "op-lease.token")
+	if code, _, stderr := runCLI(t, "", "token", "mint", "--store", store, "--agent", "operator", "--scope", "agent,lease", "--out", leaseFile); code != 0 {
+		t.Fatalf("mint lease token: %s", stderr)
+	}
+	t.Setenv("RGT_VAULT_TOKEN_FILE", leaseFile)
+	if code, out, stderr := runCLI(t, "", "--host", "http://"+addr, "get", "k", "--namespace", "p"); code != 0 || out != "persist-me\n" {
 		t.Fatalf("after restart: exit %d out %q err %q", code, out, stderr)
+	}
+	t.Setenv("RGT_VAULT_TOKEN_FILE", "")
+	// A minted agent-only token cannot read plaintext or the audit log.
+	code, out, stderr := runCLI(t, "", "token", "mint", "--store", store, "--agent", "bot", "--out", filepath.Join(e.dir, "bot.token"))
+	if code != 0 || strings.Contains(out, "\n"+strings.TrimSpace(string(mustRead(t, filepath.Join(e.dir, "bot.token"))))) {
+		t.Fatalf("mint: %d %q %q", code, out, stderr)
+	}
+	bot := strings.TrimSpace(string(mustRead(t, filepath.Join(e.dir, "bot.token"))))
+	if code, _, stderr := runCLI(t, "", "--host", "http://"+addr, "--token", bot, "get", "k", "--namespace", "p"); code == 0 || !strings.Contains(stderr, "403") {
+		t.Errorf("agent-only get: %d %q", code, stderr)
+	}
+	if code, _, stderr := runCLI(t, "", "--host", "http://"+addr, "--token", bot, "audit"); code == 0 || !strings.Contains(stderr, "403") {
+		t.Errorf("agent-only audit: %d %q", code, stderr)
 	}
 }

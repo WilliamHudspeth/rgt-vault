@@ -165,10 +165,10 @@ func TestListSecrets_MetadataAndFingerprints(t *testing.T) {
 		t.Error("a value sent by the server was kept")
 	}
 
-	// The list call carries the agent label and the namespace; the agent
-	// token is used; the secret name is path-escaped.
+	// The list call carries the namespace and no agent label (the server
+	// takes the agent from the token, H1); the secret name is path-escaped.
 	got := fs.requests()
-	if got[0] != "GET /v1/secrets?agent=operator&namespace=prod" {
+	if got[0] != "GET /v1/secrets?namespace=prod" {
 		t.Errorf("list request = %q", got[0])
 	}
 	joined := strings.Join(got, "\n")
@@ -372,11 +372,25 @@ func TestApprovalCalls_UseOperatorToken(t *testing.T) {
 			t.Errorf("%s used %q, want the operator token", key, fs.auths[key])
 		}
 	}
-	if b := fs.bodies["POST /v1/requests/r1/approve"]; b["totp_code"] != "123456" || b["operator"] != "tui" {
+	// No operator label: the server records the token's agent (H1).
+	if b := fs.bodies["POST /v1/requests/r1/approve"]; b["totp_code"] != "123456" || b["operator"] != nil {
 		t.Errorf("approve body = %v", b)
 	}
-	if b := fs.bodies["POST /v1/requests/r1/deny"]; b["reason"] != "denied by operator" || b["operator"] != "tui" {
+	if b := fs.bodies["POST /v1/requests/r1/deny"]; b["reason"] != "denied by operator" || b["operator"] != nil {
 		t.Errorf("deny body = %v", b)
+	}
+	// A configured label (legacy servers) is sent as the operator name.
+	if err := c.SetAgent("ops"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Deny("r1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if b := fs.bodies["POST /v1/requests/r1/deny"]; b["operator"] != "ops" {
+		t.Errorf("deny body with label = %v", b)
+	}
+	if err := c.SetAgent(""); err != nil || c.agent != "" {
+		t.Errorf("SetAgent(\"\") = %v %q", err, c.agent)
 	}
 	if got := strings.Join(fs.requests(), " "); !strings.Contains(got, "POST /v1/requests/r%2F2/approve") {
 		t.Errorf("request id not path-escaped: %s", got)

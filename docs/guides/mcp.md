@@ -18,7 +18,7 @@ rgt-vault mcp
 ```
 
 The command speaks JSON-RPC on stdin/stdout and is normally launched by an MCP client (e.g. Claude Desktop), not invoked directly.
-It connects to the backend at `--host` (default `http://127.0.0.1:8765`) and reads the bearer token from `--token`, the environment variable `RGT_VAULT_TOKEN`, or the file `~/.config/rgt-vault/server.token` (in that order).
+It connects to the backend at `--host` (default `http://127.0.0.1:8765`) and reads the bearer token from `--token`, the environment variable `RGT_VAULT_TOKEN`, the file named by `RGT_VAULT_TOKEN_FILE`, or `~/.config/rgt-vault/operator.token` / the legacy `server.token` (in that order). Give the MCP server **a token minted for its own agent** (`rgt-vault token mint --agent my_agent [--scope agent,lease] --out my_agent.token`, then `RGT_VAULT_TOKEN_FILE=my_agent.token`): the vault server acts as that agent, `lease_secret` needs the `lease` scope, and no agent label is sent (`--agent` / `RGT_VAULT_MCP_AGENT` is only for a legacy shared-token server; with per-agent tokens a different label is refused). See [agent-identity-migration.md](agent-identity-migration.md).
 
 ## Configure Claude Desktop
 
@@ -40,7 +40,7 @@ Config file locations:
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 - **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
-The token is read automatically from `~/.config/rgt-vault/server.token` when present.
+Without `--token`, the token is read from `RGT_VAULT_TOKEN_FILE` or `~/.config/rgt-vault/operator.token` (then the legacy `server.token`) when present; prefer a dedicated per-agent token over the operator one.
 
 ## Tools
 

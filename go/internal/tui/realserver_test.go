@@ -74,21 +74,20 @@ func startReal(t *testing.T) *realEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = stack.Close() })
-	mk := func(name string) (*auth.TokenStore, string) {
-		tok, err := auth.GenerateToken()
+	// Per-agent token store (batch H1): the agent "bot" may use, lease and
+	// read the audit log; the operator token only approves and audits.
+	store := auth.OpenStore(filepath.Join(dir, "tokens.json"))
+	mk := func(agent string, scopes ...auth.Scope) string {
+		tok, _, err := store.Mint(auth.MintOptions{Agent: agent, Scopes: scopes})
 		if err != nil {
 			t.Fatal(err)
 		}
-		ts := auth.NewTokenStore(filepath.Join(dir, name))
-		if err := ts.Write(tok); err != nil {
-			t.Fatal(err)
-		}
-		return ts, tok
+		return tok
 	}
-	agentStore, agentTok := mk("agent.token")
-	opStore, opTok := mk("operator.token")
+	agentTok := mk("bot", auth.ScopeAgent, auth.ScopeLease, auth.ScopeAudit)
+	opTok := mk("operator", auth.ScopeOperator)
 	h, err := server.New(server.Config{
-		Vault: stack.Vault, AgentTokens: agentStore, OperatorTokens: opStore, Broker: stack.Broker,
+		Vault: stack.Vault, Tokens: store, Broker: stack.Broker,
 		Actions: stack.Actions, Capabilities: stack.Capabilities,
 	})
 	if err != nil {
@@ -153,7 +152,7 @@ func TestRealServer_ListShowsMetadataAndDistinctFingerprints(t *testing.T) {
 		{"beta", "value-two", "second note", true},
 	} {
 		code, out := e.raw(t, "POST", "/v1/secrets", e.agentTok, map[string]any{
-			"name": s.name, "namespace": "prod", "value": s.value, "agent": "operator", "purpose": "seed",
+			"name": s.name, "namespace": "prod", "value": s.value, "agent": "bot", "purpose": "seed",
 			"note": s.note, "require_2fa": s.twofa,
 		})
 		if code != 200 {
@@ -206,7 +205,7 @@ func TestRealServer_ListShowsMetadataAndDistinctFingerprints(t *testing.T) {
 func TestRealServer_ApprovalFlowWithTOTP(t *testing.T) {
 	e := startReal(t)
 	if code, out := e.raw(t, "POST", "/v1/secrets", e.agentTok, map[string]any{
-		"name": "guarded", "namespace": "prod", "value": sentinel, "agent": "operator", "purpose": "seed", "require_2fa": true,
+		"name": "guarded", "namespace": "prod", "value": sentinel, "agent": "bot", "purpose": "seed", "require_2fa": true,
 	}); code != 200 {
 		t.Fatalf("seed: %d %s", code, out)
 	}
@@ -218,7 +217,7 @@ func TestRealServer_ApprovalFlowWithTOTP(t *testing.T) {
 	}
 	agentDone := make(chan result, 1)
 	go func() {
-		code, body := e.raw(t, "GET", "/v1/secrets?namespace=prod&name=guarded&agent=bot&purpose=deploy", e.agentTok, nil)
+		code, body := e.raw(t, "POST", "/v1/secrets/prod/guarded/lease", e.agentTok, map[string]any{"purpose": "deploy"})
 		agentDone <- result{code, string(body)}
 	}()
 
@@ -282,13 +281,13 @@ func TestRealServer_ApprovalFlowWithTOTP(t *testing.T) {
 func TestRealServer_DenyAndAgentGets403(t *testing.T) {
 	e := startReal(t)
 	if code, out := e.raw(t, "POST", "/v1/secrets", e.agentTok, map[string]any{
-		"name": "plain", "namespace": "prod", "value": sentinel, "agent": "operator", "purpose": "seed",
+		"name": "plain", "namespace": "prod", "value": sentinel, "agent": "bot", "purpose": "seed",
 	}); code != 200 {
 		t.Fatalf("seed: %d %s", code, out)
 	}
 	agentDone := make(chan int, 1)
 	go func() {
-		code, _ := e.raw(t, "GET", "/v1/secrets?namespace=prod&name=plain&agent=bot&purpose=p", e.agentTok, nil)
+		code, _ := e.raw(t, "POST", "/v1/secrets/prod/plain/lease", e.agentTok, map[string]any{"purpose": "p"})
 		agentDone <- code
 	}()
 	client := tui.NewHTTPClient(e.url, e.agentTok)

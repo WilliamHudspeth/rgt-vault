@@ -224,7 +224,9 @@ func open(t *testing.T, d vaultDir) *env {
 	}
 	e.token = tok
 	e.h, err = server.New(server.Config{
-		Vault: stack.Vault, AgentTokens: store, Broker: stack.Broker,
+		// Python parity = the pre-H1 shared-token model, including the
+		// privileged routes (audit/verify, rotate, lease) Python serves.
+		Vault: stack.Vault, AgentTokens: store, LegacyPrivilegedRoutes: true, Broker: stack.Broker,
 		Actions: stack.Actions, Capabilities: stack.Capabilities,
 	})
 	if err != nil {

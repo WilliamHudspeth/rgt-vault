@@ -10,8 +10,11 @@
 //  5. Method allow-list - unknown verbs and TRACE get 405 before authentication
 //  6. Strict path check - "..", "//", "\\" and control characters get 400
 //  7. Bearer token authentication (skipped for /healthz and the XML policy
-//     stubs). /v1/requests* takes the operator token, everything else the
-//     agent token.
+//     stubs) against the per-agent token store, then the route's scope
+//     (authz.go). Failures are audited (AUTH_FAILED / AUTHZ_DENIED) and
+//     repeated failures from one source are rate-limited (429). With the
+//     deprecated legacy shared token, /v1/requests* takes the operator token
+//     file and everything else the agent token file, as before H1.
 //  8. Request body size limit (413)
 package server
 
@@ -21,12 +24,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"rgt-vault-server/internal/auth"
@@ -50,16 +55,44 @@ var allowedMethods = map[string]bool{
 
 const allowHeaderValue = "GET, POST, OPTIONS"
 
+// AuthAuditor receives the audit events of the auth middleware.
+// *handlers.Handlers implements it.
+type AuthAuditor interface {
+	// AuditAuthFailure records a failed authentication (never the token).
+	AuditAuthFailure(r *http.Request, event, details string)
+	// AuditDenied records an authenticated request refused for its scope.
+	AuditDenied(r *http.Request, p auth.Principal, reason string)
+}
+
 // Middleware holds the server middleware components.
 type Middleware struct {
-	// TokenStore holds the agent bearer token.
+	// Tokens is the per-agent token store (the default since H1). When set,
+	// TokenStore and OperatorTokenStore are ignored.
+	Tokens *auth.Store
+
+	// TokenStore holds the DEPRECATED legacy shared agent bearer token
+	// (--legacy-shared-token). Used only when Tokens is nil.
 	TokenStore *auth.TokenStore
 
-	// OperatorTokenStore holds the operator token required by the approval
-	// endpoints (/v1/requests*). Nil means those endpoints accept the agent
-	// token, as Python does without --operator-token-file: an agent holding
-	// it could then approve its own requests.
+	// OperatorTokenStore holds the legacy operator token required by the
+	// approval endpoints (/v1/requests*) in legacy mode. Nil means those
+	// endpoints accept the agent token, as Python does without
+	// --operator-token-file: an agent holding it could then approve its own
+	// requests.
 	OperatorTokenStore *auth.TokenStore
+
+	// LegacyPrivilegedRoutes lets the legacy shared token reach the lease
+	// route, /v1/rotate and the audit log, as before H1. Off by default:
+	// legacy mode then refuses them (403) and the operator uses the offline
+	// commands (get --offline, verify-audit --offline).
+	LegacyPrivilegedRoutes bool
+
+	// Auditor receives AUTH_FAILED / AUTH_RATE_LIMITED / AUTHZ_DENIED rows.
+	// Nil: not audited (tests of the bare middleware).
+	Auditor AuthAuditor
+
+	failures     *failureLimiter
+	failuresOnce sync.Once
 
 	// AllowedOrigins is the exact-match CORS allow-list. Empty means CORS is
 	// denied for every origin (the default). "*" is never honoured.
@@ -69,9 +102,31 @@ type Middleware struct {
 	MaxBodyBytes int64
 }
 
-// NewMiddleware creates a Middleware with CORS denied and the default body limit.
+// NewMiddleware creates a legacy shared-token Middleware with CORS denied and
+// the default body limit. Use NewStoreMiddleware for per-agent tokens.
 func NewMiddleware(tokenStore *auth.TokenStore) *Middleware {
 	return &Middleware{TokenStore: tokenStore, MaxBodyBytes: DefaultMaxBodyBytes}
+}
+
+// NewStoreMiddleware creates a Middleware authenticating against the
+// per-agent token store.
+func NewStoreMiddleware(tokens *auth.Store) *Middleware {
+	return &Middleware{Tokens: tokens, MaxBodyBytes: DefaultMaxBodyBytes}
+}
+
+// SetAuthFailureLimit configures the per-source failed-authentication
+// limiter (<= 0 keeps the defaults). Call before serving.
+func (mw *Middleware) SetAuthFailureLimit(limit int, window time.Duration) {
+	mw.failures = newFailureLimiter(limit, window)
+}
+
+func (mw *Middleware) limiter() *failureLimiter {
+	mw.failuresOnce.Do(func() {
+		if mw.failures == nil {
+			mw.failures = newFailureLimiter(0, 0)
+		}
+	})
+	return mw.failures
 }
 
 // ParseAllowedOrigins turns a comma-separated list into an allow-list. Blank
@@ -277,62 +332,131 @@ func (mw *Middleware) BodyLimitMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// authFailure maps an auth error to a status and a fixed, non-echoing message.
-// Error text from the token store can contain the token file path, so it is
-// never copied into the response.
-func authFailure(err error) (int, string) {
+// authFailure maps an auth error to a status, a fixed non-echoing message
+// and the reason recorded in the audit row. Missing, unknown, revoked and
+// expired tokens all get the same 401 body, so the response is no oracle for
+// whether a token exists. Error text from the token stores can contain a
+// file path, so it is never copied into the response.
+func authFailure(err error) (status int, msg, reason string) {
 	switch {
 	case errors.Is(err, auth.ErrMissingAuth):
-		return http.StatusUnauthorized, "missing credentials"
-	case errors.Is(err, auth.ErrEmptyToken), errors.Is(err, auth.ErrInvalidToken):
-		return http.StatusUnauthorized, "invalid credentials"
+		return http.StatusUnauthorized, "missing credentials", "missing"
+	case errors.Is(err, auth.ErrEmptyToken):
+		return http.StatusUnauthorized, "invalid credentials", "empty"
+	case errors.Is(err, auth.ErrExpiredToken):
+		return http.StatusUnauthorized, "invalid credentials", "expired"
+	case errors.Is(err, auth.ErrInvalidToken):
+		return http.StatusUnauthorized, "invalid credentials", "invalid"
 	default:
-		// Token file unreadable: a server-side fault, not a client one.
+		// Token store unreadable: a server-side fault, not a client one.
 		log.Printf("ERROR: token verification unavailable: %v", err)
-		return http.StatusInternalServerError, "authentication unavailable"
+		return http.StatusInternalServerError, "authentication unavailable", ""
 	}
 }
 
-// operatorPath reports whether path is an operator endpoint.
+// operatorPath reports whether path is an approval endpoint.
 func operatorPath(path string) bool {
 	return path == "/v1/requests" || strings.HasPrefix(path, "/v1/requests/")
 }
 
-// AuthMiddleware verifies the bearer token for all routes except the public
-// ones. Unlike earlier versions it does NOT exempt OPTIONS: a legitimate
-// preflight is answered earlier by CORSMiddleware, and any other OPTIONS
-// request must authenticate like everything else.
+func publicRoute(r *http.Request) bool {
+	return r.Method == http.MethodGet &&
+		(r.URL.Path == "/healthz" || r.URL.Path == "/crossdomain.xml" || r.URL.Path == "/clientaccesspolicy.xml")
+}
+
+// authenticate identifies the caller of r.
+func (mw *Middleware) authenticate(r *http.Request) (auth.Principal, error) {
+	header := r.Header.Get("Authorization")
+	if mw.Tokens != nil {
+		return mw.Tokens.Authenticate(header)
+	}
+	// Legacy shared token files: the route picks the file, as before H1.
+	ts := mw.TokenStore
+	if operatorPath(handlers.RoutePath(r)) && mw.OperatorTokenStore != nil {
+		ts = mw.OperatorTokenStore
+	}
+	if ts == nil {
+		return auth.Principal{}, errors.New("no token store configured")
+	}
+	tokenID, err := ts.Verify(header)
+	if err != nil {
+		return auth.Principal{}, err
+	}
+	return auth.Principal{TokenID: tokenID, Legacy: true, Scopes: append([]auth.Scope(nil), auth.AllScopes...)}, nil
+}
+
+// AuthMiddleware authenticates every route except the public ones and
+// enforces the route's scope (authz.go). It does NOT exempt OPTIONS: a
+// legitimate preflight is answered earlier by CORSMiddleware, and any other
+// OPTIONS request must authenticate like everything else.
 //
-// /v1/requests* (approve/deny) verifies against OperatorTokenStore when one
-// is configured, and every other route against TokenStore only, so neither
-// token works in the other's scope. On success it stores the token id and
-// scope in the request context.
+// A failed authentication is audited (AUTH_FAILED with the client IP, the
+// route, the reason and at most a short token id: never the token) and
+// answered with a generic 401. More than the limiter allows from one source
+// in one window are answered 429 and summarised by a single
+// AUTH_RATE_LIMITED row, so an attacker cannot flood the audit log. A token
+// without the route's scope gets 403 and an AUTHZ_DENIED row. On success the
+// caller is stored in the request context (handlers.WithPrincipal).
 func (mw *Middleware) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet &&
-			(r.URL.Path == "/healthz" || r.URL.Path == "/crossdomain.xml" || r.URL.Path == "/clientaccesspolicy.xml") {
+		if publicRoute(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
-
-		ts, scope := mw.TokenStore, handlers.ScopeAgent
-		if operatorPath(r.URL.Path) {
-			scope = handlers.ScopeOperator
-			if mw.OperatorTokenStore != nil {
-				ts = mw.OperatorTokenStore
-			}
-		}
-		tokenID, err := ts.Verify(r.Header.Get("Authorization"))
+		p, err := mw.authenticate(r)
 		if err != nil {
-			status, msg := authFailure(err)
-			if status == http.StatusUnauthorized {
-				w.Header().Set("WWW-Authenticate", `Bearer realm="rgt-vault"`)
+			status, msg, reason := authFailure(err)
+			if status != http.StatusUnauthorized {
+				WriteJSONError(w, status, "ServerAuthError", msg)
+				return
 			}
-			WriteJSONError(w, status, "ServerAuthError", msg)
+			limited, report, full := mw.limiter().failure(handlers.ClientIP(r))
+			if mw.Auditor != nil && (!limited || report) {
+				id := p.TokenID // the record id of an expired token
+				if id == "" {
+					id = auth.PresentedID(r.Header.Get("Authorization"))
+				}
+				if id == "" {
+					id = "-"
+				}
+				event := handlers.EventAuthFailed
+				details := "ip=" + handlers.ClientIP(r) + " " + r.Method + " " + handlers.AuditPath(r) + " reason=" + reason + " token=" + id
+				switch {
+				case full:
+					event = handlers.EventAuthRateLimited
+					details += fmt.Sprintf(" (failure table full: %d sources tracked; failures from new sources get 429 and are not logged until the window ends)", maxTrackedSources)
+				case limited:
+					event = handlers.EventAuthRateLimited
+					details += " (further failures from this source are not logged until the window ends)"
+				}
+				mw.Auditor.AuditAuthFailure(r, event, details)
+			}
+			if limited {
+				w.Header().Set("Retry-After", strconv.Itoa(int(mw.limiter().window/time.Second)))
+				WriteJSONError(w, http.StatusTooManyRequests, "ServerAuthError", "too many failed authentication attempts")
+				return
+			}
+			writeUnauthorized(w, msg)
 			return
 		}
-
-		next.ServeHTTP(w, r.WithContext(handlers.WithAuth(r.Context(), tokenID, scope)))
+		if p.Legacy && !mw.LegacyPrivilegedRoutes && legacyPrivileged(r) {
+			if mw.Auditor != nil {
+				mw.Auditor.AuditDenied(r, p, "route disabled in legacy shared-token mode")
+			}
+			WriteJSONError(w, http.StatusForbidden, "AuthorizationError",
+				"this route is disabled in legacy shared-token mode: use a per-agent token (or the offline command)")
+			return
+		}
+		if !p.Legacy {
+			if need := routeRequirement(r); !need.satisfiedBy(p) {
+				if mw.Auditor != nil {
+					mw.Auditor.AuditDenied(r, p, "missing scope "+need.name)
+				}
+				WriteJSONError(w, http.StatusForbidden, "AuthorizationError", "insufficient scope for this route")
+				return
+			}
+		}
+		next.ServeHTTP(w, r.WithContext(handlers.WithPrincipal(r.Context(), p)))
 	})
 }
 
@@ -370,8 +494,8 @@ func badPath(p string) bool {
 
 // TokenIDFromContext extracts the token ID from the request context.
 func TokenIDFromContext(ctx context.Context) string {
-	id, _ := handlers.AuthFromContext(ctx)
-	return id
+	p, _ := handlers.PrincipalFromContext(ctx)
+	return p.TokenID
 }
 
 // responseWriter wraps http.ResponseWriter to capture the status code.
