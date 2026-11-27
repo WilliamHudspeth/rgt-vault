@@ -283,6 +283,7 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 
 	rootCmd.AddCommand(setCmd, getCmd, listCmd, revokeCmd, simulateCmd,
 		fingerprintCmd, rotateCmd, verifyAuditCmd, auditCmd,
-		initCmd, serveCmd, statusCmd, mcpCmd, tuiCmd)
+		initCmd, serveCmd, statusCmd, mcpCmd, tuiCmd,
+		newCryptoAuditCmd(stdout))
 	return rootCmd
 }
