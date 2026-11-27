@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -8,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -88,7 +88,7 @@ func (m *masterSource) secret(text bool) ([]byte, error) {
 			return nil, fmt.Errorf("reading master file: %w", err)
 		}
 		if text {
-			b = []byte(strings.TrimRight(string(b), "\r\n"))
+			b = bytes.TrimRight(b, "\r\n")
 		}
 		if len(b) == 0 {
 			return nil, errors.New("master file is empty")

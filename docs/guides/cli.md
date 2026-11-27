@@ -55,10 +55,12 @@ rgt-vault serve [--db PATH] [--policy FILE] [--provider keyring|platform]
 
 - Loopback only: a non-loopback `--host` is refused without `--allow-non-loopback`, and then it
   is plain HTTP, so put a TLS reverse proxy in front.
-- `--operator-token-file` separates the approve/deny scope from the agent token. Without it an
-  agent could approve its own request, and the server warns.
+- `--operator-token-file` separates the approve/deny scope from the agent token (`init` creates one
+  at `~/.config/rgt-vault/operator.token`).
 - `--require-approval` holds every unseal until an operator approves it (`--totp-secret-file`
-  adds a TOTP code for `require_2fa` secrets; create one with `enroll-2fa`).
+  adds a TOTP code for `require_2fa` secrets; create one with `enroll-2fa`). It **requires**
+  `--operator-token-file`: without a separate operator token an agent could approve its own
+  request, so `serve` refuses to start. `--approval-timeout` is at most 24h.
 - `--harness-key-file` wires the HMAC verifier for `/v1/capabilities/execute`; without it that
   endpoint fails closed.
 - Also read from the environment: `RGT_VAULT_HOST`, `RGT_VAULT_PORT`, `RGT_VAULT_TOKEN_FILE`,
@@ -121,7 +123,9 @@ rgt-vault serve --policy policy.yaml --require-approval \
 ```
 
 The secret file is created 0600 and never overwritten without `--force`; a forced replacement is
-written to the audit log first (`TOTP_SECRET_REPLACED`).
+written to the audit log first (`TOTP_SECRET_REPLACED`). The provisioning URI and secret are shown
+once, on the terminal; when stdout is redirected they are not printed unless you pass
+`--show-secret`, so they do not end up in logs.
 
 ## Coming from the Python line
 

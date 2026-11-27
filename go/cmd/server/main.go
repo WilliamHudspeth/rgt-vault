@@ -25,6 +25,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/spf13/cobra"
+
 	"rgt-vault-server/internal/servecmd"
 )
 
@@ -42,6 +44,8 @@ func run(args []string, env servecmd.Env) int {
 	cmd.SilenceErrors = true
 	cmd.SetOut(os.Stderr)
 	cmd.SetErr(os.Stderr)
-	fmt.Fprintln(os.Stderr, "rgt-vault-server is deprecated: use `rgt-vault serve` (same flags).")
+	cmd.PreRun = func(*cobra.Command, []string) {
+		fmt.Fprintln(os.Stderr, "rgt-vault-server is deprecated: use `rgt-vault serve` (same flags).")
+	}
 	return servecmd.Main(cmd, args)
 }

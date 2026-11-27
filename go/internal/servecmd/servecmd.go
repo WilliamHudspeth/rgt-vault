@@ -34,6 +34,8 @@ package servecmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -223,8 +225,8 @@ func firstNonEmpty(vals ...string) string {
 
 // parseConfig resolves flags, then environment, then defaults.
 func parseConfig(f Flags, vf *VaultFlags, getenv func(string) string) (config, error) {
-	if f.ApprovalTimeout <= 0 {
-		return config{}, fmt.Errorf("invalid --approval-timeout %s", f.ApprovalTimeout)
+	if f.ApprovalTimeout <= 0 || f.ApprovalTimeout > MaxApprovalTimeout {
+		return config{}, fmt.Errorf("invalid --approval-timeout %s (must be above 0 and at most %s)", f.ApprovalTimeout, MaxApprovalTimeout)
 	}
 	res, err := vf.Resolve(getenv)
 	if err != nil {
@@ -247,6 +249,13 @@ func parseConfig(f Flags, vf *VaultFlags, getenv func(string) string) (config, e
 	}
 	if cfg.tokenFile == "" {
 		return cfg, errors.New("no token path: home directory unknown, pass --token-file")
+	}
+	if cfg.requireApproval && cfg.operatorTokenFile == "" {
+		// Without a separate operator token the approve/deny endpoints would
+		// accept the AGENT token, so any agent could approve its own request.
+		return config{}, errors.New("--require-approval needs --operator-token-file (or RGT_VAULT_OPERATOR_TOKEN_FILE): " +
+			"without a separate operator token an agent could approve its own request. " +
+			"`rgt-vault init` creates one at " + DefaultOperatorTokenPath())
 	}
 	if cfg.totpSecretFile != "" && !cfg.requireApproval {
 		return config{}, errors.New("--totp-secret-file needs --require-approval")
@@ -275,6 +284,17 @@ func writeTimeout(cfg config) time.Duration {
 		return cfg.approvalTimeout + base
 	}
 	return base
+}
+
+// MaxApprovalTimeout caps --approval-timeout: a request waiting for an
+// operator holds a connection (and the response write deadline) that long.
+const MaxApprovalTimeout = 24 * time.Hour
+
+// tokensEqual compares two tokens in constant time: both sides are hashed
+// first, so neither the content nor the length leaks through timing.
+func tokensEqual(a, b string) bool {
+	ha, hb := sha256.Sum256([]byte(a)), sha256.Sum256([]byte(b))
+	return subtle.ConstantTimeCompare(ha[:], hb[:]) == 1
 }
 
 // IsLoopbackHost reports whether host is "localhost" or a loopback address.
@@ -391,15 +411,11 @@ func Run(ctx context.Context, cfg config, env Env) error {
 		if err != nil {
 			return err
 		}
-		if opToken == token {
+		if tokensEqual(opToken, token) {
 			return errors.New("the operator token must differ from the agent token")
 		}
 		operatorStore = auth.NewTokenStore(opPath)
 		logger.Printf("Operator token file: %s (id %s)", handlers.LogSafe(opPath), auth.TokenID(opToken))
-	} else if cfg.requireApproval {
-		logger.Printf("WARNING: --require-approval is on but no --operator-token-file was given. " +
-			"The approve/deny endpoints will accept the agent token, so an agent could " +
-			"self-approve. Pass --operator-token-file to separate the operator scope.")
 	}
 	if cfg.allowPrivateNetwork {
 		logger.Printf("WARNING: --allow-private-network enables the built-in HTTP actions to call " +
@@ -453,7 +469,7 @@ func Run(ctx context.Context, cfg config, env Env) error {
 
 	ln, err := net.Listen("tcp", net.JoinHostPort(cfg.host, cfg.port))
 	if err != nil {
-		return err
+		return fmt.Errorf("listen on %s: %w", net.JoinHostPort(cfg.host, cfg.port), err)
 	}
 	addr := ln.Addr().String()
 

@@ -46,6 +46,9 @@ func runExport(cmd *cobra.Command, vf *servecmd.VaultFlags, outFile string, forc
 	if err != nil {
 		return fmt.Errorf("export: %w", err)
 	}
+	if len(data) > vault.MaxImportBytes {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: this export is %d bytes; import refuses payloads above %d bytes (10 MiB)\n", len(data), vault.MaxImportBytes)
+	}
 	if outFile == "" {
 		_, err = fmt.Fprintln(stdout, string(data))
 		return err

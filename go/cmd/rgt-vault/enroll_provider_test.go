@@ -17,16 +17,26 @@ import (
 func TestEnroll2FA(t *testing.T) {
 	e := newVaultEnv(t)
 	out := filepath.Join(e.dir, "sec", "totp.secret")
-	code, stdout, stderr := runCLI(t, "", "enroll-2fa", "--out", out, "--account", "alice")
+	// Not a terminal (captured output): the secret is NOT printed, but the file is written.
+	code, quiet, stderr := runCLI(t, "", "enroll-2fa", "--out", out, "--account", "alice")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 	assertMode0600(t, out)
 	secret := strings.TrimSpace(string(mustRead(t, out)))
+	if strings.Contains(quiet, secret) || strings.Contains(quiet, "otpauth://") || !strings.Contains(quiet, "not printed") {
+		t.Errorf("non-terminal output leaked or lacks the notice:\n%s", quiet)
+	}
+	// --show-secret prints it (the secret of this run replaces the file's: --force).
+	code, stdout, stderr := runCLI(t, "", "enroll-2fa", "--out", out, "--account", "alice", "--show-secret", "--force")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	secret = strings.TrimSpace(string(mustRead(t, out)))
 	if _, err := totp.DecodeSecret(secret); err != nil || len(secret) < 32 {
 		t.Fatalf("secret %q: %v", secret, err)
 	}
-	for _, want := range []string{"otpauth://totp/rgt-vault:alice?secret=" + secret, "secret: " + secret, "--require-approval --totp-secret-file " + out} {
+	for _, want := range []string{"otpauth://totp/rgt-vault:alice?secret=" + secret, "secret: " + secret, "--totp-secret-file " + out} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("output lacks %q:\n%s", want, stdout)
 		}
@@ -126,6 +136,25 @@ func fakeSeals(t *testing.T) *[]sealCall {
 		return providerstest.NewMemoryFixed([]byte("0123456789abcdef0123456789abcdef"))
 	}
 	return &calls
+}
+
+func TestIsTerminal(t *testing.T) {
+	if isTerminal(&strings.Builder{}) {
+		t.Error("a builder is not a terminal")
+	}
+	f, err := os.Open(os.DevNull)
+	if err == nil {
+		defer f.Close()
+		if isTerminal(f) {
+			t.Error("/dev/null is not a terminal")
+		}
+	}
+	r, w, _ := os.Pipe()
+	defer r.Close()
+	defer w.Close()
+	if isTerminal(w) {
+		t.Error("a pipe is not a terminal")
+	}
 }
 
 func TestProviderSeal(t *testing.T) {

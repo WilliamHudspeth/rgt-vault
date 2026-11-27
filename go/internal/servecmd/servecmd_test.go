@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -91,6 +92,7 @@ func TestPrecedenceFlagOverEnvOverDefault(t *testing.T) {
 
 func TestParseConfigErrors(t *testing.T) {
 	bad := []Flags{
+		flagsOf(func(f *Flags) { f.ApprovalTimeout = MaxApprovalTimeout + time.Second }),
 		flagsOf(func(f *Flags) { f.Port = "abc" }),
 		flagsOf(func(f *Flags) { f.Port = "70000" }),
 		flagsOf(func(f *Flags) { f.ApprovalTimeout = 0 }),
@@ -100,6 +102,13 @@ func TestParseConfigErrors(t *testing.T) {
 		if _, err := parse(f, env(nil)); err == nil {
 			t.Errorf("case %d: expected error", i)
 		}
+	}
+	// --require-approval without an operator token would let the agent token approve.
+	if _, err := parse(flagsOf(func(f *Flags) { f.RequireApproval = true }), env(nil)); err == nil || !strings.Contains(err.Error(), "--operator-token-file") {
+		t.Errorf("--require-approval without operator token: %v", err)
+	}
+	if _, err := parse(flagsOf(func(f *Flags) { f.RequireApproval, f.OperatorTokenFile = true, "/op" }), env(nil)); err != nil {
+		t.Errorf("--require-approval with operator token: %v", err)
 	}
 	if _, err := parseConfig(flagsOf(nil), &VaultFlags{Provider: "tpm"}, env(nil)); err == nil {
 		t.Error("unknown provider accepted")
@@ -524,13 +533,17 @@ func TestValidateToken(t *testing.T) {
 	}
 	raw := make([]byte, 40)
 	for i := range raw {
-		raw[i] = byte(i*37 + 0xfb) // exercises '+' and '/' in std base64
+		raw[i] = byte(i*i*37 + 0xfb) // not a progression; exercises '+' and '/' in std base64
+	}
+	seq, step5 := make([]byte, 40), make([]byte, 40)
+	for i := range seq {
+		seq[i], step5[i] = byte(i), byte(5*i)
 	}
 	for name, tok := range map[string]string{
 		"generated":     good,
 		"generated+nl":  good + "\n",
 		"raw url":       strings.TrimRight(good, "="),
-		"hex 32 bytes":  "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+		"hex 32 bytes":  "9f3a61c27be0d45812aa90cb7734e1fd05b6c8a2713d9e4f6a0b25c7e8d1f349",
 		"std base64":    base64.StdEncoding.EncodeToString(raw),
 		"raw std":       base64.RawStdEncoding.EncodeToString(raw),
 		"url base64 40": base64.URLEncoding.EncodeToString(raw),
@@ -544,7 +557,11 @@ func TestValidateToken(t *testing.T) {
 		"31 bytes":   base64.StdEncoding.EncodeToString(raw[:31]),
 		"plain text": "this is not base64 at all, but it is long enough",
 		"all zero":   strings.Repeat("00", 40), "hex 16 bytes": strings.Repeat("ab", 16),
-		"repeated A": strings.Repeat("A", 44), "short pattern": strings.Repeat("abcd", 20),
+		"sequential hex":    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+		"sequential base64": base64.StdEncoding.EncodeToString(seq),
+		"step-5 hex":        hex.EncodeToString(step5),
+		"15 distinct bytes": hex.EncodeToString(append(bytes.Repeat([]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 250}, 3), 1, 2, 3))[:96],
+		"repeated A":        strings.Repeat("A", 44), "short pattern": strings.Repeat("abcd", 20),
 	} {
 		err := ValidateToken(tok)
 		if err == nil {
@@ -606,5 +623,35 @@ func TestMainPrintsErrorAndReturnsCode(t *testing.T) {
 	cmd.SetErr(&errb)
 	if code := Main(cmd, []string{"--port", "not-a-port"}); code != 1 || !strings.Contains(errb.String(), "Error: invalid port") {
 		t.Errorf("code %d stderr %q", code, errb.String())
+	}
+}
+
+func TestTightenFileClearsSpecialBits(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX modes")
+	}
+	p := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, 0o600|os.ModeSetgid|os.ModeSticky); err != nil {
+		t.Skip("cannot set special bits here:", err)
+	}
+	if err := TightenFile(p); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(p); fi.Mode()&(os.ModePerm|os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0o600 {
+		t.Errorf("mode %v", fi.Mode())
+	}
+}
+
+func TestTokensEqualAndListenContext(t *testing.T) {
+	if !tokensEqual("a", "a") || tokensEqual("a", "b") || tokensEqual("a", "aa") {
+		t.Error("tokensEqual")
+	}
+	e := map[string]string{"RGT_VAULT_TOKEN_FILE": filepath.Join(t.TempDir(), "t"), "RGT_VAULT_DB": filepath.Join(t.TempDir(), "v.db")}
+	err := execute(context.Background(), []string{"--host", "203.0.113.9", "--allow-non-loopback", "--port", "0"}, Env{Getenv: env(e)})
+	if err == nil || !strings.Contains(err.Error(), "listen on 203.0.113.9:0") {
+		t.Errorf("listen error lacks the address: %v", err)
 	}
 }
