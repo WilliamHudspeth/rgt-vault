@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"rgt-vault-server/internal/approval"
+	"rgt-vault-server/internal/captoken"
 	"rgt-vault-server/internal/crypto"
 	"rgt-vault-server/internal/kdf"
 	"rgt-vault-server/internal/keychain"
@@ -71,6 +72,12 @@ type Config struct {
 	// Approval is consulted before a secret is unsealed. Nil means
 	// approval.AutoAllowGate.
 	Approval approval.Gate
+	// TokenVerifier verifies v2 capability tokens for ExecuteCapability.
+	// Nil means capability execution fails closed (Python: token_verifier).
+	TokenVerifier captoken.TokenVerifier
+	// Capabilities is the capability registry for ExecuteCapability (see
+	// internal/capabilities). Nil means no capability is registered.
+	Capabilities CapabilityRegistry
 	// KDFParams are the Argon2 parameters used when a keychain is created or
 	// re-wrapped. Zero means kdf.DefaultParams() (what Python always writes).
 	// Loading always uses the parameters stored in keychain.json.
@@ -87,6 +94,8 @@ type Vault struct {
 	authFailureLimiter *RateLimiter
 	hook               Hook
 	approval           approval.Gate
+	tokenVerifier      captoken.TokenVerifier
+	capabilities       CapabilityRegistry
 	provider           MasterProvider
 	kdfParams          kdf.Params
 	vaultID            string
@@ -167,6 +176,8 @@ func Open(ctx context.Context, cfg Config) (*Vault, error) {
 		authFailureLimiter: NewRateLimiter(AuthFailureLimit, AuthFailureWindow),
 		hook:               cfg.Hook,
 		approval:           cfg.Approval,
+		tokenVerifier:      cfg.TokenVerifier,
+		capabilities:       cfg.Capabilities,
 		provider:           cfg.Provider,
 		kdfParams:          cfg.KDFParams,
 		keychainPath:       filepath.Join(filepath.Dir(dbPath), keychain.FileName),
