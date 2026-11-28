@@ -15,9 +15,21 @@ case $(uname -m) in
   arm64)   ARCH=arm64 ;;
 esac
 
-# Download tarball and checksums
+# Download tarball, checksums, and the checksums' cosign signature/certificate
 curl -L -o rgt-vault.tar.gz "https://github.com/WilliamHudspeth/rgt-vault/releases/latest/download/rgt-vault-go_${OS}_${ARCH}.tar.gz"
 curl -L -o checksums.txt "https://github.com/WilliamHudspeth/rgt-vault/releases/latest/download/checksums.txt"
+curl -L -o checksums.txt.sig "https://github.com/WilliamHudspeth/rgt-vault/releases/latest/download/checksums.txt.sig"
+curl -L -o checksums.txt.pem "https://github.com/WilliamHudspeth/rgt-vault/releases/latest/download/checksums.txt.pem"
+
+# Verify the cosign (keyless/Sigstore) signature on checksums.txt before trusting
+# it for the SHA-256 check below. Without this step the checksum file itself is
+# just another unauthenticated download from the internet.
+cosign verify-blob \
+  --certificate checksums.txt.pem \
+  --signature checksums.txt.sig \
+  --certificate-identity-regexp "^https://github.com/WilliamHudspeth/rgt-vault/\.github/workflows/release\.yml@.*" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
 
 # Verify the SHA-256 hash (on macOS use `shasum -a 256`)
 sha256sum --check <(grep "rgt-vault-go_${OS}_${ARCH}.tar.gz" checksums.txt)
@@ -42,10 +54,34 @@ The checksum file is always named `checksums.txt`.
 
 ## Homebrew (macOS/Linux)
 
-Coming with the signed release you can install via Homebrew (a tap will be announced):
+*(TODO: The Homebrew tap is pending creation. Once available, you will be able to install via:)*
 
 ```bash
+brew tap WilliamHudspeth/homebrew-tap
 brew install rgt-vault
+```
+
+## APT (Debian/Ubuntu)
+
+*(TODO: The APT repository at deb.rgt-vault.io is pending creation. Once available, you will be able to install via:)*
+
+```bash
+# Add the repository signing key and source (URL subject to change once live).
+# Before dearmoring, compare the downloaded key's fingerprint against the one
+# published at https://github.com/WilliamHudspeth/rgt-vault/security — do not
+# trust the key on the strength of the download alone.
+curl -fsSL https://deb.rgt-vault.io/gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/rgt-vault.gpg
+echo "deb [signed-by=/usr/share/keyrings/rgt-vault.gpg] https://deb.rgt-vault.io/ stable main" | sudo tee /etc/apt/sources.list.d/rgt-vault.list
+sudo apt-get update
+sudo apt-get install rgt-vault
+```
+
+## Winget (Windows)
+
+*(TODO: The Winget package is pending publication. Once available, you will be able to install via:)*
+
+```powershell
+winget install rgt-vault-go
 ```
 
 ## From source
