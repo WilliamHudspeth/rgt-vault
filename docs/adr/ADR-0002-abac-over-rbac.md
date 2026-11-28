@@ -35,7 +35,7 @@ Rationale:
 - Expresses time-bound and environment-conditional grants natively.
 - Compatible with capability tokens (capabilities become one of the subject attributes; ABAC decides whether the capability is honored).
 - Audit row is a faithful record of the decision: `(subject_attrs, action, resource, env, decision, policy_id, timestamp)`.
-- Deny-overrides-allow is straightforward to express (and is enforced per the security-review-checklist).
+- Deny-overrides-allow is straightforward to express (and is enforced in `ABACPolicyEngine.evaluate`, `python/auth.py`; see the [security review checklist](../archive/reviews/security-review-checklist.md)).
 
 Capabilities are the *transport*; ABAC is the *decision*.
 
@@ -51,9 +51,16 @@ Capabilities are the *transport*; ABAC is the *decision*.
 
 This decision is correct if:
 
-- A policy simulator exists and is exercised in CI (planned: v0.3.0 epic RGT-61).
-- Every policy decision produces an audit row (verified by `tests/test_audit_hooks.py`).
-- Deny-overrides-allow is the default and is verified by `tests/test_policy_simulator.py`.
+- A policy simulator exists and is exercised in CI: `VaultManager.simulate`, `POST /v1/policy/simulate` and `rgt-vault simulate` are covered by `tests/test_server.py::test_policy_simulate`, `tests/test_cli.py::test_simulate_default_deny` and `::test_simulate_deny_beats_allow`.
+- Policy outcomes produce audit rows: a denial writes `POLICY_DENIED`, a grant writes `LEASE_GRANTED`, and a simulation writes `SIMULATION_RUN` (`python/vault.py`). A dedicated test that asserts the `POLICY_DENIED` row is **not yet written** (tracked in RGT-413/414). The earlier wording "every decision produces a `(subject_attrs, action, resource, env, decision, policy_id)` row" over-states the row format: the real columns are `timestamp, action, secret_name, details, policy_hash, agent_id`.
+- Deny-overrides-allow is the default and is verified by `tests/test_vault_v2.py::test_deny_precedence_wins`.
+
+### Implementation status (checked against the code, 2026-11-26)
+
+- **Go (primary line): Gap (Go).** There is no policy engine. `Store.SimulatePolicy` (`go/internal/server/handlers/handlers.go`) returns `allowed: true` for every request and no route consults a policy. The ABAC behaviour below exists only in the end-of-life Python code and is the reference for the Go port.
+
+- The policy vocabulary is **`agent`, `namespace`, `purpose`, `action`** with `fnmatch` globs and an optional per-rule `ttl` (lease length, default 300 s). There are **no time-of-day, source-network or environment attributes**, so the "time-bound and environment-conditional grants" in the rationale are a goal, not a feature.
+- The subject (`agent`) is whatever the caller passes. Over the plain HTTP path it is a request-body field and every agent shares one bearer token, so ABAC does not yet bind to an authenticated identity (RGT-236). On the capability path the signed token's `agent_id` must match the claimed one.
 
 ## Pros and Cons of the Options
 
