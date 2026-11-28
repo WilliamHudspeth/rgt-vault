@@ -296,24 +296,24 @@ func TestSDKClient_ExecuteCapability_RealRouter(t *testing.T) {
 		t.Errorf("payload not echoed by secrets.echo: %s", txt)
 	}
 
-	// Failures map to Python's fixed messages.
+	// Failures carry the server's class and reason (RGT-536).
 	for _, c := range []struct {
 		name string
 		args map[string]any
 		want string
 	}{
-		{"forged token", map[string]any{"capability": "secrets.echo", "agent_id": "bot", "capability_token": "eyJ4IjoxfQ.AAAA"}, "unauthorized"},
-		{"agent mismatch", map[string]any{"capability": "secrets.echo", "agent_id": "mallory", "capability_token": good}, "unauthorized"},
-		{"capability mismatch", map[string]any{"capability": "secrets.use", "agent_id": "bot", "capability_token": good}, "unauthorized"},
-		{"unknown capability", map[string]any{"capability": "no.such", "agent_id": "bot", "capability_token": rb.sign(t, "bot", "no.such", 1)}, "capability not found"},
+		{"forged token", map[string]any{"capability": "secrets.echo", "agent_id": "bot", "capability_token": "eyJ4IjoxfQ.AAAA"}, "PolicyDeniedError: capability token rejected"},
+		{"agent mismatch", map[string]any{"capability": "secrets.echo", "agent_id": "mallory", "capability_token": good}, "PolicyDeniedError: token bound to agent 'bot', caller claimed 'mallory'"},
+		{"capability mismatch", map[string]any{"capability": "secrets.use", "agent_id": "bot", "capability_token": good}, "PolicyDeniedError: token authorizes 'secrets.echo', request asked for 'secrets.use'"},
+		{"unknown capability", map[string]any{"capability": "no.such", "agent_id": "bot", "capability_token": rb.sign(t, "bot", "no.such", 1)}, "CapabilityNotFoundError: unknown capability 'no.such'"},
 	} {
 		txt, isErr := call(c.args)
-		if !isErr || txt != c.want {
+		if !isErr || !strings.HasPrefix(txt, c.want) || !strings.Contains(txt, "(HTTP 4") || !strings.Contains(txt, "incident ") {
 			t.Errorf("%s: got (%q, %v), want %q", c.name, txt, isErr, c.want)
 		}
 	}
 	// A version the capability does not support is a client error and says so.
-	if txt, isErr := call(map[string]any{"capability": "secrets.echo", "agent_id": "bot", "capability_token": rb.sign(t, "bot", "secrets.echo", 2), "version": 2}); !isErr || !strings.HasPrefix(txt, "invalid request:") {
+	if txt, isErr := call(map[string]any{"capability": "secrets.echo", "agent_id": "bot", "capability_token": rb.sign(t, "bot", "secrets.echo", 2), "version": 2}); !isErr || !strings.HasPrefix(txt, "CapabilityVersionError: ") {
 		t.Errorf("unsupported version: (%q, %v)", txt, isErr)
 	}
 	// No token anywhere.
@@ -357,7 +357,7 @@ func TestSDKClient_ExecuteCapability_TokenFile(t *testing.T) {
 		t.Fatalf("token-file execute: (%q, %v)", txt, isErr)
 	}
 	// The default token is bound to filebot: another agent_id is refused.
-	if txt, isErr := callTool(t, cs, ctx, "execute_capability", map[string]any{"capability": "secrets.echo", "agent_id": "other"}); !isErr || txt != "unauthorized" {
+	if txt, isErr := callTool(t, cs, ctx, "execute_capability", map[string]any{"capability": "secrets.echo", "agent_id": "other"}); !isErr || !strings.HasPrefix(txt, "PolicyDeniedError: token bound to agent 'filebot'") {
 		t.Fatalf("token bound to another agent: (%q, %v)", txt, isErr)
 	}
 }
@@ -410,40 +410,13 @@ func TestSDKClient_ListCapabilities_RealRouter(t *testing.T) {
 	}
 }
 
-func TestSDKClient_PolicyResource_RealRouter(t *testing.T) {
+func TestSDKClient_NoPolicyResource_RealRouter(t *testing.T) {
 	rb := startRealBackend(t)
-	s := rgtmcp.NewServer(rb.URL, rb.AgentToken)
-	s.SetLogger(log.New(io.Discard, "", 0))
-	s.SetPolicyFile(rb.PolicyFile)
-	cs, ctx := sdkSession(t, s)
-
-	list, err := cs.ListResources(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
+	cs, ctx := sdkSession(t, rgtmcp.NewServer(rb.URL, rb.AgentToken))
+	if _, err := cs.ListResources(ctx, nil); err == nil {
+		t.Error("resources/list answered: the policy resource was removed")
 	}
-	if len(list.Resources) != 1 || list.Resources[0].URI != "vault://policy" || list.Resources[0].MIMEType != "application/json" {
-		t.Fatalf("resources = %+v", list.Resources)
-	}
-	read, err := cs.ReadResource(ctx, &sdk.ReadResourceParams{URI: "vault://policy"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(read.Contents) != 1 {
-		t.Fatalf("contents = %+v", read.Contents)
-	}
-	var summary map[string]any
-	if err := json.Unmarshal([]byte(read.Contents[0].Text), &summary); err != nil {
-		t.Fatal(err)
-	}
-	if summary["rules"] != float64(realPolicyRules) || summary["default_ttl"] != float64(300) || len(summary) != 2 {
-		t.Fatalf("summary = %v", summary)
-	}
-	for _, leak := range []string{"intruder", "limited", "secrets.use"} {
-		if strings.Contains(read.Contents[0].Text, leak) {
-			t.Errorf("policy internals leaked (%q): %s", leak, read.Contents[0].Text)
-		}
-	}
-	if _, err := cs.ReadResource(ctx, &sdk.ReadResourceParams{URI: "vault://secrets"}); err == nil {
-		t.Error("unknown resource readable")
+	if _, err := cs.ReadResource(ctx, &sdk.ReadResourceParams{URI: "vault://policy"}); err == nil {
+		t.Error("vault://policy readable")
 	}
 }

@@ -344,11 +344,11 @@ func TestMCPSubcommandUsesInjectedStreams(t *testing.T) {
 	}
 
 	// Backend error details go to the injected stderr, never to stdout.
-	srv, _ := recordingServer(t, 500, `{"detail":"INTERNAL-DETAIL /srv/state.db"}`)
+	srv, _ := recordingServer(t, 500, `{"error":"boom","detail":"backend failed","debug":"INTERNAL-DETAIL /srv/state.db"}`)
 	var out2, errOut bytes.Buffer
 	call := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_secrets","arguments":{"namespace":"prod"}}}` + "\n"
 	code = run([]string{"--host", srv.URL, "--token", "x", "mcp"}, strings.NewReader(call), &out2, &errOut)
-	if code != 0 || !strings.Contains(out2.String(), "backend error: 500") || strings.Contains(out2.String(), "INTERNAL-DETAIL") {
+	if code != 0 || !strings.Contains(out2.String(), "boom: backend failed (HTTP 500)") || strings.Contains(out2.String(), "INTERNAL-DETAIL") {
 		t.Fatalf("exit %d stdout %q", code, out2.String())
 	}
 	if !strings.Contains(errOut.String(), "INTERNAL-DETAIL") || !strings.Contains(errOut.String(), "rgt-vault mcp: ") {

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/apierr"
 )
 
 const testCapToken = "eyJhIjoiYiJ9.c2lnbmF0dXJl-CAPTOKEN-MARKER"
@@ -229,25 +231,25 @@ func TestExecuteCapability_ArgumentValidation(t *testing.T) {
 }
 
 func TestExecuteCapability_ErrorMapping(t *testing.T) {
-	longDetail := strings.Repeat("x", 500)
+	longDetail := strings.Repeat("x", 600)
 	cases := []struct {
 		name   string
 		status int
 		body   string
 		want   string // exact, or prefix when ending in "…"
 	}{
-		{"401", 401, `{"error":"ServerAuthError","detail":"bad bearer"}`, "unauthorized"},
-		{"403 policy", 403, `{"error":"PolicyDeniedError","detail":"rule 3 (internal) denied"}`, "unauthorized"},
-		{"429", 429, `{"error":"PermissionError","detail":"rate limit"}`, "rate limited"},
-		{"404", 404, `{"error":"CapabilityNotFoundError","detail":"no such capability at /srv/x"}`, "capability not found"},
-		{"400 detail", 400, `{"error":"CapabilityVersionError","detail":"capability 'a' has no version 9"}`, "invalid request: capability 'a' has no version 9"},
-		{"400 control chars", 400, "{\"detail\":\"line1\\nline2\\u001b[31m\"}", "invalid request: line1 line2 [31m"},
-		{"400 token in detail", 400, `{"detail":"bad token ` + testCapToken + ` or ` + "agent-bearer-SECRET" + `"}`, "invalid request: bad token [redacted] or [redacted]"},
-		{"400 bounded", 400, `{"detail":"` + longDetail + `"}`, "invalid request: " + strings.Repeat("x", maxErrorDetailRunes) + "..."},
+		{"401", 401, `{"error":"ServerAuthError","detail":"bad bearer"}`, "ServerAuthError: bad bearer (HTTP 401)"},
+		{"403 policy", 403, `{"error":"PolicyDeniedError","detail":"rule 3 (internal) denied"}`, "PolicyDeniedError: rule 3 (internal) denied (HTTP 403)"},
+		{"429", 429, `{"error":"PermissionError","detail":"rate limit"}`, "PermissionError: rate limit (HTTP 429)"},
+		{"404", 404, `{"error":"CapabilityNotFoundError","detail":"no such capability at /srv/x"}`, "CapabilityNotFoundError: no such capability at /srv/x (HTTP 404)"},
+		{"400 detail", 400, `{"error":"CapabilityVersionError","detail":"capability 'a' has no version 9"}`, "CapabilityVersionError: capability 'a' has no version 9 (HTTP 400)"},
+		{"400 control chars", 400, "{\"detail\":\"line1\\nline2\\u001b[31m\"}", "error: line1?line2?[31m (HTTP 400)"},
+		{"400 token in detail", 400, `{"detail":"bad token ` + testCapToken + ` or ` + "agent-bearer-SECRET" + `"}`, "error: bad token [redacted] or [redacted] (HTTP 400)"},
+		{"400 bounded", 400, `{"detail":"` + longDetail + `"}`, "error: " + strings.Repeat("x", apierr.MaxDetailRunes) + "… (HTTP 400)"},
 		{"400 no detail", 400, `{}`, "invalid request"},
 		{"400 not json", 400, `<html>`, "invalid request"},
-		{"422", 422, `{"detail":"field required"}`, "invalid request: field required"},
-		{"500", 500, `{"error":"ActionExecutionError","detail":"capability 'a' failed; see server logs"}`, "execution_failed"},
+		{"422", 422, `{"detail":"field required"}`, "error: field required (HTTP 422)"},
+		{"500", 500, `{"error":"ActionExecutionError","detail":"capability 'a' failed; see server logs"}`, "ActionExecutionError: capability 'a' failed; see server logs (HTTP 500)"},
 		{"503", 503, ``, "execution_failed"},
 	}
 	for _, c := range cases {
@@ -396,7 +398,7 @@ func TestListCapabilities_Errors(t *testing.T) {
 		t.Fatal("backend called for invalid agent")
 	}
 	b.set(403, `{"error":"PolicyDeniedError","detail":"INTERNAL-POLICY-DETAIL"}`)
-	if text, isErr := s.callTool("list_capabilities", map[string]any{"agent": "bot"}); !isErr || text != "backend error: 403 Forbidden" {
+	if text, isErr := s.callTool("list_capabilities", map[string]any{"agent": "bot"}); !isErr || text != "PolicyDeniedError: INTERNAL-POLICY-DETAIL (HTTP 403)" {
 		t.Errorf("403: (%q, %v)", text, isErr)
 	}
 	if strings.Contains(fmt.Sprint(logs), "agent-bearer-SECRET") {
@@ -417,107 +419,23 @@ func rpc(t *testing.T, s *Server, method string, params any) *rpcResponse {
 	return resp
 }
 
-func TestResources_ListAndInitialize(t *testing.T) {
-	s, _, _ := capServer(t)
+// RGT-536: vault://policy was removed. No backend route tells a caller what
+// its own token may do, and an always-null summary only misled; the server's
+// refusal text now carries the reason instead.
+func TestNoResources(t *testing.T) {
+	s, b, _ := capServer(t)
 	init := resultMap(t, rpc(t, s, "initialize", map[string]any{"protocolVersion": "2025-06-18"}))
 	caps, _ := init["capabilities"].(map[string]any)
-	if _, ok := caps["resources"]; !ok {
-		t.Fatalf("initialize does not advertise resources: %v", caps)
+	if _, ok := caps["resources"]; ok {
+		t.Fatalf("initialize advertises resources: %v", caps)
 	}
-	list := resultMap(t, rpc(t, s, "resources/list", nil))
-	res, _ := list["resources"].([]any)
-	if len(res) != 1 {
-		t.Fatalf("resources = %v", res)
-	}
-	r0 := res[0].(map[string]any)
-	if r0["uri"] != "vault://policy" || r0["mimeType"] != "application/json" || r0["name"] != "policy" {
-		t.Fatalf("resource = %v", r0)
-	}
-	tpl := resultMap(t, rpc(t, s, "resources/templates/list", nil))
-	if v, ok := tpl["resourceTemplates"].([]any); !ok || len(v) != 0 {
-		t.Fatalf("templates = %v", tpl)
-	}
-}
-
-func readPolicy(t *testing.T, s *Server) map[string]any {
-	t.Helper()
-	resp := rpc(t, s, "resources/read", map[string]any{"uri": "vault://policy"})
-	if resp.Error != nil {
-		t.Fatalf("read: %+v", resp.Error)
-	}
-	contents, _ := resultMap(t, resp)["contents"].([]any)
-	if len(contents) != 1 {
-		t.Fatalf("contents = %v", contents)
-	}
-	c := contents[0].(map[string]any)
-	if c["uri"] != "vault://policy" || c["mimeType"] != "application/json" {
-		t.Fatalf("content = %v", c)
-	}
-	var summary map[string]any
-	if err := json.Unmarshal([]byte(c["text"].(string)), &summary); err != nil {
-		t.Fatal(err)
-	}
-	return summary
-}
-
-func TestResources_PolicySummary(t *testing.T) {
-	s, b, logs := capServer(t)
-
-	sum := readPolicy(t, s)
-	if v, present := sum["rules"]; !present || v != nil || sum["default_ttl"] != float64(300) || len(sum) != 2 {
-		t.Fatalf("no policy file: %v", sum)
-	}
-
-	dir := t.TempDir()
-	policyFile := filepath.Join(dir, "policy.yaml")
-	secretRule := "SECRET-AGENT-NAME"
-	yaml := "rules:\n  - effect: allow\n    agent: " + secretRule + "\n    action: read\n  - effect: deny\n    agent: \"*\"\n    action: write\n"
-	if err := os.WriteFile(policyFile, []byte(yaml), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	s.SetPolicyFile(policyFile)
-	resp := rpc(t, s, "resources/read", map[string]any{"uri": "vault://policy"})
-	raw, _ := json.Marshal(resp.Result)
-	if strings.Contains(string(raw), secretRule) {
-		t.Fatalf("rule contents leaked: %s", raw)
-	}
-	if sum := readPolicy(t, s); sum["rules"] != float64(2) || sum["default_ttl"] != float64(300) || len(sum) != 2 {
-		t.Fatalf("with policy file: %v", sum)
-	}
-
-	// An unreadable/invalid policy yields null and a log line, never the text.
-	if err := os.WriteFile(policyFile, []byte("rules: [unclosed SECRET-TEXT"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if sum := readPolicy(t, s); sum["rules"] != nil {
-		t.Fatalf("invalid policy: %v", sum)
-	}
-	s.SetPolicyFile(filepath.Join(dir, "missing.yaml"))
-	if sum := readPolicy(t, s); sum["rules"] != nil {
-		t.Fatalf("missing policy: %v", sum)
-	}
-	if !strings.Contains(logs.String(), "policy summary") {
-		t.Errorf("policy load failure not logged: %q", logs.String())
-	}
-	if b.calls() != 0 {
-		t.Error("policy summary must not call the backend")
-	}
-}
-
-func TestResources_ReadErrors(t *testing.T) {
-	s, _, _ := capServer(t)
-	resp := rpc(t, s, "resources/read", map[string]any{"uri": "vault://secrets"})
-	if resp.Error == nil || resp.Error.Code != -32002 {
-		t.Fatalf("unknown uri: %+v", resp)
-	}
-	for _, uri := range []string{"file:///etc/passwd", "vault://policy/../x", ""} {
-		if resp := rpc(t, s, "resources/read", map[string]any{"uri": uri}); resp.Error == nil || resp.Error.Code != -32002 {
-			t.Errorf("uri %q: %+v", uri, resp)
+	for _, m := range []string{"resources/list", "resources/read", "resources/templates/list"} {
+		if resp := rpc(t, s, m, map[string]any{"uri": "vault://policy"}); resp.Error == nil || resp.Error.Code != -32601 {
+			t.Errorf("%s: %+v", m, resp)
 		}
 	}
-	bad := s.handle(rpcRequest{JSONRPC: "2.0", ID: json.RawMessage("2"), Method: "resources/read", Params: json.RawMessage(`[1]`)})
-	if bad.Error == nil || bad.Error.Code != -32602 {
-		t.Fatalf("bad params: %+v", bad)
+	if b.calls() != 0 {
+		t.Error("a resource request must not call the backend")
 	}
 }
 

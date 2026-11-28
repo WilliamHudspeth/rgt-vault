@@ -25,7 +25,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/WilliamHudspeth/rgt-vault/go/internal/policy"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/apierr"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/validation"
 )
 
@@ -83,10 +83,6 @@ func (s *Server) LoadCapabilityTokenFile(path string) error {
 	s.capToken = tok
 	return nil
 }
-
-// SetPolicyFile names the ABAC policy file the policy summary counts rules
-// in (read at resources/read time; only the count is exposed).
-func (s *Server) SetPolicyFile(path string) { s.policyFile = path }
 
 // checkTokenShape rejects tokens that cannot be a capability token: oversized
 // or containing whitespace/control characters (header or log injection).
@@ -226,7 +222,7 @@ func (s *Server) executeCapability(args map[string]any) (string, bool) {
 	if err != nil {
 		return "encode error", true
 	}
-	resp, respBody, err := s.do("POST", s.backendURL+"/v1/capabilities/execute", body)
+	resp, respBody, err := s.do(tool, "POST", s.backendURL+"/v1/capabilities/execute", body)
 	if err != nil {
 		return s.unreachable(tool, err)
 	}
@@ -249,17 +245,17 @@ func (s *Server) executeCapability(args map[string]any) (string, bool) {
 	return s.redact(string(out), token), false
 }
 
-// capabilityError maps a failed execute response to a fixed client message,
-// as python/server/mcp_server.py does (PermissionError -> "unauthorized",
-// anything else -> "execution_failed"). Only the backend's validation message
-// (HTTP 400: bad payload, unknown version) is relayed, cleaned and bounded.
+// capabilityError turns a failed execute response into the tool error. A
+// standard error envelope is relayed like every other tool's (class, detail,
+// HTTP code, incident id; errorText); a body without one (a proxy page, an
+// older backend) falls back to the fixed messages python/server/mcp_server.py
+// used (PermissionError -> "unauthorized", anything else -> "execution_failed").
 // The full body is logged on stderr with credentials redacted.
 func (s *Server) capabilityError(resp *http.Response, body []byte, token string) (string, bool) {
-	logged := s.redact(string(body), token)
-	if len(logged) > maxLoggedErrorBody {
-		logged = logged[:maxLoggedErrorBody]
+	text, isErr := s.backendError("execute_capability", resp, body, token)
+	if _, ok := apierr.Parse(body); ok {
+		return text, isErr
 	}
-	s.logf("execute_capability backend error: %s - %q", resp.Status, logged)
 	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return "unauthorized", true
@@ -268,12 +264,6 @@ func (s *Server) capabilityError(resp *http.Response, body []byte, token string)
 	case http.StatusNotFound:
 		return "capability not found", true
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
-		var e struct {
-			Detail string `json:"detail"`
-		}
-		if json.Unmarshal(body, &e) == nil && e.Detail != "" {
-			return "invalid request: " + cleanText(s.redact(e.Detail, token), maxErrorDetailRunes), true
-		}
 		return "invalid request", true
 	default:
 		return "execution_failed", true
@@ -307,7 +297,7 @@ func (s *Server) listCapabilities(args map[string]any) (string, bool) {
 		}
 		listURL += "?agent=" + url.QueryEscape(agent)
 	}
-	resp, body, err := s.do("GET", listURL, nil)
+	resp, body, err := s.do(tool, "GET", listURL, nil)
 	if err != nil {
 		return s.unreachable(tool, err)
 	}
@@ -330,23 +320,4 @@ func (s *Server) listCapabilities(args map[string]any) (string, bool) {
 		return "encode error", true
 	}
 	return string(out), false
-}
-
-// policySummary is the vault://policy resource body (python get_policy_summary
-// returns {"rules": N, "default_ttl": 300}). "rules" is the number of ABAC
-// rules, or null when this server was not told where the policy file is (the
-// backend has no policy-summary route); it never includes rule contents.
-func (s *Server) policySummary() map[string]any {
-	summary := map[string]any{"rules": nil, "default_ttl": policy.DefaultLeaseTTL}
-	if s.policyFile == "" {
-		return summary
-	}
-	eng, err := policy.Load(s.policyFile)
-	if err != nil {
-		// The error names the path and may quote policy text: log it only.
-		s.logf("policy summary: cannot load the policy file: %v", err)
-		return summary
-	}
-	summary["rules"] = eng.RuleCount()
-	return summary
 }

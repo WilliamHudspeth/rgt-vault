@@ -28,7 +28,7 @@ import (
 
 const (
 	testToken = "e2e-test-token"
-	// leakMarker appears only in backend error bodies; it must never reach
+	// leakMarker appears only in a non-detail field of backend error bodies; it must never reach
 	// the MCP client.
 	leakMarker = "INTERNAL-DETAIL /srv/vault/state.db goroutine 7 [running]"
 )
@@ -82,7 +82,7 @@ func (f *fakeVault) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	fail := func(code int) {
 		w.WriteHeader(code)
-		fmt.Fprintf(w, `{"error":"boom","detail":%q}`, leakMarker)
+		fmt.Fprintf(w, `{"error":"boom","detail":"the backend failed","incident_id":"abc123","debug":%q}`, leakMarker)
 	}
 	if c.Auth != "Bearer "+testToken {
 		fail(http.StatusUnauthorized)
@@ -209,7 +209,7 @@ func runLifecycle(t *testing.T, transport sdk.Transport, fv *fakeVault) {
 	if !res.IsError {
 		t.Fatal("execute_secret on broken backend: want isError")
 	}
-	if txt := toolText(t, res); txt != "backend error: 500 Internal Server Error" || strings.Contains(txt, "INTERNAL-DETAIL") {
+	if txt := toolText(t, res); txt != "boom: the backend failed (HTTP 500, incident abc123)" || strings.Contains(txt, "INTERNAL-DETAIL") {
 		t.Fatalf("execute_secret error not sanitised: %q", txt)
 	}
 
