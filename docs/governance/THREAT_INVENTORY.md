@@ -1,959 +1,398 @@
 # Threat Modeling and Mitigation Inventory
 
-Comprehensive catalog of threats and design flaws identified through threat modeling using STRIDE methodology. Includes threat description, assessment, and implemented mitigations.
+A STRIDE-organised list of the threats that apply to `rgt-vault`, the
+mitigations that exist in code today, and the gaps. Written to match the code
+as it is, not as it is intended to be. It supports objective 3.2 of
+[GOVERNANCE.md](GOVERNANCE.md).
+
+- **Verified against:** commit `c3b090b` on `master`, checked 2026-11-26.
+- **Authoritative related documents:** [`.github/SECURITY.md`](../../.github/SECURITY.md)
+  (guarantees and non-goals) and [`docs/security/threat-model.md`](../security/threat-model.md)
+  (narrative threat model). If this file disagrees with `SECURITY.md`,
+  `SECURITY.md` governs.
+- **Earlier draft:** the previous version of this file listed password
+  policies, MFA, account lockout, TLS 1.2+ and RBAC roles as implemented
+  mitigations. None of those exist. This version removes them.
+- **Severity numbers removed.** The earlier CVSS scores were not computed from
+  anything; severity here is a rough High/Medium/Low judgement by the
+  maintainer.
+
+## Scope
+
+**Python line (`rgt_vault/`), the product that actually protects secrets:**
+
+- Library and CLI: `VaultManager` (`rgt_vault/vault.py`), SQLite storage
+  (`rgt_vault/storage/sqlite.py`), crypto (`rgt_vault/crypto.py`,
+  `rgt_vault/keychain.py`), ABAC policy engine, audit hash chain, honeytokens, rate
+  limiter, TTL leases.
+- Local HTTP daemon (`rgt-vault serve`, `rgt_vault/server/`): bearer token,
+  operator token, human approval with TOTP, capability execution, outbound
+  actions.
+- MCP stdio server (`rgt_vault/server/mcp_server.py`) and TUI client.
+- OS-native key custody providers (`rgt_vault/providers/`).
+
+**Go line (`go/`):** `go/cmd/server` is a skeleton (in-memory plaintext store,
+policy stub, no persistence or crypto); `go/cmd/rgt-vault` is a CLI client;
+`go/internal/gateway` is a cutover reverse proxy; `go/internal/mcp` is an MCP server;
+`go/internal/netguard` is an outbound-address guard. Do not treat the Go server as
+a secure vault.
+
+**Trust boundaries:**
+
+- Offline copies of `vault.db`, `keychain.json` and backups are untrusted
+  storage; the master secret and live process memory are trusted
+  (`.github/SECURITY.md`).
+- The loopback HTTP interface separates the daemon from agents. Whoever holds
+  the bearer token is trusted as "an agent"; whoever holds the operator token is
+  trusted as the human operator.
+- Outbound network calls made by server-side actions leave the machine.
+
+**Out of scope, per `.github/SECURITY.md`:** root or kernel compromise of the
+host, memory scraping by a privileged attacker, extraction attacks on the OS
+secret store, side channels, and a malicious operator.
+
+## Status vocabulary
+
+| Status | Meaning |
+|---|---|
+| Mitigated | A control exists in code and has tests. |
+| Partial | A control exists with a named limitation. |
+| Gap | No effective mitigation. A tracking issue is named where one exists. |
+| Accepted | A documented non-goal in `.github/SECURITY.md`. |
 
 ---
 
-## Threat Model Scope
+## S: Spoofing
 
-**System Components**:
-- Client applications (CLI, API clients)
-- API Gateway/Server
-- Vault Backend Core (secret storage, retrieval, management)
-- Encryption/Cryptographic Layer
-- Authentication/Authorization Layer
-- Database Storage Layer
-- Configuration and Key Management Layer
-- Audit Logging System
+### T-SPOOF-001: One agent acts as another (agent identity spoofing)
 
-**Trust Boundaries**:
-- Network boundary (untrusted network to secure server)
-- Authentication boundary (unauthenticated to authenticated users)
-- Authorization boundary (restricted access by role/permission)
-- Encryption boundary (plaintext to ciphertext)
+- **Threat:** any caller with the shared bearer token can claim to be any agent.
+- **Why it matters:** ABAC decisions are made for the `agent` named in the
+  request, so a spoofed name defeats per-agent policy.
+- **Current state:** the daemon has one agent bearer token shared by every
+  agent. The `agent` value used for policy evaluation is a field in the request
+  body (`rgt_vault/server/app.py`, `vault.execute(body.agent, ...)`); it is not
+  derived from the token. Approval and operator routes use a separate operator
+  token, but when none is configured the agent token store is used as the
+  operator store (`rgt_vault/server/app.py`, `_operator_store = operator_token_store or
+  token_store`; a warning is logged in production mode).
+- **Status: Gap.** Tracked: RGT-236, RGT-343, RGT-346, RGT-235.
+- **Evidence:** `rgt_vault/server/app.py`, `rgt_vault/server/auth.py`.
 
-**Data Flows**:
-- Client → Server: API requests (Create, Read, Update, Delete secrets)
-- Server → Database: Storage operations
-- Encryption Service: Key management, encryption/decryption
-- Audit System: Logging of access and modifications
+### T-SPOOF-002: Bearer, operator or TOTP credential theft
 
----
+- **Threat:** an attacker who can read the token files or the TOTP secret file
+  gains the corresponding access.
+- **Mitigations that exist:** tokens are 256-bit random values
+  (`secrets.token_urlsafe(32)` in `rgt_vault/server/auth.py`); files are chmod
+  0600 on POSIX; comparison is constant-time; only an 8-character token id is
+  logged by the Python server; the hardened unit runs the daemon as a separate
+  user so agents cannot read the files (`deploy/rgt-vault.service`).
+- **Limits:** tokens are stored in plaintext and never expire; rotation means
+  replacing the file; the same token is used by every agent. The Go server
+  prints the full bearer token to stdout and its log on start
+  (`go/cmd/server/main.go`). TOTP secret is a plaintext file.
+- **Status: Partial** (Python), **Gap** (Go server logging). Tracked: RGT-318,
+  RGT-320, RGT-409.
+- **Evidence:** `rgt_vault/server/auth.py`, `deploy/rgt-vault.service`,
+  `go/cmd/server/main.go`.
 
-## Threat Categories
+### T-SPOOF-003: Network interception (MITM) of agent-to-daemon traffic
 
-Threats organized by STRIDE framework:
-- **Spoofing**: Identity spoofing, impersonation, credential theft
-- **Tampering**: Unauthorized modification, man-in-the-middle attacks
-- **Repudiation**: Denial of actions, inability to prove what happened
-- **Information Disclosure**: Exposure of secrets, configuration, metadata
-- **Denial of Service**: Resource exhaustion, availability attacks
-- **Elevation of Privilege**: Unauthorized escalation, privilege creep
+- **Threat:** traffic between agent and daemon is read or altered on the
+  network.
+- **Current state:** **there is no TLS anywhere in the code.** `rgt-vault serve`
+  starts uvicorn without certificates and the Go server uses `ListenAndServe`
+  without TLS. The only mitigation is that the Python daemon binds `127.0.0.1`
+  by default and prints a warning if bound elsewhere; the systemd unit says to
+  put a TLS reverse proxy in front if exposure is required (no example proxy
+  configuration ships). The Go server binds `:8080` on all interfaces.
+- **Status: Gap.** Tracked: RGT-251, RGT-455, RGT-456, RGT-458 (mTLS evaluation).
+- **Evidence:** `rgt_vault/cli.py` (`serve`), `deploy/rgt-vault.service`,
+  `go/cmd/server/main.go`.
 
----
+### T-SPOOF-004: Capability token forgery or replay
 
-## S - SPOOFING THREATS
-
-### T-SPOOF-001: Authentication Bypass
-
-**Description**: Attacker attempts to bypass authentication mechanisms to access vault without valid credentials.
-
-**Attack Vector**: 
-- Exploit weak authentication (no MFA, weak password)
-- Session token theft or forgery
-- Credential reuse from other systems
-- Authentication logic bugs
-
-**CVSS Severity**: 9.1 (Critical)
-
-**Affected Components**:
-- Authentication layer
-- Session management
-- API endpoint protection
-
-**Mitigations**:
-1. **Preventive**:
-   - Multi-factor authentication (MFA) support
-   - Strong password requirements (minimum 12 characters, complexity)
-   - Secure session management (random tokens, HTTPS-only cookies)
-   - Session timeout (reasonable, context-dependent)
-   - Rate limiting on authentication attempts
-
-2. **Detective**:
-   - Failed authentication attempt logging
-   - Unusual access pattern detection
-   - Geographic anomaly detection (if applicable)
-   - Brute force attack monitoring
-
-3. **Corrective**:
-   - Account lockout after failed attempts (5 failures = 15 minute lockout)
-   - Forced password reset capability
-   - Session invalidation procedures
-   - Incident response procedures
-
-**Status**: Implemented - Authentication controls in place
-**Last Review**: 2026-06-26
-**Evidence**: Source code review, authentication testing, security testing
+- **Threat:** a forged or replayed capability token executes an action.
+- **Current state:** capability tokens are HMAC-signed with expiry
+  (`rgt_vault/token.py`, tests in `tests/test_token.py`); failed verification is
+  rate-limited per agent (`auth_failure_limiter` in `rgt_vault/vault.py`).
+  However `rgt-vault serve` does not configure a token verifier, so
+  `/v1/capabilities/execute` currently fails closed through the server; the
+  replay cache applies only when the two-factor hook is configured; an
+  Ed25519 verifier is a stub.
+- **Status: Partial.** Tracked: RGT-337, RGT-338, RGT-35, RGT-46.
+- **Evidence:** `rgt_vault/token.py`, `rgt_vault/cli.py`, `tests/test_token.py`.
 
 ---
 
-### T-SPOOF-002: Credential Theft
+## T: Tampering
 
-**Description**: Attacker steals valid credentials through phishing, malware, or insecure storage.
+### T-TAMP-001: Modifying or swapping stored ciphertext
 
-**Attack Vector**:
-- Credentials transmitted in plaintext
-- Credentials stored insecurely (local files, browser cache)
-- Phishing emails directing to fake login page
-- Malware capturing keystrokes
-- Credential databases leaked
+- **Mitigations:** AES-256-GCM with the AAD `vault_id:namespace:name`, so edited
+  or swapped ciphertext and a `keychain.json` from another vault fail
+  authenticated decryption; key epoch check rejects mismatched
+  `vault.db`/`keychain.json` pairs.
+- **Limits:** restoring a matched old pair is not detected (backup rollback;
+  `.github/SECURITY.md`; design note for an anchor in `docs/ROADMAP.md`).
+- **Status: Mitigated** (tamper and swap), **Accepted** (matched rollback).
+- **Evidence:** `rgt_vault/crypto.py`, `rgt_vault/keychain.py`,
+  `tests/test_asvs_crypto.py`, `tests/test_fuzz.py` (wrong key, wrong AAD).
 
-**CVSS Severity**: 8.8 (High)
+### T-TAMP-002: Injection through API or CLI input
 
-**Affected Components**:
-- Credential storage
-- Transmission channels
-- Client applications
+- **Mitigations:** SQLite access uses parameterised queries
+  (`rgt_vault/storage/sqlite.py`); names, namespaces and agent ids are checked
+  against allow-list patterns (`rgt_vault/input_validation.py`); request
+  bodies are Pydantic models; `Content-Type: application/json` is required on
+  `/v1/` POSTs; no `eval`, `exec` or `pickle` in the shipped packages; no
+  `shell=True` in `rgt_vault/` or `go/`.
+- **Limits:** Pydantic models do not forbid extra fields; the Go server does not
+  reject unknown fields; query-parameter duplicate handling differs between the
+  Python and Go servers.
+- **Status: Mitigated** (injection into SQL/commands), **Partial** (strict
+  schemas). Tracked: RGT-352, RGT-351.
+- **Evidence:** `rgt_vault/input_validation.py`, `tests/test_input_validation_epic.py`,
+  `tests/test_validation.py`.
 
-**Mitigations**:
-1. **Preventive**:
-   - TLS encryption for all credential transmission
-   - Credentials never logged or displayed (masking in logs)
-   - Secure credential storage (never plaintext in memory)
-   - Credential rotation guidance
-   - Zero-trust security approach
+### T-TAMP-003: Server-side request forgery through outbound actions
 
-2. **Detective**:
-   - Monitoring for credential use from unusual locations/times
-   - Failed authentication from same IP after credentials used elsewhere
-   - Audit logging of credential changes
-   - Impossible travel detection (if applicable)
+- **Threat:** an agent uses an action such as an authenticated HTTP request to
+  reach internal services or cloud metadata.
+- **Mitigations:** `_validate_outbound_url` in `rgt_vault/server/actions.py`
+  blocks non-http(s) schemes, loopback, link-local and private ranges unless the
+  operator passes `--allow-private-network`; the Go `go/internal/netguard` package
+  rejects link-local and metadata addresses and, by default, non-loopback
+  addresses unless remote access is allowed. Both guards have tests.
+- **Limits:** the Python check resolves the host before the request (a small
+  rebinding window); redirects are followed by `urllib` without re-checking
+  each hop; plain `http://` is allowed.
+- **Status: Partial.** Tracked: RGT-252, RGT-355, RGT-361.
+- **Evidence:** `rgt_vault/server/actions.py`, `go/internal/netguard/`,
+  `tests/test_actions.py`, `tests/test_server_hardening.py`.
 
-3. **Corrective**:
-   - Rapid credential revocation capability
-   - Credential compromise response procedures
-   - Communication to affected users
-   - Force password reset
+### T-TAMP-004: Dependency or build-chain compromise
 
-**Status**: Implemented - Encryption and secure handling
-**Last Review**: 2026-06-26
-**Evidence**: Code review of credential handling, TLS configuration
+- **Mitigations:** Dependabot (pip, gomod, github-actions, weekly); `pip-audit`
+  and `govulncheck` in CI; gitleaks; CycloneDX SBOM in CI and Syft SBOMs in
+  Go releases; Go modules pinned in `go.sum`.
+- **Limits:** Python dependencies are ranges without a lockfile; GitHub Actions
+  are pinned by tag, not commit SHA; no release signing (cosign block in
+  `go/.goreleaser.yaml` is commented out); no commit signing; CI currently
+  fails on `master`, so the scanners are not a reliable gate right now.
+- **Status: Partial.** Tracked: RGT-261, RGT-260, RGT-163.
+- **Evidence:** `.github/dependabot.yml`, `.github/workflows/`,
+  `go/.goreleaser.yaml`.
 
----
+### T-TAMP-005: Tampering with policy or configuration
 
-### T-SPOOF-003: Man-in-the-Middle (MITM) Attack
+- **Mitigations:** the hardened systemd unit runs the daemon as a dedicated user
+  with `ProtectSystem=strict`, `NoNewPrivileges` and a single writable path
+  (`deploy/rgt-vault.service`); the policy hash is recorded in audit rows.
+- **Limits:** whoever controls the policy file, the master secret or the audit
+  database can change behaviour. This is a stated non-goal.
+- **Status: Accepted** (malicious operator), **Partial** (accidental or
+  non-root tampering).
+- **Evidence:** `.github/SECURITY.md`, `deploy/rgt-vault.service`.
 
-**Description**: Attacker intercepts communications between client and server to impersonate either party.
+### T-TAMP-006: Rewriting the audit log
 
-**Attack Vector**:
-- Weak TLS configuration (downgrade to HTTP)
-- Certificate validation bypass
-- Rogue certificate authority
-- DNS hijacking
-- Insecure network (open WiFi)
-
-**CVSS Severity**: 8.1 (High)
-
-**Affected Components**:
-- Network communications
-- TLS/SSL implementation
-- Certificate validation
-
-**Mitigations**:
-1. **Preventive**:
-   - TLS 1.2+ mandatory (TLS 1.3 preferred)
-   - Certificate pinning for critical connections
-   - Strong cipher suites only (no weak ciphers)
-   - HSTS (HTTP Strict-Transport-Security)
-   - Certificate validation enforcement (no exceptions)
-
-2. **Detective**:
-   - TLS handshake failure logging
-   - Certificate validation failure monitoring
-   - Unusual TLS errors tracking
-
-3. **Corrective**:
-   - Connection failure procedures
-   - Incident investigation capabilities
-   - User notification of connection issues
-
-**Status**: Implemented - TLS 1.2+ enforcement, certificate validation
-**Last Review**: 2026-06-26
-**Evidence**: Network configuration, TLS testing, security scanning
-
----
-
-## T - TAMPERING THREATS
-
-### T-TAMP-001: Unauthorized Secret Modification
-
-**Description**: Attacker modifies vault secrets without authorization.
-
-**Attack Vector**:
-- Exploiting authorization vulnerability
-- SQL injection in database operations
-- Compromise of database credentials
-- Malicious insider access
-- API logic bugs
-
-**CVSS Severity**: 9.0 (Critical)
-
-**Affected Components**:
-- Authorization layer
-- Secret storage/modification logic
-- Database access controls
-- API endpoints
-
-**Mitigations**:
-1. **Preventive**:
-   - Role-based access control (RBAC)
-   - Principle of least privilege enforcement
-   - Input validation and parameterized queries (SQL injection prevention)
-   - Strong authorization checks before modification
-   - API rate limiting to detect bulk modifications
-
-2. **Detective**:
-   - Audit logging of all secret modifications
-   - Change detection (hash verification)
-   - Anomaly detection (bulk changes, out-of-hours access)
-   - Integrity verification checks
-
-3. **Corrective**:
-   - Secret versioning (maintain history)
-   - Rollback capabilities
-   - Audit trail for forensics
-   - Incident response procedures
-
-**Status**: Implemented - RBAC, audit logging, input validation
-**Last Review**: 2026-06-26
-**Evidence**: Code review, architecture review, security testing
+- **Mitigations:** each audit row includes a SHA-256 hash of the previous row;
+  `verify_audit_chain()` detects insertion, edits and mid-chain deletion
+  (`tests/test_audit_v2_hardening.py`).
+- **Limits:** the chain is unkeyed. Someone with write access to `vault.db` can
+  rebuild a consistent chain, and tail truncation or full replacement is not
+  detected. There is no external anchor for the tail hash.
+- **Status: Partial / Accepted** for root-level replacement
+  (`.github/SECURITY.md`, "Audit Chain Limitations"). A keyed chain is a
+  follow-up idea.
+- **Evidence:** `rgt_vault/storage/sqlite.py`, `rgt_vault/vault.py`
+  (`verify_audit_chain`), `tests/test_audit_v2_hardening.py`.
 
 ---
 
-### T-TAMP-002: Code Injection Attacks
+## R: Repudiation
 
-**Description**: Attacker injects malicious code through various injection vectors.
+### T-REP-001: An agent or operator denies an action
 
-**Attack Vectors**:
-- SQL Injection: Malicious SQL in input parameters
-- Command Injection: OS command execution through unsanitized input
-- LDAP Injection: LDAP query manipulation
-- XML/XXE Injection: XML parsing vulnerabilities
-- Expression Language Injection: Template injection vulnerabilities
-
-**CVSS Severity**: 9.8 (Critical)
-
-**Affected Components**:
-- API input handling
-- Database query construction
-- Configuration parsing
-- Integration with external services
-
-**Mitigations**:
-1. **Preventive**:
-   - Input validation (whitelist approach, length limits, type checking)
-   - Parameterized queries/prepared statements
-   - Output encoding (context-aware)
-   - Disable dangerous features (XXE parsing disabled)
-   - Security code review checklist
-
-2. **Detective**:
-   - Input validation bypass attempts logged
-   - Query injection pattern detection
-   - WAF (Web Application Firewall) rules
-   - Code scanning tools (SAST)
-
-3. **Corrective**:
-   - Request blocking/throttling
-   - Incident investigation
-   - Code patching procedures
-
-**Status**: Implemented - Input validation, parameterized queries, code review
-**Last Review**: 2026-06-26
-**Evidence**: SAST scan results, code review records, security testing
+- **Mitigations:** reads, writes, approvals, revocations, policy denials and
+  honeytoken hits are written to the hash-chained audit log; authenticated HTTP
+  requests write an `HTTP_API` row with token id, client IP, method and path.
+- **Limits:** attribution is weak while all agents share one token and the
+  agent name is self-declared (T-SPOOF-001). Failed authentication attempts are
+  not audited. `HTTP_API` rows are written before the handler runs and do not
+  record the response status. The log gives tamper-evidence, not
+  non-repudiation (no signatures).
+- **Status: Partial.** Tracked: RGT-413, RGT-414, RGT-432.
+- **Evidence:** `rgt_vault/server/app.py` (`require_token`),
+  `rgt_vault/storage/sqlite.py`.
 
 ---
 
-### T-TAMP-003: Dependency Compromise
+## I: Information disclosure
 
-**Description**: Attacker compromises third-party dependencies to inject malicious code.
+### T-INFO-001: Secrets or tokens in logs and error messages
 
-**Attack Vector**:
-- Compromised package on PyPI, npm, or other repository
-- Supply chain attack on dependency vendor
-- Malicious package with similar name (typosquatting)
-- Outdated vulnerable dependency not patched
-- Compromised build tools or CI/CD system
+- **Mitigations:** the Python server logs token ids, not tokens; audit
+  details avoid secret values; `CONTRIBUTING.md` and the PR checklist forbid
+  logging secret plaintext; an error path returns an incident id for unexpected
+  exceptions.
+- **Limits:** the Go server prints its bearer token (see T-SPOOF-002); registered
+  validation error handlers can echo exception text; there is no automated test
+  that asserts tokens and secrets are absent from every log path.
+- **Status: Partial.** Tracked: RGT-409, RGT-428, RGT-418 to RGT-421.
+- **Evidence:** `rgt_vault/server/app.py`, `go/cmd/server/main.go`,
+  `.github/CONTRIBUTING.md`.
 
-**CVSS Severity**: 8.6 (High)
+### T-INFO-002: Theft of the database file
 
-**Affected Components**:
-- Dependency packages (Python, Go, JavaScript)
-- Build pipeline
-- CI/CD system
-- Package repositories
+- **Mitigations:** secret values are AES-256-GCM ciphertext; the DEK is wrapped
+  under an Argon2id-derived key and the master secret is held by the OS store.
+  Without the master secret an attacker with `vault.db` and `keychain.json`
+  cannot recover plaintext.
+- **Limits:** secret names, namespaces, versions, timestamps, status and audit
+  rows are stored unencrypted, so metadata is visible. Revoked secrets are
+  retained as ciphertext.
+- **Status: Mitigated** (values), **Gap** (metadata confidentiality; not a
+  stated goal).
+- **Evidence:** `rgt_vault/storage/migrations/0001_initial.sql`,
+  `rgt_vault/keychain.py`.
 
-**Mitigations**:
-1. **Preventive**:
-   - Dependency pinning (lock files)
-   - Checksum verification for dependencies
-   - Dependency scanning (OWASP Dependency-Check, Snyk)
-   - Regular dependency updates
-   - Package authentication (signatures if available)
-   - CI/CD security hardening
+### T-INFO-003: Disclosure through backups and exports
 
-2. **Detective**:
-   - Automated vulnerability scanning
-   - Dependency audit tools
-   - Build artifact verification
-   - Supply chain risk monitoring
-   - Suspicious dependency behavior monitoring
+- **Current state:** exports are bound to a vault id and DEK and only restore
+  into the same vault (`.github/SECURITY.md`). The export envelope itself has no
+  integrity MAC and import trusts the contents of audit rows and status fields.
+- **Status: Partial.** Tracked: RGT-377.
+- **Evidence:** `rgt_vault/vault.py` (`export_vault`, `import_vault`).
 
-3. **Corrective**:
-   - Rapid dependency update procedures
-   - Rollback to previous safe version
-   - Communication to users if compromise detected
-   - Forensic analysis of affected builds
+### T-INFO-004: Plaintext lingering in memory
 
-**Status**: Implemented - Dependency scanning, lock files, regular updates
-**Last Review**: 2026-06-26
-**Evidence**: Dependabot scanning, lock files, supply chain monitoring
+- **Mitigations:** the vault leases a `bytearray` and wipes it after use
+  (`zeroize_bytearray`, `SecureBuffer`); the DEK is not stored in the
+  database.
+- **Limits:** best effort and partial: copies made into `bytes` or `str`, the
+  master secret (immutable bytes) and the DEK in process memory are not wiped.
+- **Status: Accepted** (documented non-goal; `.github/SECURITY.md`,
+  `docs/architecture/memory-safety.md`). Tracked: RGT-32 (design work).
+- **Evidence:** `rgt_vault/crypto.py`, `tests/test_set_secret_zeroize.py`.
 
----
+### T-INFO-005: Go skeleton server holds plaintext secrets
 
-### T-TAMP-004: Configuration Tampering
-
-**Description**: Attacker modifies application configuration to weaken security.
-
-**Attack Vector**:
-- Modifying config files on disk
-- Environment variable manipulation
-- API endpoints for configuration (if exposed)
-- Privilege escalation to modify configs
-- Compromised deployment pipeline
-
-**CVSS Severity**: 7.5 (High)
-
-**Affected Components**:
-- Configuration files
-- Environment variable handling
-- Configuration management
-- Deployment pipeline
-
-**Mitigations**:
-1. **Preventive**:
-   - Configuration access control (file permissions, restricted access)
-   - Configuration validation on startup
-   - Cryptographic signing of configuration (if possible)
-   - Secure defaults (not relying on config for security)
-   - Immutable infrastructure approach
-
-2. **Detective**:
-   - Configuration file integrity monitoring
-   - Change detection and logging
-   - Startup validation failure alerts
-   - Configuration audit logs
-
-3. **Corrective**:
-   - Configuration rollback procedures
-   - Service restart procedures
-   - Incident response
-
-**Status**: Implemented - File permissions, validation, secure defaults
-**Last Review**: 2026-06-26
-**Evidence**: Deployment procedures, configuration validation code
+- **Current state:** `go/internal/server/handlers/handlers.go` keeps secrets in a
+  process-memory map with no encryption or persistence, and the
+  `GET /v1/secrets` listing returns the full `Secret` structs, including the
+  `value` field.
+- **Status: Gap** (the Go server is not a secure store). Tracked: RGT-259
+  (bind and CORS defaults), RGT-342 (policy stub).
+- **Evidence:** `go/internal/server/handlers/handlers.go`, `go/README.md`.
 
 ---
 
-## R - REPUDIATION THREATS
+## D: Denial of service
 
-### T-REP-001: Denial of Actions
+### T-DOS-001: Resource exhaustion
 
-**Description**: Attacker performs actions but denies having done so; lack of audit trail for accountability.
+- **Mitigations:** per-agent rate limiter on secret use (`RateLimiter` in
+  `rgt_vault/vault.py`); a failure limiter on capability-token verification;
+  secret value size cap (1 MiB); query limits on list endpoints.
+- **Limits:** limiters are in memory and reset on restart; the Python HTTP layer
+  has no request-body size cap and trusts `Content-Length` parsing; an unbounded
+  `offset` can raise an error; the Go server has no body cap.
+- **Status: Partial.** Tracked: RGT-357, RGT-376, RGT-256, RGT-257.
+- **Evidence:** `rgt_vault/vault.py`, `rgt_vault/server/app.py`,
+  `tests/test_hardening.py`.
 
-**Attack Vector**:
-- Insufficient logging
-- Editable or deletable logs
-- Lack of timestamps
-- Inability to prove who performed actions
-- Batch operations without individual attribution
+### T-DOS-002: Crash or fail-open under error
 
-**CVSS Severity**: 6.5 (Medium)
-
-**Affected Components**:
-- Audit logging system
-- Log storage
-- Log access controls
-
-**Mitigations**:
-1. **Preventive**:
-   - Comprehensive audit logging (all security-relevant events)
-   - User identification (who performed action)
-   - Timestamp logging (when action occurred)
-   - Action description (what action occurred)
-   - Immutable log storage (append-only)
-   - Log encryption (confidentiality and integrity)
-
-2. **Detective**:
-   - Log integrity verification
-   - Audit log review procedures
-   - Log tampering detection
-   - Unauthorized log access detection
-
-3. **Corrective**:
-   - Incident investigation procedures
-   - Forensic analysis capabilities
-   - Log recovery from backups
-
-**Status**: Implemented - Comprehensive audit logging, immutable logs
-**Last Review**: 2026-06-26
-**Evidence**: Audit logging code, log retention policies, log access controls
+- **Mitigations:** policy and approval paths fail closed (timeout is denial);
+  unexpected exceptions return a generic body with an incident id; migrations
+  are transactional (`tests/test_migration_atomicity.py`); key rotation is
+  atomic (single transaction).
+- **Limits:** `RGT_VAULT_DEBUG=1` enables FastAPI debug output; the systemd unit
+  does not set `APP_ENV=production`.
+- **Status: Partial.** Tracked: RGT-345, RGT-427.
+- **Evidence:** `rgt_vault/server/app.py`, `tests/test_approval.py`,
+  `tests/test_migration_atomicity.py`.
 
 ---
 
-## I - INFORMATION DISCLOSURE THREATS
+## E: Elevation of privilege
 
-### T-INFO-001: Secret Exposure via Logs
+### T-ELEV-001: Policy bypass
 
-**Description**: Secrets accidentally exposed in application logs or debug output.
+- **Mitigations:** Python ABAC is default-deny, explicit deny wins, and every
+  read and write is checked (`rgt_vault/vault.py`); ABAC rather than RBAC is a
+  recorded decision (`docs/adr/ADR-0002-abac-over-rbac.md`); namespace
+  enumeration protection is tested; freeze (kill switch) state is consulted
+  before execution.
+- **Limits:** policy subject is self-declared (T-SPOOF-001); in the Go server
+  the policy decision is hard-coded to allow.
+- **Status: Mitigated** (engine, Python), **Gap** (Go).
+- **Evidence:** `rgt_vault/vault.py`, `tests/test_vault_v2.py`,
+  `go/internal/server/handlers/handlers.go`.
 
-**Attack Vector**:
-- Logging secret values
-- Logging error messages containing secrets
-- Debug mode leaving secrets in output
-- Verbose logging in production
-- Log aggregation systems exposing secrets
+### T-ELEV-002: Agent token used for operator actions
 
-**CVSS Severity**: 7.5 (High)
+- **Threat:** the agent token reaches `/v1/rotate`, `/v1/audit`,
+  `/v1/audit/verify`, `/v1/policy/simulate`, or set/revoke; any agent token can
+  read the full audit log.
+- **Mitigations:** approval routes require the operator token and a separate
+  test confirms an agent token cannot approve a request
+  (`tests/test_server_approval.py`); human approval with TOTP gates secrets
+  marked `require_2fa`.
+- **Limits:** rotation, audit and policy routes accept the agent bearer token;
+  setting a new secret version without `require_2fa` removes the approval gate.
+- **Status: Partial.** Tracked: RGT-237, RGT-344, RGT-431, RGT-423, RGT-350.
+- **Evidence:** `rgt_vault/server/app.py`, `tests/test_server_approval.py`.
 
-**Affected Components**:
-- Logging system
-- Error handling
-- Debug output
-- Log aggregation
+### T-ELEV-003: Prompt-injected agent exfiltrates secrets
 
-**Mitigations**:
-1. **Preventive**:
-   - Never log secret values (masked logging)
-   - Input validation preventing secrets in error messages
-   - Redaction filters on logging (automatic masking)
-   - Debug mode disabled in production
-   - Structured logging with field-level control
-
-2. **Detective**:
-   - Log review for accidental secrets
-   - Automated secret scanning in logs
-   - Secret pattern detection (regex-based)
-   - Log audit trails
-
-3. **Corrective**:
-   - Log purge procedures for exposed logs
-   - Secret rotation if exposed
-   - Incident response
-
-**Status**: Implemented - Logging safeguards, masking, redaction filters
-**Last Review**: 2026-06-26
-**Evidence**: Code review of logging, log redaction configuration
+- **Mitigations:** capability model (agents receive the result of an action, not
+  the secret), ABAC limits per agent and purpose, honeytokens that raise a
+  critical `HONEYTOKEN_TRIGGERED` audit row, per-agent rate limit, and the
+  optional human approval gate.
+- **Limits:** none of this holds if an agent can impersonate another
+  (T-SPOOF-001) or holds the operator token.
+- **Status: Partial.**
+- **Evidence:** `docs/concepts/capabilities.md`, `rgt_vault/vault.py`,
+  `tests/test_capabilities.py`.
 
 ---
 
-### T-INFO-002: Database Exposure
-
-**Description**: Unauthorized access to database exposes all stored secrets.
-
-**Attack Vector**:
-- Database credentials exposed
-- SQL injection bypassing access controls
-- Database server misconfiguration
-- Backup file exposure
-- Privilege escalation to database access
-
-**CVSS Severity**: 10.0 (Critical)
-
-**Affected Components**:
-- Database server
-- Database credentials
-- Database backups
-- Database access controls
-
-**Mitigations**:
-1. **Preventive**:
-   - Strong database credentials (unique, complex passwords)
-   - Database encryption at rest (AES-256)
-   - Network isolation (database not directly accessible)
-   - Principle of least privilege (restricted database user)
-   - Firewall rules restricting database access
-   - Input validation preventing SQL injection
-
-2. **Detective**:
-   - Database access monitoring
-   - Unusual query patterns
-   - Failed access attempts logging
-   - Data access audit trails
-   - Backup integrity monitoring
-
-3. **Corrective**:
-   - Database access revocation
-   - Encryption key rotation
-   - Affected secrets notification
-   - Incident response procedures
-
-**Status**: Implemented - Encryption, access control, network isolation
-**Last Review**: 2026-06-26
-**Evidence**: Database configuration, encryption implementation, access controls
-
----
-
-### T-INFO-003: Metadata Exposure
-
-**Description**: Sensitive metadata (API responses, error messages, headers) exposes system information.
-
-**Attack Vector**:
-- Verbose error messages revealing stack traces
-- HTTP headers exposing software versions
-- API responses containing unnecessary information
-- Directory listing enabled
-- Comments in HTML/JavaScript exposing paths
-
-**CVSS Severity**: 5.3 (Medium)
-
-**Affected Components**:
-- API responses
-- Error handling
-- HTTP headers
-- Web server configuration
-
-**Mitigations**:
-1. **Preventive**:
-   - Generic error messages (not exposing internals)
-   - Remove version information from headers
-   - Minimal API response payloads (only necessary data)
-   - Disable directory listing
-   - Remove debugging comments from production code
-
-2. **Detective**:
-   - Error message review
-   - Header analysis
-   - API response auditing
-   - Vulnerability scanning
-
-3. **Corrective**:
-   - Configuration changes
-   - Code updates to remove information disclosure
-   - Incident investigation
-
-**Status**: Implemented - Generic error messages, minimal responses
-**Last Review**: 2026-06-26
-**Evidence**: Code review, API testing, security scanning
-
----
-
-### T-INFO-004: Backup and Archive Exposure
-
-**Description**: Backups or archived versions expose historical secrets.
-
-**Attack Vector**:
-- Unencrypted backups
-- Backup storage accessible without authentication
-- Archived versions with different secrets
-- Backup retention too long
-- Backup disaster recovery not tested
-
-**CVSS Severity**: 8.2 (High)
-
-**Affected Components**:
-- Backup system
-- Archive storage
-- Backup encryption
-- Backup access controls
-
-**Mitigations**:
-1. **Preventive**:
-   - Backup encryption (same as production)
-   - Backup access control (restricted to authorized personnel)
-   - Backup storage isolation (separate system)
-   - Backup retention policies (data deleted when no longer needed)
-   - Backup verification procedures
-
-2. **Detective**:
-   - Backup integrity monitoring
-   - Backup access logging
-   - Unauthorized access detection
-   - Backup enumeration attempts
-
-3. **Corrective**:
-   - Backup isolation/deletion procedures
-   - Secret rotation if compromised
-   - Incident response
-
-**Status**: Implemented - Encrypted backups, access control, retention policies
-**Last Review**: 2026-06-26
-**Evidence**: Backup procedures, encryption implementation, access controls
-
----
-
-## D - DENIAL OF SERVICE THREATS
-
-### T-DOS-001: Resource Exhaustion
-
-**Description**: Attacker exhausts server resources (CPU, memory, disk, connections) causing unavailability.
-
-**Attack Vector**:
-- Request flooding (HTTP flood, API request spam)
-- Large payload attacks
-- Algorithmic complexity attacks (causing CPU exhaustion)
-- Memory exhaustion (large secrets, bulk operations)
-- Disk exhaustion (logging, storage)
-- Connection exhaustion
-
-**CVSS Severity**: 7.5 (High)
-
-**Affected Components**:
-- API server
-- Database
-- Storage system
-- Network infrastructure
-
-**Mitigations**:
-1. **Preventive**:
-   - Rate limiting (requests per IP/user, time-based)
-   - Request timeout (prevent long-running requests)
-   - Input size limits (payload size, secret size)
-   - Connection pooling (limit concurrent connections)
-   - Resource monitoring and alerting
-   - Efficient algorithms (prevent algorithmic complexity attacks)
-   - Load balancing (distribute load across servers)
-
-2. **Detective**:
-   - Resource usage monitoring
-   - Request pattern analysis
-   - Anomaly detection (unusual traffic volumes)
-   - Alert on resource thresholds
-   - DDoS detection systems
-
-3. **Corrective**:
-   - Request throttling/blocking
-   - Service degradation (reduce features under load)
-   - Scale up resources (auto-scaling if applicable)
-   - Incident response procedures
-
-**Status**: Implemented - Rate limiting, timeouts, input validation
-**Last Review**: 2026-06-26
-**Evidence**: Rate limiting configuration, timeout settings, resource monitoring
-
----
-
-### T-DOS-002: Application Crash
-
-**Description**: Attacker causes application to crash through malformed input or logic bugs.
-
-**Attack Vector**:
-- Null pointer dereference
-- Array out-of-bounds access
-- Unhandled exceptions
-- Infinite loops
-- Stack overflow
-- Division by zero
-
-**CVSS Severity**: 7.5 (High)
-
-**Affected Components**:
-- API server
-- Application logic
-- Error handling
-
-**Mitigations**:
-1. **Preventive**:
-   - Input validation (prevent invalid states)
-   - Bounds checking (array access validation)
-   - Exception handling (catch and recover)
-   - Code review focusing on edge cases
-   - Unit testing of error conditions
-   - Defensive programming practices
-
-2. **Detective**:
-   - Crash logging and alerting
-   - Exception tracking
-   - Monitoring for service restarts
-   - Log analysis for error patterns
-
-3. **Corrective**:
-   - Automatic service restart
-   - Error notification procedures
-   - Bug fix procedures
-   - Post-mortem analysis
-
-**Status**: Implemented - Exception handling, input validation, testing
-**Last Review**: 2026-06-26
-**Evidence**: Code review, exception handling code, test coverage
-
----
-
-## E - ELEVATION OF PRIVILEGE THREATS
-
-### T-ELEV-001: Authorization Bypass
-
-**Description**: Attacker gains access to resources or operations they're not authorized for.
-
-**Attack Vector**:
-- Authorization logic bugs
-- Missing authorization checks
-- Privilege escalation in code
-- Bypass of role-based access control
-- Session fixation allowing assumption of higher privilege
-- API endpoints with missing authorization
-
-**CVSS Severity**: 9.1 (Critical)
-
-**Affected Components**:
-- Authorization layer
-- API endpoints
-- Role-based access control
-- Session management
-
-**Mitigations**:
-1. **Preventive**:
-   - Authorization checks on all protected operations
-   - Role-based access control (RBAC) enforcement
-   - Principle of least privilege (default deny)
-   - Authorization caching (with proper TTL)
-   - Positive authorization (check for permission, not absence of denial)
-   - Code review focusing on authorization
-
-2. **Detective**:
-   - Audit logging of authorization checks
-   - Failed authorization attempt tracking
-   - Anomaly detection (privilege escalation patterns)
-   - Access review and validation
-
-3. **Corrective**:
-   - Access revocation procedures
-   - Incident investigation
-   - Remediation and patching
-   - User notification
-
-**Status**: Implemented - RBAC, authorization checks, code review
-**Last Review**: 2026-06-26
-**Evidence**: Authorization implementation code, code review records, testing
-
----
-
-### T-ELEV-002: Insecure Direct Object References (IDOR)
-
-**Description**: Attacker accesses resources belonging to other users by manipulating reference IDs.
-
-**Attack Vector**:
-- Predictable object IDs (sequential numbers)
-- User IDs or resource IDs exposed in URLs/parameters
-- Missing authorization checks on object access
-- Trusting user input for object ownership
-
-**CVSS Severity**: 7.1 (High)
-
-**Affected Components**:
-- API endpoints
-- Authorization layer
-- Object reference handling
-
-**Mitigations**:
-1. **Preventive**:
-   - Non-predictable object IDs (UUIDs instead of sequential)
-   - Authorization check before accessing any object (verify ownership)
-   - Not exposing internal IDs unnecessarily
-   - Input validation on object references
-   - Principle of least privilege (default deny)
-
-2. **Detective**:
-   - Access attempts to objects not owned
-   - Audit logging of object access
-   - Anomaly detection (access pattern changes)
-   - API access monitoring
-
-3. **Corrective**:
-   - Access blocking/revocation
-   - Incident investigation
-   - Remediation procedures
-
-**Status**: Implemented - UUID usage, authorization checks, access logging
-**Last Review**: 2026-06-26
-**Evidence**: API implementation, ID generation, authorization code
-
----
-
-### T-ELEV-003: Privilege Escalation via Roles
-
-**Description**: Attacker escalates privileges by exploiting role management or group membership.
-
-**Attack Vector**:
-- Modifying user roles (if not properly controlled)
-- Group membership manipulation
-- Default admin accounts not changed
-- Shared accounts with higher privileges
-- Privilege inheritance bugs
-
-**CVSS Severity**: 8.8 (High)
-
-**Affected Components**:
-- User management
-- Role management
-- Group management
-- Access control lists
-
-**Mitigations**:
-1. **Preventive**:
-   - Access control on role/group modifications (admin-only)
-   - Audit logging of role changes
-   - Regular role review and validation
-   - Separation of duties (role changes require approval)
-   - Default admin accounts changed on first deployment
-
-2. **Detective**:
-   - Role change monitoring and alerts
-   - Privilege escalation pattern detection
-   - Access review procedures
-   - Suspicious role activity investigation
-
-3. **Corrective**:
-   - Role revocation procedures
-   - Incident investigation
-   - Access audit
-   - Remediation and patching
-
-**Status**: Implemented - Role-based access control, audit logging
-**Last Review**: 2026-06-26
-**Evidence**: Role management code, audit logging, access controls
-
----
-
-## Design Flaws
-
-### DF-001: Cryptographic Weakness
-
-**Description**: Design flaw in cryptographic implementation or algorithm choice.
-
-**Potential Issues**:
-- Weak encryption algorithms (DES, MD5)
-- Insufficient key length
-- Improper key derivation
-- Weak random number generation
-- Insecure cipher modes
-- No authenticated encryption
-
-**Mitigations**:
-- Use approved cryptographic algorithms (AES-256-GCM, ChaCha20-Poly1305)
-- Minimum 256-bit key length for symmetric encryption
-- PBKDF2 for key derivation (10,000+ iterations)
-- Cryptographically secure random number generation
-- Authenticated encryption (AEAD) for data integrity
-- Regular cryptographic review against standards
-
-**Status**: Implemented - Strong cryptography used throughout
-**Last Review**: 2026-06-26
-
----
-
-### DF-002: Missing Input Validation
-
-**Description**: Design assumes input is valid without proper validation.
-
-**Potential Issues**:
-- No validation of input length, format, type
-- No encoding/escaping of output
-- No defense against injection attacks
-- Assumption of trusted input
-
-**Mitigations**:
-- Whitelist-based input validation
-- Length limits enforced
-- Type checking on inputs
-- Output encoding and escaping
-- Parameterized queries for database
-- Security testing of input handling
-
-**Status**: Implemented - Input validation throughout codebase
-**Last Review**: 2026-06-26
-
----
-
-### DF-003: Insufficient Access Control
-
-**Description**: Design lacks comprehensive access control mechanisms.
-
-**Potential Issues**:
-- All users have same permissions
-- No role-based access control
-- Access control at UI level (not API level)
-- Shared accounts or credentials
-- Missing authorization enforcement
-
-**Mitigations**:
-- Role-based access control (RBAC) enforced at API level
-- Principle of least privilege (default deny)
-- Per-resource authorization checks
-- Audit logging of access control decisions
-- Regular access review and cleanup
-
-**Status**: Implemented - RBAC throughout system
-**Last Review**: 2026-06-26
-
----
-
-### DF-004: Inadequate Logging
-
-**Description**: Insufficient logging for security monitoring and incident response.
-
-**Potential Issues**:
-- Not logging security-relevant events
-- Logs not persistent or encrypted
-- Insufficient log retention
-- No audit trail for accountability
-- Logs accessible to unauthorized users
-
-**Mitigations**:
-- Comprehensive audit logging (authentication, authorization, data access, changes)
-- Immutable log storage (append-only)
-- Log encryption for confidentiality and integrity
-- Minimum 90-day retention (configurable)
-- Restricted log access (authorized users only)
-- Automated log monitoring and alerting
-
-**Status**: Implemented - Comprehensive audit logging system
-**Last Review**: 2026-06-26
-
----
-
-## Threat Assessment Summary
-
-### Threat Severity Distribution
-| Severity | Count | Percentage |
-|----------|-------|------------|
-| Critical (9.0-10.0) | 4 | 22% |
-| High (7.0-8.9) | 11 | 61% |
-| Medium (4.0-6.9) | 2 | 11% |
-| Low (0.1-3.9) | 0 | 0% |
-| **Total** | **17** | **100%** |
-
-### Mitigation Coverage
-| Status | Count |
-|--------|-------|
-| Preventive Controls Implemented | 17/17 |
-| Detective Controls Implemented | 17/17 |
-| Corrective Controls Implemented | 17/17 |
-
-### Design Flaw Coverage
-| Design Flaw | Status |
-|------------|--------|
-| Cryptographic Weakness | Mitigated |
-| Missing Input Validation | Mitigated |
-| Insufficient Access Control | Mitigated |
-| Inadequate Logging | Mitigated |
-
----
-
-## Threat Model Maintenance
-
-**Update Triggers**:
-- Significant architectural changes
-- New features affecting threat landscape
-- Discovered vulnerabilities or incidents
-- Annual threat model review
-- External security assessments
-
-**Next Threat Model Review**: June 26, 2027
-
----
-
-**Document Version**: 1.0  
-**Last Updated**: June 26, 2026  
-**Reviewed By**: Security Maintainer  
-**Approved By**: Project Lead
+## Design flaws and open design items
+
+| ID | Item | Status | Tracking / evidence |
+|---|---|---|---|
+| DF-001 | Cryptographic design: AES-256-GCM, Argon2id, HKDF-SHA512, random nonces, DEK rotation thresholds | Mitigated; some KDF and key-hierarchy changes deliberately held for sign-off | `rgt_vault/crypto.py`, `rgt_vault/keychain.py`, `docs/architecture/crypto.md`, RGT-217, RGT-218 |
+| DF-002 | Input validation and schema strictness | Partial (see T-TAMP-002) | `rgt_vault/input_validation.py` |
+| DF-003 | Single shared bearer token, self-declared agent | Gap | RGT-236, RGT-343, RGT-346 |
+| DF-004 | Logging and audit completeness (failed auth, response status) | Partial | RGT-413, RGT-414, RGT-432 |
+| DF-005 | No transport encryption | Gap | RGT-251, RGT-455, RGT-456 |
+| DF-006 | Go line is labelled primary but is a skeleton | Open decision | RGT-165; `go/README.md` |
+
+## Summary
+
+| Category | Mitigated | Partial | Gap | Accepted |
+|---|---|---|---|---|
+| Spoofing (4) | 0 | 1 | 3 | 0 |
+| Tampering (6) | 1 | 4 | 0 | 1 |
+| Repudiation (1) | 0 | 1 | 0 | 0 |
+| Information disclosure (5) | 1 | 2 | 1 | 1 |
+| Denial of service (2) | 0 | 2 | 0 | 0 |
+| Elevation of privilege (3) | 0 | 2 | 1 | 0 |
+| **Total (21)** | **2** | **12** | **5** | **2** |
+
+Counting rule: each threat is counted under its weakest component, except
+where the weaker component is an explicit non-goal in `.github/SECURITY.md`
+(matched-pair backup rollback in T-TAMP-001, metadata visibility in
+T-INFO-002), in which case the stronger status is used. T-SPOOF-002 and
+T-ELEV-001 therefore count as Gap because of the Go server.
+
+## Maintenance
+
+There is no scheduled review. This file should be updated when the daemon's
+authentication, authorization or transport changes, when a new network-facing
+component is added (Go server, gateway, MCP), and after any vulnerability
+report. Re-check the "Verified against" commit each time.

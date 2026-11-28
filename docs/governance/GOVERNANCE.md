@@ -1,1424 +1,809 @@
-# RGT Vault: Software Security Governance Framework
+# RGT Vault: Software Security Governance
 
-This document establishes the software security governance framework for the RGT Vault project, aligned with OWASP ASVS Level 3 (Software Security Governance) requirements and industry-accepted methodologies including ISO/IEC 27034, BSIMM, OWASP SAMM, and NIST SP 800-160.
+This document states, objective by objective, what software-security governance
+actually exists for `rgt-vault` today. It replaces an earlier draft that
+described teams, reviews, mailing lists and release notes that did not exist.
+
+**Rule for this document:** it only describes things that can be checked in this
+repository or on its GitHub project. Where something does not exist it says
+`Gap` (with a tracking issue) or `N/A - single maintainer`. It does not describe
+intended or aspirational processes as if they were operating.
+
+- **Verified against:** commit `c3b090b` on `master` (state of CI and GitHub
+  settings checked 2026-11-26).
+- **Owner:** the project maintainer (see 1.1).
+- **Companion documents:** [CONTROLS_INVENTORY.md](CONTROLS_INVENTORY.md),
+  [THREAT_INVENTORY.md](THREAT_INVENTORY.md),
+  [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md),
+  [`.github/SECURITY.md`](../../.github/SECURITY.md) (the authoritative security
+  policy: guarantees, non-goals, reporting).
+
+## How to read this document
+
+Status vocabulary used in every section:
+
+| Status | Meaning |
+|---|---|
+| **Exists** | The objective is met by something real in the repo or on GitHub. |
+| **Partial** | Something real exists but a named part of the objective is not met. |
+| **Gap** | The objective is not met. A tracking issue is named. |
+| **N/A - single maintainer** | The objective presumes an organisation (leadership, teams, training programme) that this project does not have. Not applicable at this scale; nothing is claimed. |
+
+Objective numbers (1.1 to 10.1) are the ones used in the tracker epic
+RGT-488 "Software Security Governance" (issues RGT-460 to RGT-487). They are
+**not OWASP ASVS identifiers**. The wording (software vendor, "mature process",
+control objectives for the secure software lifecycle) follows the style of
+secure-software-lifecycle standards for software vendors, but this repository
+does not cite or claim conformance to a specific standard, and the mapping to
+one has not been verified. ASVS verification is tracked separately under
+RGT-492.
+
+## Project facts that the rest of the document relies on
+
+| Fact | Value | How to check |
+|---|---|---|
+| Maintainer | One person (GitHub account `WilliamHudspeth`) is the only repository collaborator and the only person with decision authority. | `gh api repos/WilliamHudspeth/rgt-vault/collaborators` |
+| What it is | A local, encrypted secrets manager for AI agents. Not a hosted service; the project operates no infrastructure and receives no data from users. | `README.md`, `.github/SECURITY.md` |
+| Languages | Python line (`rgt_vault/`, version 0.3.0 in `pyproject.toml`) with real storage and cryptography; Go line (`go/`) whose `go/cmd/server` is currently a skeleton (in-memory store, no persistence or crypto, policy stub). | `go/README.md` "Status", `go/internal/server/handlers/handlers.go` |
+| Releases | Git tags `v0.1.0`, `v0.2.0`, `v0.3.0`. GitHub releases exist for `v0.1.0` (pre-release) and `v0.3.0` (still a **draft**); `v0.2.0` is a tag only. | `git tag`, `gh release list` |
+| Change history | About 100 commits between 2026-06-16 and 2026-07-27, mostly pushed directly to `master`; 5 merged pull requests. Several author identities appear (maintainer, dependabot, and agent-style identities). | `git shortlog -sn`, `gh pr list --state merged` |
+| CI | Five workflows in `.github/workflows/`: `.github/workflows/ci.yml`, `.github/workflows/review-gate.yml`, `.github/workflows/codeql.yml`, `.github/workflows/scorecard.yml`, `.github/workflows/release.yml`. | Described in 2.4. **As of 2026-11-26 the `CI` and `review-gate` runs on `master` are failing**; fixing that is tracked outside this batch. |
+| Security contact | Email address in `.github/SECURITY.md`; GitHub private vulnerability reporting is also enabled on the repository. | `gh api repos/WilliamHudspeth/rgt-vault/private-vulnerability-reporting` returns `enabled: true` |
+| Issue tracking | Internal tracker (Multica, workspace `rgt-vault`, `RGT-n` ids) referenced from commit messages and pull requests. It is not a public tracker. | `git log --grep RGT-` |
+
+---
 
 ## 1. Governance Structure and Leadership Accountability
 
-### 1.1 Security Responsibility and Leadership Accountability
+### 1.1 Security Responsibility and Leadership Accountability (RGT-460)
 
-**Policy**: Security responsibility for the RGT Vault is formally assigned to the Security Maintainer role. The Security Maintainer has authority over security decisions across the entire product lifecycle and reports security matters to project leadership.
+**Status: Exists (role assigned) / N/A - single maintainer (leadership reporting).**
 
-**Implementation**:
-- Security Maintainer holds formal accountability for all software security decisions
-- Project leadership receives quarterly updates on security policy performance, issues, and strategic initiatives
-- Annual comprehensive review of security strategy and governance effectiveness conducted with leadership approval
-- Communication channels established for security escalations: GitHub Issues (security label), code review comments, and direct communication with project lead
+- **Accountability.** The maintainer is accountable for the security of the
+  project. This is not delegated: there is no security team, committee or
+  separate security officer. The maintainer accepts vulnerability reports
+  (9.1), decides on fixes, and approves releases.
+- **Communication to "senior leadership".** N/A - single maintainer. The
+  maintainer is the leadership, so there is no separate audience to inform.
+- **Annual security update to leadership.** N/A - single maintainer. No annual
+  report is produced and none is claimed. The nearest real equivalents are the
+  `CHANGELOG.md` Security sections and the audit write-ups archived under
+  `docs/archive/audits/`.
 
-**Related Artifacts**:
-- GitHub repository labels define security-reviewer roles (reviewer:security-maintainer)
-- This governance framework and all related policy documents
-- Commit history and PR review records document security decisions
+Evidence: GitHub collaborator list (one collaborator); `.github/SECURITY.md`
+(the single reporting contact, which reaches the maintainer).
 
-### 1.2 Lifecycle Software Security Responsibilities
+### 1.2 Lifecycle Software Security Responsibilities (RGT-461)
 
-**Policy**: Software security responsibilities are clearly defined for all lifecycle phases (design, development, testing, maintenance) and assigned to individuals or teams performing each function.
+**Status: Partial.**
 
-**Implementation**:
-- **Architects**: Design threat models, define security controls, conduct architecture reviews
-- **Developers**: Implement secure coding practices, participate in code reviews, report security findings
-- **Testers**: Execute security tests, identify vulnerabilities, verify remediation
-- **Maintainers**: Monitor for security issues, manage dependencies, coordinate patching
-- **Project Lead/Security Maintainer**: Oversee all security functions, make final approval decisions
+- All lifecycle phases (design, development, testing, release, maintenance)
+  are the maintainer's responsibility. There are no separate roles, no job
+  descriptions and no employee agreements (N/A - single maintainer).
+- Contributor expectations are written down in `.github/CONTRIBUTING.md`:
+  tests are required for crypto, authorization, audit and storage changes;
+  secret plaintext must never be logged or placed in exceptions or audit
+  records; `os.urandom` for salts, nonces and keys; documentation must not
+  overstate guarantees; a `CHANGELOG.md` entry is required.
+- Pull requests carry a security checklist in
+  `.github/PULL_REQUEST_TEMPLATE.md`. It is a self-attested checklist, not an
+  enforced gate.
+- Third-party contributors acknowledge no agreement beyond the Apache-2.0
+  `LICENSE` and the Code of Conduct (`.github/CODE_OF_CONDUCT.md`).
+- Gap: there is no step that requires a design-level security review before
+  implementation (see 3.2).
 
-**Acknowledgment**:
-- Responsibilities documented in this governance framework
-- Code of Conduct requires adherence to security practices
-- Pull request template includes security checklist
-- Commit messages reference security objectives when applicable
+Evidence: `.github/CONTRIBUTING.md`, `.github/PULL_REQUEST_TEMPLATE.md`.
 
-### 1.3 Software Security Skills Management and Review
+### 1.3 Software Security Skills Management and Review (RGT-462)
 
-**Policy**: The project maintains security skills through continuous learning, training requirements, and annual review processes for all development personnel.
+**Status: N/A - single maintainer.**
 
-**Implementation**:
-- **Required Skills Training**: All contributors must demonstrate understanding of:
-  - OWASP Top 10 vulnerabilities
-  - Secure coding practices for the project stack (Python, Go)
-  - Cryptographic best practices
-  - Threat modeling fundamentals
-  
-- **Training Mechanisms**:
-  - OWASP online courses and training materials
-  - Project-specific threat modeling workshops
-  - Security-focused code review feedback
-  - Incident postmortem analysis sessions
-  
-- **Annual Review Process**:
-  - Security Maintainer conducts annual review of development personnel
-  - Assessment includes code review quality, vulnerability findings, threat model participation
-  - Training gaps identified and addressed through structured learning paths
-  - Records maintained in project documentation
+There is no skills framework, no role-based skill definitions, no training
+catalogue, no annual skills review and no training or certification records.
+Those mechanisms presuppose a team of developers. The compensating controls
+that exist are automated: static analysis, dependency scanning and secret
+scanning run in CI regardless of who writes the change (see 2.4 and 4.1).
+Nothing in this repository records the maintainer's training or
+certifications, and this document does not invent such records.
 
-**Current Skills Assessment** (as of implementation):
-- Project lead and security maintainer trained in threat modeling and secure architecture
-- All contributors required to complete OWASP Top 10 training
-- Quarterly security-focused architecture reviews scheduled
+Evidence: absence confirmed by search of `docs/` and `.github/` for training,
+skills or certification records; automated checks in `.github/workflows/`.
 
 ---
 
 ## 2. Security Policy and Compliance Framework
 
-### 2.1 Identification and Monitoring of Compliance Requirements
+### 2.1 Identification and Monitoring of Compliance Requirements (RGT-463)
 
-**Policy**: External regulatory and industry requirements are formally identified, monitored, and maintained in an accessible inventory. Requirements are reviewed annually and integrated into product design and operations.
+**Status: Partial.**
 
-**Applicable Requirements by Category**:
+`rgt-vault` is a local tool. The project does not run a service, collect
+telemetry or process other people's personal data (searched `rgt_vault/` and
+`go/` for telemetry, analytics and error-reporting clients: none). Each user
+holds their own vault on their own machine.
 
-**Data Protection**:
-- GDPR (General Data Protection Regulation): If processing EU resident data
-  - Personal data protection and privacy controls required
-  - Data subject rights implementation (access, deletion, portability)
-  
-- PII Protection: Personally Identifiable Information handling
-  - Encryption at rest and in transit
-  - Access controls and audit logging
-  - Secure deletion procedures
+| Requirement source | Applicability to the project | Current position |
+|---|---|---|
+| GDPR / personal-data law | The project holds no user data. Users who store personal data in a vault are the controllers of that data. | N/A for the project; not assessed for individual deployments. |
+| PCI DSS, HIPAA | Not a payment or health-data processor. | N/A; no claim of compliance is made anywhere in the repo. |
+| Cryptography guidance | Design is informed by NIST SP 800-57 (key management; see `docs/architecture/crypto.md`) and NIST SP 800-38D limits (see the DEK-rotation entry in `CHANGELOG.md`). Alignment with BSI TR-02102-1 is a tracked goal, not a claim (epic RGT-489). | Informal alignment only; no conformance assessment. |
+| Open-source licensing | Apache-2.0 (`LICENSE`). Dependency licences are not systematically checked. | Gap: no licence scan in CI. |
+| Export controls on cryptography | Software contains strong cryptography. | Not assessed. |
+| ASVS | Verification effort tracked in RGT-492. | In progress, not part of this document. |
 
-**Industry Standards**:
-- PCI DSS: If handling payment card data (currently not applicable, included for future scope)
-- HIPAA: If handling health information (currently not applicable, included for future scope)
-- SOC 2 Type II: For organizations holding customer secrets
-  - Security, availability, and confidentiality controls
-  - Regular third-party audit and compliance verification
+- Monitoring: there is no scheduled review of external requirements. The list
+  above is reviewed only when this document is edited (Gap; no annual review
+  exists).
 
-**Cryptography Standards**:
-- NIST SP 800-38: Cryptographic Algorithm guidance
-- FIPS 140-2/140-3: Federal Information Processing Standards
+Evidence: `LICENSE`; `docs/architecture/crypto.md`; this table.
 
-**Inventory of Applicable Requirements**:
-| Requirement | Applicability | Review Date | Status |
-|-------------|----------------|-------------|--------|
-| GDPR | Depends on customer base | Annually | Active monitoring |
-| PII Protection | Yes - vault stores secrets | Annually | Implemented |
-| Cryptography Standards | Yes - encryption core | Annually | Implemented |
-| SOC 2 Type II | Conditionally - for enterprises | Annually | Roadmap |
+### 2.2 Software Security Policy Definition and Approval (RGT-464)
 
-**Compliance Monitoring**:
-- Quarterly review of OWASP Top 10 updates
-- Annual review of cryptographic standards and recommendations
-- Automatic tracking of CVE databases for dependencies
-- Semi-annual review of privacy and data protection regulations
+**Status: Exists (policy) / N/A - single maintainer (separate approval).**
 
-### 2.2 Software Security Policy Definition and Approval
+- The security policy is `.github/SECURITY.md`. It states the threat
+  assumptions, the guarantees, the explicit non-goals (not an HSM, best-effort
+  zeroization, backup rollback not fully mitigated, no protection against a
+  malicious operator, audit-chain limitations), supported versions and the
+  reporting process.
+- Rules that developers must follow are in `.github/CONTRIBUTING.md` and the
+  pull-request checklist.
+- Measurability: some rules are enforced mechanically (ruff, mypy, bandit at
+  medium severity, pip-audit, govulncheck, gitleaks, an 80% coverage gate; see
+  2.4). Most guarantees are verified by tests in `tests/` rather than by metrics.
+- Approval: the maintainer wrote and approves the policy; there is no
+  separate leadership approval step (N/A - single maintainer).
+- Communication: the policy is published in the repository (`.github/SECURITY.md`)
+  and linked from `.github/CONTRIBUTING.md`.
 
-**Policy**: This governance framework constitutes the formal software security policy for RGT Vault, approved by project leadership. The policy covers all control objectives and is communicated to all development personnel and external stakeholders.
+Evidence: `.github/SECURITY.md`, `.github/CONTRIBUTING.md`.
 
-**Policy Scope**:
-This document and all related governance files establish measurable security objectives covering:
-1. Leadership accountability and responsibility assignment
-2. Skills management and compliance requirements
-3. Threat modeling and design assurance
-4. Secure development, testing, and change management
-5. Software integrity and delivery
-6. Data protection and secure configuration
-7. Communication and incident response
-8. Release management and support
+### 2.3 Software Security Strategy and Industry Alignment (RGT-465)
 
-**Leadership Approval**:
-- Policy approved by project maintainers and security stakeholder
-- Annual review and reapproval required
-- Changes to policy require documented review and approval
-- Approval records maintained in governance documentation
+**Status: Partial.**
 
-**Communication**:
-- Policy published in this documentation repository
-- Communicated to all contributors via project onboarding
-- Referenced in pull request reviews and security decisions
-- Available to external stakeholders, partners, and customers
+- A roadmap of known gaps and planned work exists in `docs/ROADMAP.md`;
+  open work is tracked as `RGT-n` issues, including epics RGT-488 (governance),
+  RGT-489 (cryptography and TLS) and RGT-492 (ASVS verification).
+- Alignment with an industry methodology (ISO/IEC 27034, BSIMM, OWASP SAMM,
+  NIST SP 800-160) has **not** been adopted or assessed. Referenced inputs that
+  actually shape the work are OWASP ASVS (verification, RGT-492), the OpenSSF
+  Scorecard workflow, and NIST SP 800-57 / 800-38D for key management.
+- Annual strategy review: none (N/A - single maintainer). The roadmap is
+  updated when work lands.
+- Communication to developers: N/A - single maintainer.
+- Open question recorded in the tracker: the Python line is described as
+  maintenance-mode and the Go line as primary, but the Go server is currently a
+  skeleton. This affects the strategy and is a human decision (RGT-165).
 
-**Policy Effectiveness Metrics**:
-- Zero critical unpatched vulnerabilities in production
-- 100% of pull requests reviewed for security impact
-- Annual security training completion rate
-- Incident response time and resolution tracking
+Evidence: `docs/ROADMAP.md`, `go/README.md`.
 
-### 2.3 Software Security Strategy and Industry Alignment
+### 2.4 Software Security Assurance Processes and Inventory (RGT-466)
 
-**Policy**: RGT Vault maintains a formal software security strategy aligned with industry-accepted methodologies and reviewed annually to account for business changes and product evolution.
+**Status: Exists.**
 
-**Strategic Framework**:
-Our security strategy is based on **defense-in-depth** principles, informed by:
-- **OWASP SAMM** (Software Assurance Maturity Model) - Drives continuous improvement in security practices
-- **NIST SP 800-160** - Provides guidance on security engineering throughout the lifecycle
-- **ISO/IEC 27034** - Application security standards and controls
-- **BSIMM** (Building Security In Maturity Model) - Benchmarks for secure development practices
+The assurance processes are the CI workflows below plus the tests in `tests/`.
+This table is the inventory; [CONTROLS_INVENTORY.md](CONTROLS_INVENTORY.md)
+lists the product controls themselves.
 
-**Strategic Goals**:
-1. **Secure by Design**: Threat modeling integrated into every architectural decision
-2. **Secure Development**: Secure coding standards enforced through code review and automated scanning
-3. **Secure Testing**: Comprehensive security testing including SAST, dependency scanning, and penetration testing
-4. **Secure Deployment**: Cryptographic integrity and secure configuration controls
-5. **Secure Maintenance**: Continuous monitoring, rapid patching, and incident response
-6. **Stakeholder Trust**: Clear communication of security decisions and vulnerability handling
+| Process | Where | Runs on | Blocks? |
+|---|---|---|---|
+| Unit/integration tests across OS and Python versions (ubuntu, macos, windows; py3.9 to 3.13) with coverage report | `.github/workflows/ci.yml` job `test` | push to `master`/`main`, every pull request | CI job result |
+| ruff lint, ruff format check, mypy | `.github/workflows/ci.yml` job `lint`; `.github/workflows/review-gate.yml` jobs `lint`, `typecheck` | same | CI job result |
+| bandit (Python SAST) | `.github/workflows/ci.yml` (`--severity-level medium`), `.github/workflows/review-gate.yml` (`-lll`) | same | CI job result |
+| pip-audit (Python dependency CVEs) | `.github/workflows/ci.yml`, `.github/workflows/review-gate.yml` | same | CI job result |
+| govulncheck (Go dependency/stdlib CVEs) | `.github/workflows/ci.yml` job `security` | same | CI job result |
+| gitleaks (secret scan of history) | `.github/workflows/review-gate.yml` job `gitleaks` | same | CI job result |
+| 80% coverage gate | `.github/workflows/review-gate.yml` job `coverage` | same | CI job result |
+| Wheel build and migrations-shipped check | `.github/workflows/ci.yml` job `build` | same | CI job result |
+| SBOM (CycloneDX) generation | `.github/workflows/ci.yml` job `sbom` | same | CI job result |
+| CodeQL (Python only, `security-and-quality`) | `.github/workflows/codeql.yml` | weekly schedule; push/PR triggers name branch `main` | Reporting only; see weaknesses |
+| OpenSSF Scorecard | `.github/workflows/scorecard.yml` | weekly schedule; push trigger names branch `main` | Reporting only |
+| Release build, `go test ./...`, SBOM, checksums | `.github/workflows/release.yml` | tag push `v*` | Release job result |
+| Dependency update PRs (pip, gomod, github-actions) | `.github/dependabot.yml` | weekly | Opens PRs only |
 
-**Implementation Roadmap** (3-Year Horizon):
-- **Year 1 (Governance Foundation)**: Complete ASVS Level 3 governance requirements, establish threat models, implement code review discipline
-- **Year 2 (Advanced Controls)**: SAST integration, automated dependency scanning, security testing automation, SOC 2 preparation
-- **Year 3 (Excellence)**: ASVS Level 4 advanced controls, penetration testing program, security incident response team, third-party audit (SOC 2)
+Known weaknesses of this set (also see 2.6):
 
-**Strategy Communication**:
-- Annual communication to development team via security meetings
-- Strategy updates reflected in quarterly roadmap reviews
-- Architectural decisions documented with security rationale
-- Quarterly metrics review with project leadership
+- The default branch is `master`, but `.github/workflows/codeql.yml` and `.github/workflows/scorecard.yml` trigger
+  on pushes/PRs to `main`, so on pull requests they do not run; only the weekly
+  schedule (and manual runs) execute them.
+- No required-status-check or review requirement could be verified: the
+  branch-protection API returned 403 to the account used for this check and no
+  repository rulesets exist. Treat branch protection as **not verified**
+  (see 6.1).
+- Go code is not covered by CodeQL and `go test`/`go vet` do not run on pull
+  requests (`go test ./...` runs only in `.github/workflows/release.yml`).
+- Missing checkpoint: a per-design threat review step does not exist (Gap).
 
-### 2.4 Software Security Assurance Processes and Inventory
+Ownership: the maintainer owns every process. Outcomes are monitored by reading
+CI results (see 2.6).
 
-**Policy**: Comprehensive software security assurance processes are implemented throughout the development lifecycle. A detailed inventory of all security controls and processes is maintained and updated quarterly.
+Evidence: `.github/workflows/ci.yml`, `.github/workflows/review-gate.yml`,
+`.github/workflows/codeql.yml`, `.github/workflows/scorecard.yml`,
+`.github/workflows/release.yml`, `.github/dependabot.yml`.
 
-**Assurance Processes**:
+### 2.5 Security Assurance Evidence Collection and Retention (RGT-467)
 
-**Design Phase**:
-- Threat modeling conducted for new components
-- Security architecture reviews by Security Maintainer
-- Cryptographic control selection following NIST guidance
+**Status: Partial.**
 
-**Development Phase**:
-- Secure coding standards enforcement via code review
-- OWASP Top 10 vulnerability avoidance checklist
-- Static analysis scanning on pull requests
-- Dependency inventory and vulnerability scanning
+Evidence that exists and where to find it:
 
-**Testing Phase**:
-- Security testing checklist applied to all features
-- Vulnerability discovery and validation processes
-- Regression test maintenance for previously found issues
-- Integration and end-to-end security testing
+| Evidence | Location | Retention |
+|---|---|---|
+| Source history and who changed what | Git history on GitHub | Permanent (git) |
+| Test suite and regression tests | `tests/` | Permanent (git) |
+| Test, scan and coverage results | GitHub Actions runs; coverage and SBOM artifacts from `.github/workflows/ci.yml`/`review-gate.yml` | GitHub's default artifact/log retention; **not** separately archived |
+| Threat model and threat inventory | `docs/security/threat-model.md`, [THREAT_INVENTORY.md](THREAT_INVENTORY.md) | Permanent (git) |
+| Past audits and checklists | `docs/archive/audits/`, `docs/archive/reviews/` | Permanent (git); archived, not a live process |
+| Work and decision log | Internal tracker (`RGT-n`), not public | Held in the tracker, outside this repository |
+| Release content | `CHANGELOG.md`, GitHub releases | Permanent |
+| Accepted risks and non-goals | `.github/SECURITY.md` | Permanent (git) |
 
-**Deployment Phase**:
-- Code integrity verification (signed commits, hash verification)
-- Secure configuration baseline
-- Deployment checklist verification
-- Release notes with security impact documentation
+- Gap: there is no stated retention period and no process that gathers a
+  per-release evidence bundle. CI logs expire on GitHub's schedule.
+- Gap: no outcome metrics (e.g. vulnerabilities found per release) are kept.
 
-**Maintenance Phase**:
-- Continuous dependency monitoring
-- CVE tracking and remediation workflow
-- Security update release process
-- Incident response and postmortem procedures
+Evidence: `docs/archive/audits/`, `tests/`, `.github/workflows/ci.yml` (artifact uploads).
 
-**Security Controls Inventory** (Maintained in `/docs/governance/CONTROLS_INVENTORY.md`):
-| Control ID | Objective | Control | Responsibility | Status | Last Review |
-|------------|-----------|---------|-----------------|--------|-------------|
-| C-THREAT-001 | Threat Modeling | Architecture threat models | Architects | Implemented | Q2 2026 |
-| C-CODE-001 | Secure Coding | Code review checklist | Developers/Reviewers | Implemented | Q2 2026 |
-| C-CRYPTO-001 | Cryptography | Approved algorithms and key management | Lead Developer | Implemented | Q2 2026 |
-| C-DEPENDENCY-001 | Dependency Security | CVE tracking and scanning | Maintainers | Implemented | Q2 2026 |
-| C-TESTING-001 | Security Testing | SAST and dynamic testing | QA/Security Team | Roadmap | - |
-| C-DELIVERY-001 | Secure Delivery | Code signing and integrity | DevOps/Release | Implemented | Q2 2026 |
+### 2.6 Monitoring and Remediation of Ineffective Processes (RGT-468)
 
-### 2.5 Security Assurance Evidence Collection and Retention
+**Status: Gap.**
 
-**Policy**: Evidence of security assurance activities and control effectiveness is collected, documented, and retained for audit purposes. Evidence retention period is three years minimum.
+There is no metrics programme and no periodic process review. Weak processes
+are found reactively, when a CI job fails or an audit finds a problem. Known
+weak or ineffective processes right now, found while writing this document:
 
-**Evidence Categories**:
+| Weakness | Evidence |
+|---|---|
+| CI is red on `master`: in the latest runs of `.github/workflows/ci.yml` the Windows jobs, the py3.9 jobs, `lint & type-check`, `security scan` and `Generate SBOM` fail; in `.github/workflows/review-gate.yml` `ruff`, `mypy` and the 80% coverage gate fail, so the aggregate `required-status-checks` job fails. The gates therefore do not currently give a trustworthy signal | `gh run list --branch master --workflow ci.yml` (and `.github/workflows/review-gate.yml`); run ids 30248546632 and 30248546671 at the time of writing |
+| `.github/workflows/codeql.yml` and `.github/workflows/scorecard.yml` trigger on `main`, but the default branch is `master` | `.github/workflows/codeql.yml`, `.github/workflows/scorecard.yml` |
+| `.github/workflows/review-gate.yml` bandit step is labelled "low+ severity" but runs with `-lll` (high only) and differs from `.github/workflows/ci.yml` (medium and above) | `.github/workflows/review-gate.yml`, `.github/workflows/ci.yml` |
+| Third-party actions are pinned by tag (or `@main` for Scorecard), not by commit SHA; `gitleaks-action` carries a "pin to SHA in production" comment | `.github/workflows/` |
+| Several security tests assert documents or grep source rather than exercise behaviour | being strengthened under the ASVS verification work (RGT-492 children) |
 
-**Process Evidence**:
-- Threat model documents and reviews
-- Architecture decision records (ADRs) in `/docs/adr/`
-- Code review records in GitHub PR history
-- Security meeting notes and decisions
-- Training completion records
+There are no defined criteria for when a process counts as ineffective and no
+scheduled review. This objective stays open as a Gap (RGT-468).
 
-**Control Effectiveness Evidence**:
-- Static analysis scan reports (archived quarterly)
-- Dependency vulnerability scan results
-- Security test case results and coverage metrics
-- Incident logs and resolutions
-- Compliance assessment results
-
-**Change Management Evidence**:
-- PR records with security review approvals
-- Commit history with security annotations
-- Change control documentation
-- Audit logs of security-sensitive operations
-
-**Storage and Retention**:
-- GitHub repository: Primary storage for code-related evidence (indefinite retention)
-- `/docs/governance/`: Policy and process documentation (indefinite)
-- `/docs/archive/`: Historical security assessments (3-year retention minimum)
-- Project tracking (Multica): Issue/vulnerability tracking history
-- Encrypted backup: Annual security audit reports and sensitive findings
-
-**Access Controls**:
-- Evidence accessible to Security Maintainer and Project Lead
-- Sensitive evidence (vulnerability details) restricted to security team
-- Public evidence (policies, general controls) available to all contributors
-- Audit trail maintained for access to sensitive evidence
-
-### 2.6 Monitoring and Remediation of Ineffective Processes
-
-**Policy**: Security processes are continuously monitored for effectiveness. Gaps or ineffective processes are identified through quarterly reviews and remediated according to priority and impact.
-
-**Monitoring Mechanisms**:
-
-**Quarterly Security Reviews**:
-- Vulnerability discovery rate and time-to-patch metrics
-- Code review quality and security finding trends
-- Dependency vulnerability detection and remediation timeliness
-- Incident response effectiveness (if applicable)
-- Coverage of threat model against discovered issues
-
-**Metrics and KPIs**:
-| Metric | Target | Current | Frequency |
-|--------|--------|---------|-----------|
-| Critical vulnerabilities found and fixed | <30 days median | TBD | Quarterly |
-| Code review security findings per 1000 LOC | <2 | TBD | Quarterly |
-| Dependency vulnerabilities remediated | <14 days | TBD | Quarterly |
-| Threat model coverage of architecture | >90% | TBD | Annual |
-| Security training completion | 100% | TBD | Annual |
-
-**Remediation Process**:
-1. **Identify** ineffectiveness through metrics, incidents, or reviews
-2. **Analyze** root cause and impact scope
-3. **Prioritize** based on risk and business impact
-4. **Implement** process improvements or control changes
-5. **Verify** effectiveness through subsequent monitoring
-6. **Document** changes and rationale in governance records
-
-**Process Improvement Examples**:
-- If code review findings lag discovery: Add automated scanning
-- If dependency vulnerabilities increase: Automate dependency updates
-- If threat models incomplete: Allocate more architecture review time
-- If training gaps identified: Implement targeted security education
+Evidence: `.github/workflows/*.yml`; `git log --grep "review pass"` shows that
+ad-hoc multi-model code review passes are used after larger fixes (for example
+commit `c3b090b`).
 
 ---
 
 ## 3. Asset Classification and Control Definition
 
-### 3.1 Critical Asset Identification and Classification
+### 3.1 Critical Asset Identification and Classification (RGT-469)
 
-**Policy**: All critical assets are identified, classified, and protected according to their risk level and security requirements. Classification occurs at design time and is re-evaluated annually.
+**Status: Exists.**
 
-**Asset Classification Framework**:
+Assets of the Python line, ranked by impact if confidentiality or integrity is
+lost. Tier 1 is critical, tier 2 is important.
 
-**Tier 1 - Critical Assets** (Highest Protection):
-- Cryptographic keys (master keys, operational keys)
-- Vault secrets database (all stored secrets)
-- Authentication credentials
-- Administrative interfaces and audit logs
+| Asset | Type | Tier | Stored where | Protection that exists |
+|---|---|---|---|---|
+| Secret plaintext (API keys, tokens) | Sensitive data | 1 | Memory only while in use | AES-256-GCM at rest; leased in a `bytearray` that is wiped (best effort) |
+| Master secret | Sensitive data | 1 | OS-native store (DPAPI, macOS Keychain, Linux TPM, or `keyring`) | OS store protection; never written to the vault DB |
+| Data Encryption Key (DEK) | Sensitive data | 1 | Wrapped in `keychain.json` (Argon2id + HKDF-SHA512 KEK); plaintext only in process memory | Mode 0600 on `keychain.json`; wrapped; epoch-checked |
+| Ciphertext in `vault.db` | Sensitive data | 2 | SQLite file | Per-secret AAD (`vault_id:namespace:name`); tamper fails authentication |
+| Audit log | Integrity asset | 1 | `audit_logs` table | SHA-256 hash chain (unkeyed; see limits in `.github/SECURITY.md`) |
+| ABAC policy file | Sensitive function | 1 | YAML file chosen by the operator | Default-deny; explicit deny wins; no protection against a malicious operator |
+| Agent bearer token and operator token | Credentials | 1 | `~/.config/rgt-vault/server.token` (default), plus operator token file | File mode 0600 on POSIX; constant-time compare; stored in plaintext, no expiry, one token shared by all agents |
+| TOTP secret for human approval | Credential | 1 | File passed with `--totp-secret-file` | Replay-guarded verifier; file mode set after write |
+| Capability token HMAC key | Credential | 1 | Supplied to the token verifier by the integrator | `rgt_vault/token.py`; the shipped `serve` command does not currently wire a verifier |
+| Approval/rotate/revoke/audit/export endpoints | Sensitive functions | 1 | `rgt_vault/server/app.py` | Bearer or operator token; see THREAT_INVENTORY for the authorization gaps |
+| Go server's in-memory secret store | Sensitive data | n/a | Process memory, plaintext | None; the Go server is a skeleton and not for real secrets |
 
-**Tier 2 - Important Assets** (High Protection):
-- Source code and build artifacts
-- Configuration management systems
-- Dependency packages and supply chain
-- User/customer data
+Classification criteria used: tier 1 = disclosure or tampering defeats the
+product's purpose (reads or alters secrets, keys, credentials, policy or audit
+evidence); tier 2 = disclosed without the keys it reveals only ciphertext and
+metadata. Secret names and namespaces are stored unencrypted in `vault.db`.
 
-**Tier 3 - Standard Assets** (Standard Protection):
-- Documentation and guides
-- Development/test environments
-- Public API specifications
-- General project information
+There is no Mission Impact Analysis process; the table above is maintained by
+hand and updated when the code changes.
 
-**Tier 4 - Public Assets** (Minimal Protection):
-- Publicly available code
-- Public security advisories
-- General project communications
+Evidence: `rgt_vault/keychain.py`, `rgt_vault/storage/sqlite.py`,
+`rgt_vault/server/auth.py`, `.github/SECURITY.md`.
 
-**Asset Inventory**:
-| Asset | Tier | Location | Protection Controls | Owner |
-|-------|------|----------|---------------------|-------|
-| Encryption Keys | Tier 1 | Environment/Vault | Key derivation, encryption | Lead Dev |
-| Secrets Database | Tier 1 | Production | Access control, encryption | DevOps |
-| Source Code | Tier 2 | GitHub | Access control, signed commits | Team |
-| Dependencies | Tier 2 | requirements.txt, go.mod | Version control, CVE scanning | Maintainers |
-| Documentation | Tier 3 | /docs/ | Public repository | Team |
-| Security Policies | Tier 2 | /docs/governance/ | Version controlled | Security |
+### 3.2 Continuous Threat Modeling and Design Assessment (RGT-470)
 
-**Data Classification for Secrets Stored**:
-Vault may store different types of secrets depending on customer use cases:
-- Database credentials (database access, encryption, configuration)
-- API keys and tokens (third-party integrations)
-- Cryptographic material (encryption keys, certificates)
-- Authentication credentials (SSH keys, OAuth tokens)
+**Status: Partial.**
 
-**Control Mapping by Tier**:
-- **Tier 1**: Encryption at rest, encryption in transit, strict access control, audit logging, immutable records
-- **Tier 2**: Encryption in transit, role-based access, version control, security testing, code review
-- **Tier 3**: Version control, integrity verification, standard access controls
-- **Tier 4**: Public availability, basic integrity (repository commit signatures)
+- A threat model exists in `docs/security/threat-model.md` (protects against,
+  partially protects against, does not protect against, attacker scenarios) and
+  a STRIDE-organised inventory in [THREAT_INVENTORY.md](THREAT_INVENTORY.md).
+  Both are written and updated by hand; there is no recurring threat-modelling
+  session or trigger (Gap). The PR template has no threat-model-impact item.
+- Open-source component management:
+  - Inventory: `pyproject.toml` / `requirements.txt` (Python, version ranges,
+    no lockfile) and `go/go.mod` + `go/go.sum` (Go, pinned); a CycloneDX SBOM is
+    generated in `.github/workflows/ci.yml`, and goreleaser emits SBOMs for release archives.
+  - Monitoring: `pip-audit`, `govulncheck` and Dependabot (weekly, pip, gomod
+    and github-actions).
+  - Patching: Dependabot pull requests are merged by the maintainer; several
+    were open and unmerged at the time of writing. No SLA exists beyond the
+    30-day remediation target for reported vulnerabilities (4.2).
+- Known unmodelled areas (tracked under the documentation work): Go server,
+  cutover gateway, MCP server and outbound provider calls are not yet in the
+  threat model.
 
-### 3.2 Continuous Threat Modeling and Design Assessment
+Evidence: `docs/security/threat-model.md`, `docs/governance/THREAT_INVENTORY.md`,
+`.github/dependabot.yml`, `.github/workflows/ci.yml` (`security`, `sbom` jobs).
 
-**Policy**: Threat modeling is conducted continuously throughout the software lifecycle to identify, assess, and monitor threats and design flaws. An inventory of identified threats and design flaws is maintained and updated upon significant architectural changes.
+### 3.3 Software Security Control Definition and Implementation (RGT-471)
 
-**Threat Modeling Methodology**:
-- **Approach**: Data flow analysis (STRIDE) applied to architectural components
-- **Scope**: All product components and external integrations
-- **Frequency**: Initial modeling at design time, annual review, updates on architectural changes
+**Status: Partial.**
 
-**Threat Modeling Process**:
+- Controls are catalogued in [CONTROLS_INVENTORY.md](CONTROLS_INVENTORY.md) with
+  their real implementation location and status. Threats map to controls in
+  [THREAT_INVENTORY.md](THREAT_INVENTORY.md).
+- Design decisions are recorded in `docs/adr/` (key hierarchy, ABAC over RBAC,
+  audit chain design, agent capability model). Some ADRs reference files that
+  do not exist and are being corrected under the architecture documentation work.
+- Residual risk is recorded in `.github/SECURITY.md` ("Non-goals" and "Audit
+  Chain Limitations") and `docs/ROADMAP.md` ("Known limitations").
+- Approval of mitigation and residual-risk decisions is by the maintainer
+  alone; no second approver exists (N/A - single maintainer).
+- Gap: controls that the old governance draft listed as implemented but that
+  are not: TLS on any listener, user passwords, MFA for users (there are no
+  user accounts; TOTP is used only for the human approval of a secret use).
 
-1. **Identify Data Flows and Trust Boundaries**:
-   - Client ↔ API ↔ Vault Backend
-   - External integrations (e.g., identity providers)
-   - Storage layer (database, cache, filesystem)
+Evidence: `docs/governance/CONTROLS_INVENTORY.md`, `docs/adr/`,
+`.github/SECURITY.md`.
 
-2. **Apply STRIDE Framework**:
-   - **Spoofing Identity**: Authentication bypass, credential theft
-   - **Tampering with Data**: Unencrypted transmission, unauthorized modification
-   - **Repudiation**: Lack of audit logging, denial of actions
-   - **Information Disclosure**: Exposure of secrets, configuration, or metadata
-   - **Denial of Service**: Rate limiting, resource exhaustion
-   - **Elevation of Privilege**: Insufficient authorization, privilege escalation
+### 3.4 Control Effectiveness Monitoring and Upgrades (RGT-472)
 
-3. **Assess Threats**:
-   - Severity: Critical, High, Medium, Low
-   - Likelihood: High, Medium, Low
-   - Risk = Severity × Likelihood
+**Status: Gap.**
 
-4. **Design Mitigations**:
-   - Preventive controls (avoid threat)
-   - Detective controls (identify threat)
-   - Corrective controls (recover from threat)
-   - Compensating controls (alternative protection)
+No process exists to review whether controls have become weak, and there are no
+criteria for "weak". Controls are tested by the suite in `tests/` (for example
+`tests/test_asvs_crypto.py`, `tests/test_hardening.py`,
+`tests/test_server_hardening.py`), and weaknesses have been found by ad-hoc
+audits (`docs/archive/audits/`) and multi-model review passes, not by a
+scheduled review.
 
-**Inventory of Threats and Mitigations** (Reference: `/docs/governance/THREAT_INVENTORY.md`):
-- Authentication attacks → Mitigated by: MFA support, rate limiting, secure session management
-- Data interception → Mitigated by: TLS encryption, cryptographic signing
-- Unauthorized access → Mitigated by: RBAC, audit logging, encryption
-- Dependency compromise → Mitigated by: SCA, signed dependencies, vendor security assessment
-- Configuration exposure → Mitigated by: Secure defaults, encrypted configuration, separation of concerns
+Known weak controls today (all stated elsewhere in the repo, repeated here so
+this document does not hide them):
 
-**Open-Source Component Management**:
-- **Inventory**: Maintained in `requirements.txt` (Python) and `go.mod` (Go)
-- **Vulnerability Monitoring**: Automated scanning via GitHub dependabot and OWASP Dependency-Check
-- **Patching Strategy**: 
-  - Critical vulnerabilities: Patch within 24-48 hours
-  - High severity: Patch within 1 week
-  - Medium/Low: Patch in regular release cycles
-- **Replacement Process**: If patch unavailable, identify and implement alternative component
+- No transport encryption: nothing in `rgt_vault/` or `go/` configures TLS; the
+  daemon is loopback-only by default (`rgt-vault serve --host 127.0.0.1`),
+  with a warning when bound elsewhere. Tracked: RGT-251, RGT-455, RGT-456.
+- Agent identity: all agents share one bearer token and the ABAC subject is the
+  caller-supplied `agent` field. Tracked: RGT-236, RGT-343, RGT-346.
+- Audit chain is unkeyed SHA-256; root-level replacement is not detected
+  (`.github/SECURITY.md`).
+- Go server stubs policy to allow-all and prints its bearer token on start.
 
-**Architectural Review Schedule**:
-- Quarterly: Review of new components or major changes
-- Annual: Full architecture threat model review
-- Ad-hoc: Response to discovered threats or design flaws
-
-### 3.3 Software Security Control Definition and Implementation
-
-**Policy**: Security controls are formally defined for each identified threat and design objective. Controls are implemented according to the control definition and verified for effectiveness.
-
-**Control Framework**:
-
-**Authentication Controls**:
-- Multi-factor authentication support for administrative access
-- Secure credential storage (hashed passwords, encrypted tokens)
-- Session management with expiration and invalidation
-- Account lockout after failed login attempts
-
-**Authorization Controls**:
-- Role-based access control (RBAC) for Vault access
-- Principle of least privilege enforcement
-- Regular access review and cleanup
-- Audit logging of all authorization decisions
-
-**Cryptographic Controls**:
-- Approved algorithms: AES-256-GCM (encryption), SHA-256+ (hashing), ChaCha20-Poly1305 (alternative)
-- Random number generation: Cryptographically secure sources (OS entropy, /dev/urandom)
-- Key management: Secure generation, storage, rotation, and destruction procedures
-- Certificate validation: Strict validation for TLS connections
-
-**Data Protection Controls**:
-- Encryption at rest: AES-256-GCM for stored secrets
-- Encryption in transit: TLS 1.2+ for all communications
-- Data minimization: Collect and retain only necessary information
-- Secure deletion: Cryptographic erasure and overwriting
-
-**Audit and Logging Controls**:
-- Comprehensive logging of security-relevant events
-- Log immutability and retention (90+ days minimum)
-- Restricted access to audit logs
-- Automated alerting for suspicious patterns
-
-**Testing and Validation Controls**:
-- Security testing included in CI/CD pipeline
-- Vulnerability scanning of dependencies
-- Code review with security focus
-- Incident response procedures
-
-**Control Implementation Status**:
-See `/docs/governance/CONTROLS_INVENTORY.md` for detailed implementation status of each control.
-
-### 3.4 Control Effectiveness Monitoring and Upgrades
-
-**Policy**: The effectiveness of security controls is continuously monitored through metrics and testing. Controls are upgraded or replaced when effectiveness declines, new threats emerge, or technology advances.
-
-**Effectiveness Monitoring**:
-
-**Metric-Based Monitoring**:
-- Vulnerability discovery rate (target: declining trend)
-- Time to patch vulnerabilities (target: <14 days for critical)
-- Code review security findings (target: consistent identification of issues)
-- Failed authentication attempts (target: proper blocking and logging)
-- Dependency vulnerability detection (target: zero known critical vulnerabilities)
-
-**Testing-Based Verification**:
-- Annual penetration testing of critical components
-- Quarterly security architecture reviews
-- Continuous static analysis scanning
-- Regular testing of incident response procedures
-
-**Monitoring Schedule**:
-- Daily: Automated scanning and alerting (CI/CD, dependency checks)
-- Weekly: Review of security alerts and findings
-- Monthly: Metrics aggregation and trend analysis
-- Quarterly: Security control effectiveness review
-- Annual: Comprehensive security assessment
-
-**Control Upgrade Triggers**:
-- Effectiveness metrics miss targets
-- New vulnerability class discovered in industry
-- Cryptographic algorithm deprecated or weakened
-- Compliance requirement changes
-- Technology advances enable better protection
-- Cost-benefit analysis favors upgrade
-
-**Control Upgrade Process**:
-1. **Identify** need for upgrade through monitoring or external drivers
-2. **Design** new control or enhancement
-3. **Test** new control in non-production environment
-4. **Implement** in production with change management
-5. **Monitor** effectiveness of upgraded control
-6. **Document** changes and rationale
-
-**Recent Control Upgrades**:
-- TLS 1.3 adoption (from 1.2) for improved cryptography
-- Addition of automated dependency scanning (Dependabot)
-- Enhanced code review checklist for common vulnerability patterns
+Evidence: `rgt_vault/server/app.py`, `rgt_vault/cli.py` (`serve`),
+`go/cmd/server/main.go`, `go/internal/server/handlers/handlers.go`.
 
 ---
 
 ## 4. Secure Development and Testing
 
-### 4.1 Security Testing and Vulnerability Detection
+### 4.1 Security Testing and Vulnerability Detection (RGT-473)
 
-**Policy**: Security testing is integrated throughout the development lifecycle to identify and detect vulnerabilities before production deployment. Testing includes static analysis, dynamic testing, and dependency scanning.
+**Status: Partial.**
 
-**Security Testing Strategy**:
+What runs (details in 2.4): pytest (including property/fuzz tests marked
+`fuzz`, in `tests/test_fuzz.py`), bandit, CodeQL (Python), pip-audit,
+govulncheck, gitleaks, coverage gate, OpenSSF Scorecard. Third-party and
+open-source libraries are covered by pip-audit, govulncheck and Dependabot.
 
-**Static Application Security Testing (SAST)**:
-- Tool: Code analysis tools configured for Python and Go
-- Scope: All source code changes via pull requests
-- Coverage: Common vulnerability patterns (injection, XXE, broken authentication, etc.)
-- Frequency: On every commit to development/staging branches
-- Remediation: Issues must be resolved or approved exceptions documented
+What does not exist:
 
-**Dependency Scanning**:
-- Tool: GitHub Dependabot, OWASP Dependency-Check, Snyk (if used)
-- Scope: Direct and transitive dependencies in all dependency files
-- Coverage: Known CVE database matching
-- Frequency: Continuous with pull requests for updates
-- Remediation: Critical/High issues block merge; Medium/Low require mitigation plan
+- No dynamic application security testing (DAST) and no end-to-end security
+  scan of the running server.
+- No independent or third-party testing. The maintainer is the only tester;
+  objectivity and independence (N/A - single maintainer) are not met.
+- No pre-commit hooks (no `.pre-commit-config.yaml`).
+- CodeQL does not analyse Go and, as noted in 2.4, its PR trigger names the
+  wrong branch. `go test`/`go vet` do not run on pull requests.
+- CI on `master` is currently failing, so detection results are not a reliable
+  release gate until that is fixed.
+- Vulnerability inventory: findings are tracked as `RGT-n` issues (internal) and
+  in archived audit reports; there is no public vulnerability inventory and no
+  stored tool configuration beyond the workflow files.
 
-**Dynamic Testing**:
-- Integration tests with security scenarios (authentication bypass, privilege escalation)
-- End-to-end testing with malicious inputs
-- Test coverage: >70% of security-critical code paths
-- Frequency: Quarterly comprehensive testing; ongoing in CI/CD
+Evidence: `.github/workflows/ci.yml`, `.github/workflows/review-gate.yml`,
+`.github/workflows/codeql.yml`, `tests/test_fuzz.py`.
 
-**Manual Security Review**:
-- Code review with security focus (peer review by Security Maintainer)
-- Architecture review for design-level vulnerabilities
-- Threat model validation against implementation
-- Frequency: All pull requests reviewed; quarterly deep-dive reviews
+### 4.2 Vulnerability Remediation and Prevention of Reintroduction (RGT-474)
 
-**Vulnerability Detection Workflow**:
-1. Vulnerability discovered (automated scan, manual review, or external report)
-2. Severity assessed using CVSS v3.1 scoring
-3. Priority determined based on exploitability and impact
-4. Reproduction verified in test environment
-5. Root cause analysis conducted
-6. Remediation implemented and tested
-7. Verification testing confirms fix
-8. Documentation and postmortem (for significant issues)
+**Status: Partial.**
 
-**Test Case Examples**:
-- SQL Injection: Attempt SQL injection in all database queries
-- Authentication Bypass: Attempt to access restricted resources without auth
-- Privilege Escalation: Attempt to access higher-privilege operations
-- Cryptographic Failures: Test key rotation, cryptographic validation
-- Denial of Service: Test rate limiting, resource exhaustion scenarios
-- Dependency Vulnerabilities: Validate all dependencies are patched
+- Remediation timing: `.github/SECURITY.md` promises acknowledgement within 5
+  business days and a remediation plan or assessment within 30 days. There is
+  no per-severity fix deadline in force. A severity matrix exists only in
+  `docs/archive/program/severity-matrix.md` (archived; not an operating policy).
+- Only the latest release receives security fixes (`.github/SECURITY.md`,
+  "Supported versions").
+- Regression protection: fixes come with tests (for example
+  `tests/test_audit_fixes.py`, `tests/test_audit_v2_hardening.py`,
+  `tests/test_hardening.py`); `CONTRIBUTING.md` requires tests for crypto,
+  authorization, audit and storage changes. CI runs them on every push and pull
+  request.
+- Decision not to fix: recorded as non-goals or limitations in
+  `.github/SECURITY.md`; the maintainer is the sole approver (N/A - single
+  maintainer).
 
-### 4.2 Vulnerability Remediation and Prevention of Reintroduction
-
-**Policy**: All discovered vulnerabilities are tracked, prioritized, and remediated according to severity and risk level. Measures are taken to prevent reintroduction of vulnerabilities.
-
-**Vulnerability Severity Classification**:
-- **Critical** (CVSS 9.0-10.0): Immediate threat to confidentiality/integrity/availability. Remediation within 24-48 hours.
-- **High** (CVSS 7.0-8.9): Significant impact. Remediation within 1 week.
-- **Medium** (CVSS 4.0-6.9): Moderate impact. Remediation within 2 weeks or next release.
-- **Low** (CVSS 0.1-3.9): Minor impact. Remediation in regular maintenance cycles.
-
-**Remediation Process**:
-1. **Triage**: Confirm vulnerability, assess scope, determine environment impact
-2. **Analysis**: Understand root cause, identify similar issues
-3. **Remediation**: Implement fix, test in development environment
-4. **Testing**: Verify fix resolves issue, no regression introduced
-5. **Deployment**: Release fix through standard change management
-6. **Verification**: Confirm fix in production, monitor for re-occurrence
-7. **Closure**: Document lesson learned, implement prevention measures
-
-**Prevention of Reintroduction**:
-- **Regression Tests**: Add test cases for each discovered vulnerability
-- **Security Scanning**: Automated SAST and SCA prevent similar patterns
-- **Code Review**: Enhanced focus on vulnerability categories discovered
-- **Training**: Security training covers discovered vulnerability types
-- **Architectural Controls**: Implement systemic controls to prevent class of vulnerability
-
-**Vulnerability Tracking**:
-- All vulnerabilities tracked in GitHub Issues or security database
-- Vulnerability status tracked: Open → Confirmed → In Progress → Fixed → Verified → Closed
-- Metrics tracked: Discovery date, severity, time-to-patch, root cause
-- Postmortem conducted for vulnerabilities with significant impact
-
-**Public Vulnerability Disclosure**:
-- Responsible disclosure: Security issues reported via security contact, not public issues
-- Embargo period: Minimum 30 days for vendor to patch before public disclosure
-- Release notes: Vulnerability fixes documented in release notes with details
-- Transparency: CVE details published after patch is widely available
+Evidence: `.github/SECURITY.md`, `tests/test_audit_fixes.py`,
+`.github/CONTRIBUTING.md`.
 
 ---
 
 ## 5. Software Change Management
 
-### 5.1 Software Change Management and Security Impact Analysis
+### 5.1 Software Change Management and Security Impact Analysis (RGT-475)
 
-**Policy**: All software changes are assessed for security impact before implementation. Change decisions and justifications are recorded, along with change authorizers and creators. A detailed change inventory is maintained.
+**Status: Partial.**
 
-**Change Management Process**:
+- All changes are recorded in git with author, committer and timestamp; commit
+  messages usually name the tracker issue (`RGT-n`). That is the change
+  inventory.
+- Only 5 pull requests have been merged; most history is direct commits to
+  `master`. The pull-request template's security checklist therefore covers
+  only the minority of changes that use it.
+- Authorization: the maintainer. No second reviewer is required or configured
+  (no CODEOWNERS file, one collaborator). Whether `master` is protected on
+  GitHub could not be verified (see 6.1).
+- Security impact analysis: the PR checklist asks whether secrets are logged,
+  whether tests were added, whether nonces use `os.urandom` and whether docs
+  overstate guarantees. There is no further impact-analysis step.
+- Decisions and justifications are recorded in commit messages, PR
+  descriptions, ADRs and the internal tracker.
+- `CHANGELOG.md` is updated per change (CONTRIBUTING requirement).
 
-**Change Submission**:
-- All changes submitted via pull request (GitHub)
-- Change description includes: Feature/fix description, security considerations, testing performed
-- Links to related issues and threat models
+Evidence: `git log`, `.github/PULL_REQUEST_TEMPLATE.md`,
+`.github/CONTRIBUTING.md`, `CHANGELOG.md`.
 
-**Security Impact Analysis**:
-- Security impact assessment required for all changes
-- Assessment covers: Authentication, authorization, data protection, cryptographic operations, audit logging
-- High-risk changes require additional review or testing
-- Risk factors: Complexity, scope, security-sensitive code areas, third-party integrations
+### 5.2 Unique Version Identification and Tracking (RGT-476)
 
-**Change Review and Approval**:
-- Code review by at least two developers (one Security Maintainer if security-related)
-- Security review for changes to security-sensitive components
-- Architecture review for changes to core components
-- Test results verification (all automated tests passing)
-- Approval recorded in pull request history
+**Status: Exists.**
 
-**Change Documentation**:
-- Commit messages follow standard format: Type, scope, summary, body explaining why
-- Security-related commits tagged with `[SECURITY]` or security label
-- Change log entry created for released changes
-- Architectural changes documented in ADRs
+- Scheme: Semantic Versioning, stated at the top of `CHANGELOG.md`; format is
+  Keep a Changelog.
+- Python version is set in `pyproject.toml` (`0.3.0`). Go binaries embed
+  version, commit and date through ldflags in `go/.goreleaser.yaml`.
+- Tags `v0.1.0`, `v0.2.0` and `v0.3.0` identify releases; `CHANGELOG.md` has a
+  section for each.
+- Component tracking per release: `go/go.mod`/`go.sum` pin Go dependencies;
+  goreleaser attaches an SBOM to release archives. Python dependencies are
+  declared as ranges without a lockfile, so a Python release does not pin its
+  transitive dependencies (Gap; the CI SBOM is generated from the checkout, not
+  from a locked build).
+- Minor inconsistency to be aware of: the Go server reports its own version
+  string separately from the tag.
 
-**Change Inventory**:
-All changes tracked in GitHub commit history with:
-- Change creator (author of commit)
-- Change authorizer (PR approver, merger)
-- Change timestamp and date
-- Description and rationale
-- Security impact assessment
-- Test results
-
-**High-Risk Change Categories**:
-- Cryptographic algorithm or key management changes
-- Authentication or authorization mechanism changes
-- Data protection or storage mechanism changes
-- Security control removals or modifications
-- Third-party dependency updates (especially security-critical)
-
-**Approval Authority**:
-- Standard changes: Any project maintainer
-- Security-sensitive changes: Security Maintainer approval required
-- Critical infrastructure changes: Project Lead approval
-- Breaking changes or major refactors: Full team consensus or project lead decision
-
-### 5.2 Unique Version Identification and Tracking
-
-**Policy**: All released versions are uniquely identified and tracked, enabling precise correlation of deployed software with security controls and vulnerabilities.
-
-**Version Numbering Scheme**:
-- Format: `MAJOR.MINOR.PATCH` (semantic versioning)
-- Example: `1.2.3` = Major version 1, Minor version 2, Patch 3
-
-**Version Scheme Semantics**:
-- **MAJOR**: Incompatible API changes, significant new features, major security enhancements
-- **MINOR**: Backward-compatible new features, security improvements, control enhancements
-- **PATCH**: Backward-compatible bug fixes, security patches, vulnerability remediation
-
-**Version Tracking**:
-- Git tag for each release: `v1.2.3`
-- Release notes document all changes in version
-- Changelog maintained in `CHANGELOG.md`
-- Binary/package versioning matches source version
-- Docker images tagged with version (if applicable)
-
-**Version Metadata**:
-- Build information (date, commit hash, builder identity)
-- Dependency versions locked in build artifacts
-- Cryptographic hash (SHA-256) of release binaries
-- Security updates summary in release notes
-
-**Version Inventory** (Maintained in Release History):
-| Version | Release Date | Security Updates | Status |
-|---------|-------------|------------------|--------|
-| 1.0.0 | Initial | No | Released |
-| 1.0.1 | TBD | Yes - patches | TBD |
-| 1.1.0 | TBD | Yes - controls | TBD |
-
-**Version Deprecation**:
-- Active support period: Latest MAJOR.MINOR version + 1 previous version
-- Legacy support period: 12 months after deprecation announced
-- End-of-life versions: No longer receive security patches; migration encouraged
-- Critical vulnerabilities in EOL versions: One-time patch release may be issued
+Evidence: `pyproject.toml`, `CHANGELOG.md`, `go/.goreleaser.yaml`, `git tag`.
 
 ---
 
 ## 6. Software Integrity and Delivery
 
-### 6.1 Software Code Integrity Maintenance
+### 6.1 Software Code Integrity Maintenance (RGT-477)
 
-**Policy**: Software integrity is maintained through cryptographic controls and verification mechanisms throughout the development and delivery process. Unauthorized modifications are prevented and detected.
+**Status: Gap (partial protections exist).**
 
-**Code Integrity Controls**:
+What exists:
 
-**Commit Signing**:
-- All commits required to be signed using GPG or similar cryptographic mechanism
-- Verified signature indicates commit creator identity
-- Tampered commits detected through failed signature verification
-- Requires: Contributor establishes GPG key and configures Git signing
+- Source is hosted on GitHub with one collaborator, so only that account can
+  push.
+- `.gitignore` excludes vault runtime data (`*.db`, `keychain.json`, `*.priv`).
+- gitleaks scans history on every push and pull request (`.github/workflows/review-gate.yml`).
+- Dependabot keeps actions and dependencies current.
 
-**Repository Access Control**:
-- Protected branches (main, release) require authorization to modify
-- Force-push disabled on main branch
-- Branch protection rules: Require reviews, require status checks, require up-to-date branches
-- Access control: Role-based (maintainers, contributors, viewers)
+What is missing:
 
-**Build Integrity**:
-- Build artifacts cryptographically signed
-- Build logs recorded and retained
-- Build environment isolated and hardened
-- Dependency integrity verified (checksums, signatures if available)
+- **No commit signing.** Of the commits in history, none is verified-signed
+  (`git log --format=%G?` shows `N` for 98 and `E` for 4, i.e. unverifiable).
+  The previous draft stated that GPG signing was required; that was untrue.
+- **Branch protection not verified.** The API call returned 403 and no
+  rulesets exist, so enforcement of reviews or status checks on `master`
+  cannot be claimed.
+- **Actions not pinned by SHA** (tags, and `ossf/scorecard-action@main`).
+- No detection of unauthorized tampering beyond GitHub's own audit log, which is
+  not monitored by this project.
 
-**Change Verification**:
-- Git commit history maintained (immutable append-only log)
-- All changes attributed to creator with timestamp
-- Code review approval recorded in pull request
-- Audit trail available for forensic analysis
+Evidence: `git log --format=%G?`, `.gitignore`, `.github/workflows/review-gate.yml`,
+`.github/workflows/*.yml` (action references).
 
-**Integrity Verification Procedures**:
-```
-1. Verify commit signatures on deployed code
-2. Compare deployed code hash with repository
-3. Verify all changes reviewed and approved
-4. Verify dependency integrity
-5. Verify build artifact signatures
-```
+### 6.2 Secure Delivery and Integrity Verification of Updates (RGT-478)
 
-**Tampering Detection**:
-- Automated checks on pull requests verify commit signatures
-- Repository audit logs monitored for unauthorized access
-- Dependency checksum mismatches trigger alerts
-- Build failure analysis includes integrity checks
+**Status: Partial.**
 
-### 6.2 Secure Delivery and Integrity Verification of Updates
+- **Go releases.** Tag push `v*` runs `.github/workflows/release.yml`: `go test
+  ./...`, then GoReleaser (`go/.goreleaser.yaml`) builds linux/darwin/windows
+  archives for amd64 and arm64, writes `checksums.txt` (SHA-256), generates
+  SBOMs with Syft, and creates a **draft** GitHub release. Delivery is over
+  HTTPS from GitHub. `docs/getting-started/installation.md` shows how to verify
+  the checksum.
+- **No digital signatures.** The cosign `signs:` block in `go/.goreleaser.yaml`
+  is commented out. Checksums prove integrity only if the user obtained
+  `checksums.txt` from a trusted channel; they do not prove authenticity.
+- **Python line.** No package is published to PyPI by any workflow. CI builds a
+  wheel and stores it as a CI artifact; users install from a source checkout.
+- **Draft release.** `v0.3.0` is still a draft GitHub release.
+- The tools have no auto-update mechanism (none found in `rgt_vault/` or `go/`),
+  so "updates" are new releases the user chooses to download.
+- Package-manager channels (Homebrew tap, winget, apt) are not set up: the
+  `brews:` block in `go/.goreleaser.yaml` is commented out (RGT-163).
 
-**Policy**: Software updates are delivered securely with integrity verification mechanisms. Users can verify authenticity and integrity of received updates before installation.
-
-**Secure Delivery Mechanisms**:
-
-**Distribution Channels**:
-- Official repository (GitHub Releases) as primary source
-- Package managers (PyPI, Docker Hub, etc.) as secondary source
-- Verified checksums and signatures published for verification
-
-**Update Packaging**:
-- Release artifacts: Source code archive, compiled binaries (if applicable)
-- Checksums: SHA-256 hashes published for each artifact
-- Signatures: GPG signatures on binaries/archives where applicable
-- Manifest: Release metadata including dependencies, breaking changes
-
-**Integrity Verification for Users**:
-- SHA-256 checksum verification: Users can verify downloaded artifact
-- Signature verification: Optional cryptographic signature validation
-- Manifest validation: Verify dependency versions and integrity
-- Installation verification: Verify installed version matches downloaded version
-
-**Update Distribution Integrity**:
-- HTTPS-only distribution (encryption in transit)
-- CDN/hosting provider security requirements
-- Availability monitoring (updates accessible, not blocked/tampered)
-- Version pinning: Users can pin to specific versions for stability
-
-**Release Process**:
-1. Code freeze: No changes on release branch
-2. Version bump: Update version numbers in all files
-3. Release notes: Document changes, security updates, breaking changes
-4. Build release: Generate artifacts and test installation
-5. Sign artifacts: GPG sign binaries/archives
-6. Publish checksums: SHA-256 hashes published alongside artifacts
-7. Tag repository: Create signed git tag for version
-8. Release announcement: Notify users of availability
-9. Monitor deployment: Track adoption and issues
-
-**Update Release Cadence**:
-- Security patches: On-demand, as soon as patch ready
-- Minor updates: Quarterly or as needed for features
-- Major updates: Annual or on significant architecture changes
-- LTS versions: Available for organizations requiring stability
-
-**Rollback Procedures**:
-- Previous versions available in repository indefinitely
-- Rollback instructions documented in release notes
-- Version-specific dependency compatibility documented
-- Rollback testing performed before major releases
+Evidence: `.github/workflows/release.yml`, `go/.goreleaser.yaml`,
+`docs/getting-started/installation.md`.
 
 ---
 
 ## 7. Data Protection and Secure Configuration
 
-### 7.1 Sensitive Production Data Collection and Authorization
+### 7.1 Sensitive Production Data Collection and Authorization (RGT-479)
 
-**Policy**: Collection of sensitive production data is authorized, minimized, and controlled. Data collection purposes are documented and approved by stakeholders.
+**Status: N/A for project-operated systems; Exists for local data (inventory).**
 
-**Authorized Data Collection**:
-- **Vault Secrets**: Primary purpose is secure storage and retrieval of customer secrets
-- **Audit Logs**: Security-relevant events (access, modifications, authentication)
-- **Configuration Data**: Application settings and environment variables
-- **Usage Metrics**: Aggregated anonymized usage (not personal data)
+The project operates no production systems and collects nothing from users, so
+there is no vendor-side production data to authorize. Data that exists locally
+on a user's machine (their data, under their control):
 
-**Data Collection Authorization Process**:
-1. Define business/technical justification for data collection
-2. Assess privacy impact and compliance implications
-3. Obtain necessary approvals (security, privacy, stakeholders)
-4. Implement data collection with minimum necessary scope
-5. Document authorization and retention justification
+| Data | Where | Sensitivity | Notes |
+|---|---|---|---|
+| Secret values | `vault.db` (encrypted) | High | Never returned to general callers in plaintext by the API |
+| Secret names, namespaces, versions, status, timestamps | `vault.db` (unencrypted) | Medium | Metadata is visible to anyone who can read the file |
+| Audit rows: action, secret name, details, agent id, hashes; HTTP rows include token id (8 characters), client IP, method and path | `audit_logs` | Medium | No retention limit; rows are never purged except by a full import, which replaces them |
+| Wrapped DEK and KDF parameters | `keychain.json` | High | Mode 0600 |
 
-**Data Minimization Principles**:
-- Collect only data necessary for stated purpose
-- Limit retention duration (e.g., audit logs 90+ days, metrics 1 year)
-- Restrict to authorized purposes (no secondary use without approval)
-- Provide data deletion capabilities (user request, retention expiration)
+Collection and retention are not configurable beyond what the vault stores.
+There is no telemetry. Retention of audit logs is unlimited and has no
+configured rotation (logging-policy work is tracked separately).
 
-**Sensitive Production Data Categories**:
-- **Secrets**: Database passwords, API keys, encryption keys (confidential)
-- **Audit Logs**: Who accessed what, when, changes made (confidential)
-- **Configuration**: Connection strings, settings (confidential)
-- **Metrics**: Aggregated usage patterns (internal only)
+Evidence: `rgt_vault/storage/migrations/0001_initial.sql`,
+`rgt_vault/server/app.py` (HTTP audit rows), absence of telemetry (search of
+`rgt_vault/` and `go/`).
 
-**Data Handling Requirements**:
-- Restricted access (need-to-know basis)
-- Encryption at rest and in transit
-- Audit logging of all access
-- Regular access review and cleanup
-- Secure backup and recovery procedures
+### 7.2 Protection and Secure Deletion of Production Data (RGT-480)
 
-### 7.2 Protection and Secure Deletion of Production Data
+**Status: Gap (protection partial, deletion missing).**
 
-**Policy**: All production data is protected through encryption and access controls. Secure deletion procedures ensure data is irretrievable once no longer needed.
+Protection that exists:
 
-**Data Protection Controls**:
+- Secrets encrypted at rest with AES-256-GCM under a DEK wrapped by an
+  Argon2id/HKDF-derived key; ciphertext bound to `vault_id:namespace:name`.
+- Default-deny ABAC for reads and writes; every access is audited.
+- File mode 0600 on `keychain.json` and on bearer token files (POSIX).
+- Master and data-key rotation exist (`rotate_master_key`, `rotate_dek` in
+  `rgt_vault/vault.py`).
 
-**Encryption at Rest**:
-- Algorithm: AES-256-GCM (authenticated encryption)
-- Key management: Secure key derivation, rotation procedures
-- Scope: All stored secrets in database
-- Verification: Cryptographic integrity checks
+Not met:
 
-**Encryption in Transit**:
-- Protocol: TLS 1.2 or higher for all network communications
-- Certificate validation: Strict validation, no insecure fallbacks
-- Scope: API communications, backup transfers
-- HSTS: HTTP Strict-Transport-Security enforced
+- **No secure deletion.** `revoke_secret` only sets `status = 'REVOKED'`; the
+  ciphertext row remains in `vault.db`. There is no hard-delete command, SQLite
+  `secure_delete` is not set, and database free pages, journals and backups are
+  not scrubbed. A revoked secret is protected by encryption, not erased.
+- **No encryption in transit.** There is no TLS anywhere in the code. The daemon
+  binds to loopback by default; the Go skeleton server binds all interfaces.
+  Earlier governance text marked this "Implemented"; it is not (RGT-251,
+  RGT-455, RGT-456).
+- Memory zeroization is best effort and partial (`.github/SECURITY.md`).
 
-**Access Controls**:
-- Role-based access control (RBAC)
-- Principle of least privilege
-- Multi-factor authentication for administrative access
-- Audit logging of all access attempts
-
-**Secure Deletion Process**:
-1. **Deletion Request**: Data deletion request received (user, retention expiration, legal hold release)
-2. **Verification**: Confirm deletion is authorized and no exceptions apply
-3. **Cryptographic Erasure**: 
-   - For encrypted data: Delete encryption key (data becomes inaccessible)
-   - Alternative: Overwrite data with cryptographic-strength random data (minimum 3 passes)
-4. **Backup Deletion**: Delete from backups and disaster recovery systems
-5. **Verification**: Verify data deleted and unrecoverable
-6. **Documentation**: Record deletion date, method, verifier
-
-**Secure Deletion Scope**:
-- Database records: Cryptographic erasure or overwriting
-- Audit logs: Retention expiration followed by secure deletion
-- Backups: Deleted after retention period
-- Temporary files: Overwritten with random data
-- Logs with sensitive information: Encryption or pseudonymization
-
-**Data Retention Policies**:
-| Data Type | Retention Period | Purpose | Deletion Method |
-|-----------|------------------|---------|-----------------|
-| Vault Secrets | Customer-defined | Operational | User deletion or expiration |
-| Audit Logs | 90+ days | Security monitoring | Cryptographic erasure |
-| Configuration | Duration of service | Operational | User deletion |
-| Metrics | 1 year | Analytics | Aggregation then deletion |
-| Backups | 3x retention + 90 days | Disaster recovery | Cryptographic erasure |
-
-**Compliance**:
-- GDPR Right to Erasure ("right to be forgotten") supported through secure deletion
-- Data minimization: Automatic deletion on expiration
-- User control: Users can request deletion at any time
-- Audit trail: Deletion operations logged and retained
+Evidence: `rgt_vault/storage/sqlite.py` (`revoke_secret`), `rgt_vault/crypto.py`,
+`rgt_vault/vault.py`, `.github/SECURITY.md`.
 
 ---
 
 ## 8. Secure Configuration and Implementation Guidance
 
-### 8.1 Secure Implementation and Configuration Guidance
+### 8.1 Secure Implementation and Configuration Guidance (RGT-481)
 
-**Policy**: Comprehensive implementation and configuration guidance is provided to users to ensure secure deployment and operation of RGT Vault.
+**Status: Partial.**
 
-**Configuration Guidance Topics**:
+Guidance that exists:
 
-**Installation Security**:
-- Secure download verification (checksums, signatures)
-- Installation directory permissions (secure, owner-only access)
-- Dependency version verification
-- Post-installation verification checklist
+- `README.md` (Security Goals), `.github/SECURITY.md` (assumptions, guarantees,
+  non-goals), `docs/concepts/security-model.md`, `docs/concepts/trust-boundary.md`.
+- `docs/guides/policies.md` (writing ABAC policies, default-deny),
+  `docs/guides/cli.md`, `docs/guides/api.md`, `docs/guides/mcp.md`,
+  `docs/guides/secure-buffer-patterns.md`.
+- A hardened deployment: `deploy/rgt-vault.service` (dedicated user, loopback
+  bind, separate agent and operator token files, `--require-approval`,
+  systemd sandboxing options) installed by `deploy/setup-daemon.sh`.
+- Secure defaults in code: `serve` binds `127.0.0.1` and warns when bound
+  elsewhere; there are no default credentials (tokens are generated randomly on
+  first run, mode 0600).
 
-**Cryptographic Configuration**:
-- Key derivation configuration (PBKDF2 iterations, salt length)
-- Encryption algorithm selection and validation
-- Key storage location and access permissions
-- Key rotation procedures
+Not met:
 
-**Authentication Configuration**:
-- Default credential setup (change from defaults)
-- Multi-factor authentication setup
-- Session timeout configuration
-- Password policy (length, complexity)
+- No single consolidated hardening checklist listing every security-relevant
+  option.
+- The Go server's defaults are not secure (binds all interfaces, prints its
+  token, allow-all policy stub) and nothing in the Go README says not to use it
+  with real secrets.
 
-**Database Configuration**:
-- Database credentials setup (strong passwords, unique credentials)
-- Database access restrictions (network isolation, TLS required)
-- Backup encryption setup
-- Replication security (if applicable)
+Evidence: `deploy/rgt-vault.service`, `deploy/setup-daemon.sh`,
+`rgt_vault/cli.py` (`serve`), `docs/guides/`, `docs/concepts/security-model.md`.
 
-**Network and TLS Configuration**:
-- TLS certificate setup (self-signed vs. CA-signed)
-- Certificate validation enforcement
-- Network isolation (firewall rules, VPN requirements)
-- Port configuration (restrict to necessary ports)
+### 8.2 Detailed Component and Platform Installation Instructions (RGT-482)
 
-**Logging and Monitoring**:
-- Audit logging enable and configuration
-- Log retention setup (90+ days minimum)
-- Log access restrictions (authorized users only)
-- Monitoring and alerting configuration
+**Status: Partial.**
 
-**Configuration Documentation** (See `/docs/guides/` for detailed guides):
-- [Secure Installation Guide](/docs/guides/INSTALLATION.md)
-- [Cryptographic Configuration](/docs/guides/CRYPTO_CONFIGURATION.md)
-- [Authentication Setup](/docs/guides/AUTHENTICATION.md)
-- [Database Security](/docs/guides/DATABASE_SECURITY.md)
-- [Network and TLS](/docs/guides/NETWORK_SECURITY.md)
-- [Logging and Monitoring](/docs/guides/LOGGING_MONITORING.md)
+- `docs/getting-started/installation.md` covers the Go release tarball with
+  checksum verification, building from source, and a quickstart.
+- `docs/getting-started/quickstart.md` and `README.md` cover the Python install.
+- Platform key custody (DPAPI, macOS Keychain, Linux TPM, `keyring`) is
+  described in the provider documentation and `docs/architecture/crypto.md`.
+- `deploy/setup-daemon.sh` is the documented Linux daemon install.
 
-**Secure Defaults**:
-- Strong encryption algorithms enabled by default
-- Authentication required by default (no open access)
-- Audit logging enabled by default
-- TLS enforced for all communications
-- Restrictive access controls by default
+Not met:
 
-**Configuration Validation**:
-- Configuration syntax validation on startup
-- Security settings validation (e.g., minimum TLS version)
-- Warnings for insecure configurations
-- Configuration audit: Log all configuration changes
+- `docs/getting-started/installation.md` describes a Homebrew install, but no
+  tap exists and the `brews:` block of the GoReleaser config is commented out
+  (RGT-163). The instructions are not fully accurate.
+- No instructions exist for macOS or Windows daemon deployment beyond the
+  README's Windows notes.
+- The installation page is titled "Go", but the Go server is a skeleton; a
+  reader following it does not get a secure vault.
 
-### 8.2 Detailed Component and Platform Installation Instructions
+Evidence: `docs/getting-started/installation.md`, `go/.goreleaser.yaml`,
+`deploy/setup-daemon.sh`.
 
-**Policy**: Detailed installation instructions are provided for each supported component and platform, including security considerations and verification procedures.
+### 8.3 Alignment of Guidance with Software Updates (RGT-483)
 
-**Supported Components and Platforms**:
-- Python implementation (3.8+)
-- Go implementation (1.19+)
-- Docker containerization
-- Kubernetes deployment (if applicable)
-- Package manager installations (PyPI, etc.)
+**Status: Partial.**
 
-**Installation Instructions Include**:
-1. **Prerequisites**: Minimum system requirements, dependencies
-2. **Download**: Instructions for secure download with verification
-3. **Installation Steps**: Step-by-step installation with explanations
-4. **Configuration**: Required configuration parameters
-5. **Verification**: Tests to verify successful installation
-6. **Security Setup**: Initial security configuration (keys, credentials, TLS)
-7. **Troubleshooting**: Common installation issues and solutions
+- The pull-request template asks the author to confirm docs are updated, and
+  `CONTRIBUTING.md` requires docs, `SECURITY.md` and the LLM guide
+  (`rgt_vault/llm_guide.py`) to change with behaviour.
+- `CHANGELOG.md` is updated with each change.
+- Annual review: none (N/A - single maintainer). No scheduled accuracy review
+  exists, and drift has occurred (for example 8.2 above, and links in older
+  documents that point to files that have moved to `docs/archive/`).
+- This governance suite is itself verified against a specific commit (see the
+  header) so that readers can tell when it was last accurate.
 
-**Platform-Specific Guides**:
-- [Python Installation](/docs/guides/PYTHON_INSTALLATION.md)
-- [Go Installation](/docs/guides/GO_INSTALLATION.md)
-- [Docker Installation](/docs/guides/DOCKER_INSTALLATION.md)
-- [Kubernetes Deployment](/docs/guides/KUBERNETES_DEPLOYMENT.md)
-- [Package Manager Installation](/docs/guides/PACKAGE_MANAGER.md)
-
-**Verification Procedures**:
-- Checksum verification (SHA-256)
-- Signature verification (if available)
-- Installation health check
-- Security configuration validation
-- Functional test verification
-
-**Production Deployment Guidance**:
-- Environment preparation checklist
-- Security hardening procedures
-- Monitoring and alerting setup
-- Backup and disaster recovery setup
-- Change management procedures
-
-### 8.3 Alignment of Guidance with Software Updates
-
-**Policy**: All guidance and documentation are reviewed and updated to reflect software changes, new features, and security updates. Guidance version tracking ensures alignment with deployed versions.
-
-**Documentation Versioning**:
-- Documentation versioned to match software versions
-- Version tags in documentation identify applicable version(s)
-- Legacy documentation retained for supported versions
-- Current documentation always reflects latest released version
-
-**Update Procedures**:
-1. **Identify Changes**: Review release notes and code changes
-2. **Update Documentation**: Revise guides, configuration docs, reference materials
-3. **Testing**: Test procedures against new version
-4. **Review**: Security and technical review of updated documentation
-5. **Publication**: Release documentation with software update
-6. **Archival**: Retain legacy documentation for previous versions
-
-**Documentation Updates for**:
-- **New Features**: Installation procedures, configuration options, examples
-- **Bug Fixes**: Workarounds removed, procedures corrected
-- **Security Updates**: Configuration guidance updated, best practices emphasized
-- **API Changes**: Reference documentation updated, migration guides provided
-- **Deprecated Features**: Sunset timeline documented, alternatives recommended
-
-**User Communication**:
-- Release notes document all changes impacting documentation
-- Configuration guide updates highlighted in release notes
-- Migration guides provided for significant changes
-- FAQ updated with common questions from new version
-
-**Documentation Maintenance Schedule**:
-- Documentation reviewed with each release (minor, major, patch)
-- Annual comprehensive review of all guides
-- Quarterly review of security-related documentation
-- Continuous updates as issues or clarifications arise
+Evidence: `.github/PULL_REQUEST_TEMPLATE.md`, `.github/CONTRIBUTING.md`.
 
 ---
 
 ## 9. Security Communication and Incident Response
 
-### 9.1 Bi-directional Security Communication Channels
+### 9.1 Bi-directional Security Communication Channels (RGT-484)
 
-**Policy**: Bi-directional security communication channels are established to enable users and security researchers to report security issues and receive timely responses.
+**Status: Exists.**
 
-**Vulnerability Reporting Channels**:
+- **Channel 1:** a private email address published in `.github/SECURITY.md`.
+- **Channel 2:** GitHub private vulnerability reporting is enabled on the
+  repository (checked via the GitHub API), and `.github/ISSUE_TEMPLATE/config.yml`
+  disables blank issues and points reporters to GitHub security advisories.
+  (`.github/SECURITY.md` itself mentions only the email channel.)
+- **Response targets (authoritative, from `.github/SECURITY.md`):**
+  acknowledgement within **5 business days**; a remediation plan or assessment
+  within **30 days**; coordinated disclosure preferred. Earlier drafts of this
+  document promised a 24-hour response; that was never in force.
+- **Resources:** the maintainer alone. No on-call rota, no bug-bounty programme
+  (N/A - single maintainer).
+- Public issues are for non-sensitive matters; templates are in
+  `.github/ISSUE_TEMPLATE/`.
 
-**Responsible Disclosure (Preferred)**:
-- Security contact: [security@example.com](mailto:security@example.com)
-- Report suspected vulnerabilities to security contact, not public issues
-- Include: Description, proof of concept (if possible), steps to reproduce
-- Expect: Acknowledgment within 24 hours, status updates every 3-5 days
+Evidence: `.github/SECURITY.md`, `.github/ISSUE_TEMPLATE/config.yml`.
 
-**GitHub Security Advisory**:
-- Use "Report a vulnerability" button on GitHub Security tab
-- Provides private communication with maintainers
-- Enables coordinated disclosure workflow
-- Tracked separately from public issues
+### 9.2 Timely Stakeholder Update Notifications (RGT-485)
 
-**Bug Bounty Program** (if applicable):
-- Coordinated vulnerability disclosure program
-- Rewards for significant vulnerability disclosures
-- Platform: [Bug bounty platform] (if enrolled)
+**Status: Gap.**
 
-**User Feedback Channels**:
-- GitHub Issues: Feature requests, general discussions (public)
-- GitHub Discussions: Q&A, feedback (public)
-- Security Mailing List: Announcements of security updates (opt-in)
-- Email: Direct communication with project lead
+There is no mailing list, no announcement channel and no commitment to notify
+users "immediately" of a security release. What exists is passive:
 
-**Security Announcements**:
-- Release notes: Security updates documented with severity and impact
-- Security mailing list: Notifications of security-related releases
-- GitHub releases: Tagged as security updates
-- Social media: High-severity security announcements (if applicable)
+- Releases are published on GitHub (`v0.3.0` is still a draft) and users who
+  watch the repository receive GitHub's release notifications.
+- Security-relevant fixes are described in `CHANGELOG.md` under `### Security`
+  headings, and GitHub security advisories could be published for the project
+  (none have been).
+- Dependabot and the CI scanners notify the maintainer, not users.
 
-**Response Commitments**:
-- **Vulnerability reports**: Acknowledgment within 24 hours
-- **Status updates**: Updates provided every 3-5 business days
-- **Initial assessment**: Severity determined within 48 hours
-- **Patch availability**: Target completion within 30 days for non-critical vulnerabilities
-- **Public disclosure**: Coordinated with reporter, minimum 30-day embargo
+Evidence: `CHANGELOG.md`, `.github/workflows/release.yml`; no advisories
+published (see [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md)).
 
-**Feedback Loop**:
-- User issues tracked in GitHub issues
-- Common issues tracked as potential features
-- Frequent requests prioritized for roadmap
-- Stakeholder feedback incorporated into architecture
+### 9.3 Vulnerability Mitigation Advisory Process (RGT-486)
 
-### 9.2 Timely Stakeholder Update Notifications
+**Status: Gap.**
 
-**Policy**: All stakeholders (users, partners, customers) receive timely notifications of security updates, new features, and important operational information.
+- No security advisory has ever been published. There is no CVE-assignment
+  process and no record of issuing a workaround ahead of a patch.
+- Known limitations and mitigation guidance for the weaknesses that are already
+  public are written in `.github/SECURITY.md` ("Non-goals", "Audit Chain
+  Limitations", with the hardened-deployment advice) and `docs/ROADMAP.md`.
+- [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md) holds the (empty) advisory
+  register and the fields an advisory should carry. GitHub's repository
+  security-advisory feature is the available vehicle; it has not been used.
 
-**Stakeholder Categories**:
-- **Users**: Open-source community using RGT Vault
-- **Customers**: Organizations deploying RGT Vault
-- **Partners**: Integrators and organizations building on RGT Vault
-- **Security Community**: Researchers and security professionals
-
-**Notification Methods**:
-
-**Security-Related Notifications**:
-- Email notification: To opted-in security mailing list
-- Release announcement: Tagged as security update in GitHub releases
-- Security advisory: Published in Security Advisory section
-- Notification timing: Sent concurrently with patch release
-
-**Feature and Update Notifications**:
-- Release notes: Published in GitHub releases
-- Changelog: Updated in repository
-- Blog/announcements: Published on project website (if applicable)
-- Social media: Announced on project social channels (if applicable)
-
-**Operational Notifications**:
-- Status page: Maintenance and incidents published
-- Email notifications: For service disruptions (if hosted)
-- Documentation updates: Version changes communicated
-
-**Notification Frequency and Timing**:
-- Security patches: Published immediately upon availability
-- Minor releases: Announced on release (quarterly or as needed)
-- Major releases: Announced in advance with migration guidance
-- Deprecations: 6+ months notice before removal
-- Breaking changes: Documented in release notes with migration guide
-
-**Notification Content**:
-- What changed (feature, fix, security update)
-- Why it changed (rationale, benefit)
-- How to update (installation/upgrade instructions)
-- When to update (recommended timeline)
-- What to watch for (new behavior, configuration changes)
-- How to get help (documentation links, support channels)
-
-**Opt-in/Opt-out**:
-- Users can opt-in to security mailing list
-- Users can opt-in to release notifications
-- GitHub watch options allow selective notification filtering
-- Email unsubscribe available in all notifications
-
-### 9.3 Vulnerability Mitigation Advisory Process
-
-**Policy**: When vulnerabilities or security issues are discovered in deployed versions, advisory process provides users with timely guidance on mitigation and remediation.
-
-**Advisory Content and Process**:
-
-**Vulnerability Advisory Structure**:
-- **Identifier**: CVE number (if applicable) or RGT-SECURITY-NNN
-- **Title**: Brief vulnerability description
-- **CVSS Score**: Severity rating (CVSS v3.1)
-- **Affected Versions**: List of versions impacted
-- **Impact Summary**: Confidentiality, Integrity, Availability impact
-- **Technical Details**: How vulnerability can be exploited
-- **Proof of Concept**: Example or code demonstrating issue (if appropriate)
-- **Mitigation Steps**: What users can do to protect systems immediately
-- **Remediation Steps**: How to update/patch (specific version, procedure)
-- **Timeline**: When patch available, when workaround expires
-- **References**: CVE database links, security bulletins
-
-**Mitigation Strategies**:
-- **Immediate Workarounds**: Configuration changes, access restrictions until patch available
-- **Compensating Controls**: Monitoring, alerting to detect exploitation attempts
-- **Operational Changes**: Procedures to reduce risk exposure
-- **Timeline**: How long mitigation is viable (until patch required)
-
-**Example Advisory Structure**:
-```
-Title: Authentication Bypass in Session Management (CVE-XXXX-XXXXX)
-Severity: High (CVSS 8.1)
-Affected: RGT Vault 1.0.0 - 1.0.2
-Impact: Attackers could bypass authentication with specially crafted session tokens
-
-Mitigation (until patch available):
-1. Reduce session timeout to 5 minutes
-2. Enable additional logging monitoring for authentication failures
-3. Restrict access to API to known IP ranges
-4. Deploy Web Application Firewall to detect exploitation attempts
-
-Remediation (patch available):
-1. Upgrade to RGT Vault 1.0.3 (released MM/DD/YYYY)
-2. Restart all instances
-3. Verify sessions are invalidated after update
-```
-
-**Advisory Distribution**:
-- Sent to security mailing list concurrently with patch
-- Published in GitHub Security Advisories
-- Included in release notes with prominent warning
-- Announced via security contact channels
-
-**Advisory Review and Approval**:
-- Drafted by developer/security team who discovered issue
-- Reviewed by Security Maintainer for accuracy and completeness
-- Reviewed by project lead for public communication tone
-- Final approval before publishing
-
-**Documentation of Advisories**:
-- Retained in `/docs/governance/SECURITY_ADVISORIES.md`
-- Linked from release notes
-- Searchable in GitHub Security Advisories
-- Historical record of all advisories maintained
-
-**Post-Advisory Monitoring**:
-- Track adoption of patches
-- Monitor for continued exploitation attempts
-- Follow-up advisories if issues are discovered
-- Postmortem analysis for significant vulnerabilities
+Evidence: `.github/SECURITY.md`, `docs/ROADMAP.md`,
+`docs/governance/SECURITY_ADVISORIES.md`.
 
 ---
 
 ## 10. Release Management and Support
 
-### 10.1 Release Notes and Change Summaries
+### 10.1 Release Notes and Change Summaries (RGT-487)
 
-**Policy**: Detailed release notes and change summaries are provided with every software release, documenting security controls impacted, functionality changes, and guidance for users.
+**Status: Exists.**
 
-**Release Notes Content**:
+- `CHANGELOG.md` (Keep a Changelog) has a section per release (`0.1.0`,
+  `0.2.0`, `0.3.0`) and an `[Unreleased]` section, with `### Security`,
+  `### Added`, `### Changed`, `### Fixed` and `### Removed` headings that name
+  affected functionality and controls.
+- GoReleaser generates a categorised change list (features, bug fixes, other)
+  from conventional-commit prefixes for each GitHub release, which is created
+  as a draft so the maintainer can edit it before publishing.
+- No invented release notes are kept in this repository. The earlier draft
+  contained notes for a "RGT Vault 1.2.0" that was never released and has been
+  removed; the project is pre-1.0 (`.github/SECURITY.md`).
+- Gap: the `v0.2.0` tag has no GitHub release and the `v0.3.0` release is a
+  draft, so GitHub release pages are incomplete.
 
-**Release Header Information**:
-- Version number and release date
-- Release type (major, minor, patch)
-- Compatibility information (backward compatible, breaking changes)
-- Support and end-of-life timeline
-
-**Security Section**:
-- Security vulnerabilities fixed (CVE numbers, severity)
-- Security features added or enhanced
-- Cryptographic updates (algorithm changes, key management)
-- Security best practices recommendations
-- Known security limitations or workarounds
-
-**Feature and Enhancement Section**:
-- New features and capabilities
-- Enhancements to existing features
-- Performance improvements
-- Quality improvements
-
-**Bug Fixes Section**:
-- Bugs fixed since previous release
-- Impact of fixes (what behavior changed)
-- Workarounds that are no longer needed
-
-**Breaking Changes Section** (if applicable):
-- Incompatible API changes
-- Configuration changes required
-- Deprecated features and removal timeline
-- Migration instructions
-
-**Dependency Changes Section**:
-- Updated dependencies (with versions)
-- Dependency vulnerability updates
-- License changes (if applicable)
-
-**Known Issues**:
-- Unresolved issues in this release
-- Status and workarounds
-- Expected resolution timeline
-
-**Installation and Upgrade Section**:
-- How to obtain the release (download links)
-- Checksum verification instructions
-- Installation/upgrade instructions
-- Rollback procedures (if needed)
-
-**Documentation and Support**:
-- Links to detailed guides
-- Configuration reference updates
-- API documentation updates
-- Support and help resources
-
-**Example Release Notes Structure**:
-```markdown
-# RGT Vault 1.2.0 - Released June 26, 2026
-
-## Security Highlights
-- **CRITICAL**: Fixed authentication bypass in session validation (CVE-2026-XXXXX) 
-  - Affects: All versions 1.0.0 - 1.1.2
-  - Update immediately
-- **HIGH**: Enhanced cryptographic key rotation (TLS 1.3 support, AES-256-GCM forced)
-- Updated OWASP ASVS Level 3 compliance documentation
-
-## New Features
-- Multi-factor authentication support (TOTP, backup codes)
-- Audit log export (JSON, CSV formats)
-- Advanced access control policies
-
-## Breaking Changes
-- API v1 deprecated; API v2 required (v1 supported until 1.3.0)
-  - Migration guide: [link]
-- Configuration parameter `crypto_algorithm` renamed to `encryption_algorithm`
-
-## Bug Fixes
-- Fixed race condition in concurrent access handling
-- Fixed memory leak in session cache
-- Fixed incorrect audit logging for certain operations
-
-## Installation
-- Download: [GitHub releases link]
-- Verify: `sha256sum rgt-vault-1.2.0.tar.gz`
-- Upgrade: `pip install rgt-vault==1.2.0`
-
-## Support
-- Documentation: [link]
-- Issues: [GitHub issues]
-- Security: [security contact]
-```
-
-**Release Notes Publication**:
-- Published in GitHub Releases section
-- Included in source repository (CHANGELOG.md)
-- Announced via security mailing list (security updates)
-- Highlighted on project website (if applicable)
-
-**Release Notes Accessibility**:
-- Published in plain text format (machine-readable)
-- Published in Markdown format (human-readable)
-- Archived for all historical releases
-- Searchable in GitHub releases
+Evidence: `CHANGELOG.md`, `go/.goreleaser.yaml`.
 
 ---
 
-## Governance Compliance and Review
+## Summary of objective status
 
-### Annual Governance Review
+| Objective | Issue | Status |
+|---|---|---|
+| 1.1 Security responsibility | RGT-460 | Exists / N/A - single maintainer |
+| 1.2 Lifecycle responsibilities | RGT-461 | Partial |
+| 1.3 Skills management | RGT-462 | N/A - single maintainer |
+| 2.1 Compliance requirements | RGT-463 | Partial |
+| 2.2 Security policy | RGT-464 | Exists |
+| 2.3 Strategy | RGT-465 | Partial |
+| 2.4 Assurance processes | RGT-466 | Exists |
+| 2.5 Evidence | RGT-467 | Partial |
+| 2.6 Ineffective processes | RGT-468 | Gap |
+| 3.1 Critical assets | RGT-469 | Exists |
+| 3.2 Threat modeling and OSS | RGT-470 | Partial |
+| 3.3 Control definition | RGT-471 | Partial |
+| 3.4 Control effectiveness | RGT-472 | Gap |
+| 4.1 Security testing | RGT-473 | Partial |
+| 4.2 Remediation | RGT-474 | Partial |
+| 5.1 Change management | RGT-475 | Partial |
+| 5.2 Versioning | RGT-476 | Exists |
+| 6.1 Code integrity | RGT-477 | Gap |
+| 6.2 Delivery integrity | RGT-478 | Partial |
+| 7.1 Data collection | RGT-479 | N/A for project; inventory exists |
+| 7.2 Data protection and deletion | RGT-480 | Gap |
+| 8.1 Secure configuration guidance | RGT-481 | Partial |
+| 8.2 Installation instructions | RGT-482 | Partial |
+| 8.3 Guidance vs updates | RGT-483 | Partial |
+| 9.1 Reporting channels | RGT-484 | Exists |
+| 9.2 Update notifications | RGT-485 | Gap |
+| 9.3 Mitigation advisories | RGT-486 | Gap |
+| 10.1 Release notes | RGT-487 | Exists |
 
-This governance framework is reviewed annually (minimum) by project leadership and security stakeholders. The review assesses:
-- Effectiveness of security policies and controls
-- Compliance with stated objectives
-- Changes in business requirements or external drivers
-- Updates to industry standards and best practices
-- Resource requirements for security initiatives
+## Review and change control for this document
 
-### Governance Documentation Updates
+There is no annual governance review and no governance committee. This document
+is updated by the maintainer when a process changes, and each update should
+re-check the "Verified against" commit in the header. If a claim here conflicts
+with `.github/SECURITY.md`, `SECURITY.md` governs.
 
-Governance documentation is updated:
-- Quarterly: Metrics and monitoring results
-- Semi-annually: Control effectiveness reviews
-- Annually: Comprehensive policy review and update
-- Ad-hoc: Significant security incidents or policy changes
+## Appendix A: Related documentation
 
-### Roles and Responsibilities
+All paths are relative to the repository root.
 
-**Security Maintainer**:
-- Overall responsibility for software security governance
-- Approval authority for security policies and exceptions
-- Oversight of security control implementation
-- Security training and skills development
-- Annual governance review leadership
+- `.github/SECURITY.md`, `.github/CONTRIBUTING.md`,
+  `.github/PULL_REQUEST_TEMPLATE.md`, `.github/CODE_OF_CONDUCT.md`,
+  `.github/ISSUE_TEMPLATE/`
+- `docs/security/threat-model.md`, `docs/concepts/security-model.md`,
+  `docs/concepts/trust-boundary.md`
+- `docs/architecture/crypto.md`, `docs/architecture/logging-policy.md`,
+  `docs/architecture/memory-safety.md`, `docs/adr/`
+- `docs/ROADMAP.md`, `CHANGELOG.md`
+- `docs/archive/` (audits, review checklists, and an earlier programme
+  description; archived material is history, not an operating process)
 
-**Project Lead**:
-- Final authority for policy approval
-- Communication of policies to stakeholders
-- Resource allocation for security initiatives
-- Strategic planning and roadmap alignment
+## Appendix B: Relationship to external frameworks
 
-**All Development Personnel**:
-- Adherence to security policies
-- Participation in security training
-- Compliance with security controls
-- Reporting of security issues and incidents
-- Continuous improvement suggestions
-
-### Governance Metrics and Reporting
-
-Key metrics tracked quarterly:
-- Vulnerability discovery and remediation rate
-- Code review security finding density
-- Dependency vulnerability detection rate
-- Control effectiveness test results
-- Training completion and assessment scores
-- Incident response time and effectiveness
-
----
-
-## Appendix A: Related Documentation
-
-**Security and Architecture**:
-- `/docs/architecture/`: System architecture and design decisions
-- `/docs/adr/`: Architecture Decision Records
-- `/docs/security/`: Security testing and vulnerability documentation
-
-**Implementation Guidance**:
-- `/docs/guides/`: Installation, configuration, and operation guides
-- `/docs/concepts/`: Conceptual explanations of vault operations
-- `/docs/reference/`: API and command reference
-
-**Governance Sub-documents**:
-- `/docs/governance/CONTROLS_INVENTORY.md`: Detailed control catalog
-- `/docs/governance/THREAT_INVENTORY.md`: Threats and mitigations
-- `/docs/governance/SECURITY_ADVISORIES.md`: Published security advisories
-
----
-
-## Appendix B: Compliance Mapping
-
-### OWASP ASVS Level 3 Mapping
-
-| ASVS Objective | Requirement | Document Section | Status |
-|---|---|---|---|
-| V1.1 | Leadership Accountability | 1.1 | Implemented |
-| V1.2 | Lifecycle Responsibilities | 1.2 | Implemented |
-| V1.3 | Skills Management | 1.3 | Implemented |
-| V2.1 | Compliance Monitoring | 2.1 | Implemented |
-| V2.2 | Security Policy | 2.2 | Implemented |
-| V2.3 | Security Strategy | 2.3 | Implemented |
-| V2.4 | Assurance Processes | 2.4 | Implemented |
-| V2.5 | Evidence Collection | 2.5 | Implemented |
-| V2.6 | Process Monitoring | 2.6 | Implemented |
-| V3.1 | Asset Classification | 3.1 | Implemented |
-| V3.2 | Threat Modeling | 3.2 | Implemented |
-| V3.3 | Control Definition | 3.3 | Implemented |
-| V3.4 | Control Monitoring | 3.4 | Implemented |
-| V4.1 | Security Testing | 4.1 | Implemented |
-| V4.2 | Vulnerability Remediation | 4.2 | Implemented |
-| V5.1 | Change Management | 5.1 | Implemented |
-| V5.2 | Version Tracking | 5.2 | Implemented |
-| V6.1 | Code Integrity | 6.1 | Implemented |
-| V6.2 | Secure Delivery | 6.2 | Implemented |
-| V7.1 | Data Collection Authorization | 7.1 | Implemented |
-| V7.2 | Data Protection | 7.2 | Implemented |
-| V8.1 | Configuration Guidance | 8.1 | Implemented |
-| V8.2 | Installation Instructions | 8.2 | Implemented |
-| V8.3 | Guidance Updates | 8.3 | Implemented |
-| V9.1 | Communication Channels | 9.1 | Implemented |
-| V9.2 | Stakeholder Notifications | 9.2 | Implemented |
-| V9.3 | Vulnerability Advisories | 9.3 | Implemented |
-| V10.1 | Release Notes | 10.1 | Implemented |
-
----
-
-**Document Version**: 1.0  
-**Last Updated**: June 26, 2026  
-**Next Review**: June 26, 2027  
-**Approvers**: Project Leadership, Security Maintainer  
-**Classification**: Internal (for external distribution as appropriate)
+- The objective numbers 1.1 to 10.1 are the tracker's (epic RGT-488); they are
+  not OWASP ASVS requirement identifiers and must not be cited as such.
+- The earlier draft of this appendix mapped these objectives to "OWASP ASVS
+  Level 3 V1.1 to V10.1" and claimed full coverage. That mapping was incorrect
+  and has been removed. No conformance to ASVS, PCI Secure SLC, ISO/IEC 27034,
+  BSIMM, OWASP SAMM or NIST SP 800-160 is claimed.
+- ASVS verification against the actual code is tracked under RGT-492 and is
+  documented separately from this governance document.
