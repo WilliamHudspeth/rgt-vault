@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/tlstest"
-	"rgt-vault-server/internal/transport"
-	"rgt-vault-server/internal/tui"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/tlstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/transport"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/tui"
 )
 
 // tlsBackend serves a minimal vault API over TLS with the real server TLS

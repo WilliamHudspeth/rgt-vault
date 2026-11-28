@@ -18,10 +18,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/kdf"
-	"rgt-vault-server/internal/providers/providerstest"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 func env(m map[string]string) func(string) string { return func(k string) string { return m[k] } }

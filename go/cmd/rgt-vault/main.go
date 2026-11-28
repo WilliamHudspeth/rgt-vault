@@ -27,10 +27,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"rgt-vault-server/internal/kdf"
-	"rgt-vault-server/internal/mcp"
-	"rgt-vault-server/internal/servecmd"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/mcp"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/servecmd"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // defaultHost is the server URL the client subcommands talk to (decision

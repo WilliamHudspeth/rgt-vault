@@ -16,11 +16,11 @@ import (
 	"sync"
 	"testing"
 
-	"rgt-vault-server/internal/approval"
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/captoken"
-	"rgt-vault-server/internal/crypto"
-	"rgt-vault-server/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/captoken"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/crypto"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 )
 
 // goModuleRoot locates the go/ directory from go/internal/cryptopolicy.

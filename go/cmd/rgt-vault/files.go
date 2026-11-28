@@ -8,9 +8,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"rgt-vault-server/internal/keychain"
-	"rgt-vault-server/internal/servecmd"
-	"rgt-vault-server/internal/server"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/keychain"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/servecmd"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
 )
 
 // writeSecretFile writes data to path as a fresh 0600 file, atomically: the

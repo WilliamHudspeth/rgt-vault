@@ -12,12 +12,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"rgt-vault-server/internal/actions"
-	"rgt-vault-server/internal/approval"
-	"rgt-vault-server/internal/audit"
-	"rgt-vault-server/internal/capabilities"
-	"rgt-vault-server/internal/logging"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/actions"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/audit"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/capabilities"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/logging"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // AppError is an HTTP error response: {"error": Type, "detail": Message}

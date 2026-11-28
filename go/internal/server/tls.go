@@ -19,7 +19,7 @@ import (
 	"net/http"
 	"time"
 
-	"rgt-vault-server/internal/transport"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/transport"
 )
 
 // HSTSValue is the Strict-Transport-Security header the server sends over

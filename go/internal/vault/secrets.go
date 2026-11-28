@@ -9,10 +9,10 @@ import (
 	"errors"
 	"fmt"
 
-	"rgt-vault-server/internal/approval"
-	"rgt-vault-server/internal/crypto"
-	"rgt-vault-server/internal/keychain"
-	"rgt-vault-server/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/crypto"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/keychain"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 )
 
 // SetSecretRequest are the arguments of SetSecret (python set_secret).

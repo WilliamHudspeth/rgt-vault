@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/approval"
-	"rgt-vault-server/internal/keychain"
-	"rgt-vault-server/internal/providers/providerstest"
-	"rgt-vault-server/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/keychain"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 )
 
 // A 2FA-flagged version must not be leasable by version without the second

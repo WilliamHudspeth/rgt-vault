@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/approval"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 type recorder struct {

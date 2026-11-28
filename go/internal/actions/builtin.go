@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"rgt-vault-server/internal/netguard"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/netguard"
 )
 
 // Defaults.

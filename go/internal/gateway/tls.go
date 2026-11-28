@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"rgt-vault-server/internal/transport"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/transport"
 )
 
 // TLSOptions are the gateway's listener TLS flags.

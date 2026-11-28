@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // Follow-ups to the review of PR #45.

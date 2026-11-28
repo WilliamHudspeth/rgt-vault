@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"rgt-vault-server/internal/providers/providerstest"
-	"rgt-vault-server/internal/server"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // export -> wipe -> import round trip on a Go vault.

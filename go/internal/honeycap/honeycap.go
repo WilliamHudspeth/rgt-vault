@@ -53,8 +53,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"rgt-vault-server/internal/approval"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // Event is the audit action and security-event kind of a honey probe.

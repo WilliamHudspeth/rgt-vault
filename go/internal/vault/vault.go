@@ -14,14 +14,14 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"rgt-vault-server/internal/approval"
-	"rgt-vault-server/internal/captoken"
-	"rgt-vault-server/internal/crypto"
-	"rgt-vault-server/internal/kdf"
-	"rgt-vault-server/internal/keychain"
-	"rgt-vault-server/internal/policy"
-	"rgt-vault-server/internal/store"
-	"rgt-vault-server/internal/validation"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/captoken"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/crypto"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/keychain"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/policy"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/validation"
 )
 
 // RGT-219: rotate the DEK well before the AES-GCM safety bounds (NIST SP

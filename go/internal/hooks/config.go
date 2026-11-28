@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"rgt-vault-server/internal/hooks/pyfmt"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/hooks/pyfmt"
 )
 
 // Config is the hook configuration (python hook_from_config's dict):

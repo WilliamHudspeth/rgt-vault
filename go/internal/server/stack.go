@@ -12,16 +12,16 @@ import (
 	"strings"
 	"time"
 
-	"rgt-vault-server/internal/actions"
-	"rgt-vault-server/internal/approval"
-	"rgt-vault-server/internal/capabilities"
-	"rgt-vault-server/internal/captoken"
-	"rgt-vault-server/internal/honeycap"
-	"rgt-vault-server/internal/kdf"
-	"rgt-vault-server/internal/providers"
-	"rgt-vault-server/internal/server/handlers"
-	"rgt-vault-server/internal/totp"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/actions"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/capabilities"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/captoken"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/honeycap"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server/handlers"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/totp"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // DefaultDBPath is Python's --db default (expanded at use).

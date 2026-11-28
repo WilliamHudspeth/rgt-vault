@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"rgt-vault-server/internal/keychain"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/keychain"
 )
 
 var vaultFixtures = []string{"small", "default", "epoch1"}

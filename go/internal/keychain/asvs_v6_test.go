@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"rgt-vault-server/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
 )
 
 // TestASVSV6_KeychainCloseZeroizesDEK verifies ASVS 6.4.2 (RGT-408) best-effort

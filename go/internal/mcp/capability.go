@@ -25,8 +25,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"rgt-vault-server/internal/policy"
-	"rgt-vault-server/internal/validation"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/policy"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/validation"
 )
 
 const (

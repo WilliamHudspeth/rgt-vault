@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/providers"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers"
 )
 
 // fixedSecret is a throw-away 32-byte master secret.

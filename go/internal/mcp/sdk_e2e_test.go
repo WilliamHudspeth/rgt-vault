@@ -23,7 +23,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	rgtmcp "rgt-vault-server/internal/mcp"
+	rgtmcp "github.com/WilliamHudspeth/rgt-vault/go/internal/mcp"
 )
 
 const (

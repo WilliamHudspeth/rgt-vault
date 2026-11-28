@@ -11,8 +11,8 @@ import (
 	"net/url"
 	"time"
 
-	"rgt-vault-server/internal/approval"
-	"rgt-vault-server/internal/netguard"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/netguard"
 )
 
 // maxEventsInFlight bounds concurrent webhook deliveries of ordinary events;

@@ -21,9 +21,9 @@ import (
 	"strings"
 	"time"
 
-	"rgt-vault-server/internal/netguard"
-	"rgt-vault-server/internal/transport"
-	"rgt-vault-server/internal/validation"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/netguard"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/transport"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/validation"
 )
 
 // DefaultBackendURL is the backend a Server talks to when none is given: the

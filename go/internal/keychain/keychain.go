@@ -68,7 +68,7 @@ import (
 	"sync"
 	"time"
 
-	"rgt-vault-server/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
 )
 
 const (

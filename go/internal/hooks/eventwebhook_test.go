@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
 )
 
 func TestEventWebhookDeliversJSON(t *testing.T) {

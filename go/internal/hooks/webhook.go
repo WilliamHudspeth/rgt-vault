@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"rgt-vault-server/internal/hooks/pyfmt"
-	"rgt-vault-server/internal/netguard"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/hooks/pyfmt"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/netguard"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // DefaultWebhookTimeout is WebhookHook's default timeout_seconds.

@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/server/handlers"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server/handlers"
 )
 
 type rt struct{ method, path, body string }

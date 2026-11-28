@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
-	"rgt-vault-server/internal/auth"
 	"strings"
 	"testing"
 )

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/captoken"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/captoken"
 )
 
 func TestReserveIsAtomicUnderContention(t *testing.T) {

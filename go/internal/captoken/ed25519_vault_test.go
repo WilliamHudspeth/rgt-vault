@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"rgt-vault-server/internal/capabilities"
-	"rgt-vault-server/internal/captoken"
-	"rgt-vault-server/internal/kdf"
-	"rgt-vault-server/internal/providers/providerstest"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/capabilities"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/captoken"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // TestEd25519ThroughVault: the vault runs a capability on a v3 token from a

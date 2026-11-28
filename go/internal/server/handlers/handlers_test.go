@@ -3,18 +3,18 @@ package handlers
 import (
 	"context"
 	"errors"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
-	"rgt-vault-server/internal/auth"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
-	"rgt-vault-server/internal/actions"
-	"rgt-vault-server/internal/approval"
-	"rgt-vault-server/internal/capabilities"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/actions"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/capabilities"
 )
 
 func TestSchemaKeys(t *testing.T) {

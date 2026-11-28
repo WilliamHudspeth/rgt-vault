@@ -17,7 +17,7 @@
 //	                 [--tls-client-auth require|verify-if-given]]]
 //	                 [--tls-reload-interval 1m] [--allow-insecure-non-loopback]
 //
-// See `go doc rgt-vault-server/internal/servecmd` for every flag and
+// See `go doc github.com/WilliamHudspeth/rgt-vault/go/internal/servecmd` for every flag and
 // environment variable. Differences from the pre-G10 binary: flags need two
 // dashes (--port, not -port), and a non-loopback --host needs TLS
 // (--tls-cert/--tls-key) or --allow-insecure-non-loopback (it used to be
@@ -30,7 +30,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"rgt-vault-server/internal/servecmd"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/servecmd"
 )
 
 func main() {

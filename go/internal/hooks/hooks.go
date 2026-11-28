@@ -48,8 +48,8 @@ import (
 	"os"
 	"sync"
 
-	"rgt-vault-server/internal/validation"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/validation"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // Hook is a vault.Hook with the Base kill-switch controls.

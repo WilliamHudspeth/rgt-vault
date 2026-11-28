@@ -28,8 +28,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/logging"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/logging"
 )
 
 // adminPrefix is the path prefix reserved for the gateway's admin API.

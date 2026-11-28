@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"rgt-vault-server/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
 )
 
 const pyvaultDir = "../../testdata/pyvault"

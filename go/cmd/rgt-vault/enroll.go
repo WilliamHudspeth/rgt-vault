@@ -13,12 +13,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"rgt-vault-server/internal/approval"
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/servecmd"
-	"rgt-vault-server/internal/server"
-	"rgt-vault-server/internal/store"
-	"rgt-vault-server/internal/totp"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/servecmd"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/totp"
 )
 
 // Audit event written when --force replaces an existing TOTP secret.

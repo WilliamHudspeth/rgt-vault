@@ -12,13 +12,13 @@ import (
 	"path/filepath"
 	"time"
 
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/captoken"
-	"rgt-vault-server/internal/crypto"
-	"rgt-vault-server/internal/cryptopolicy"
-	"rgt-vault-server/internal/kdf"
-	"rgt-vault-server/internal/keychain"
-	"rgt-vault-server/internal/totp"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/captoken"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/crypto"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/cryptopolicy"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/keychain"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/totp"
 )
 
 // Test seams: crypto-audit drives the repo's real Encrypt/Decrypt through

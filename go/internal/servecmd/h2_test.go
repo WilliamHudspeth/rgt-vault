@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
 )
 
 // Batch H2 flags: --require-approval-for, --security-webhook-url.

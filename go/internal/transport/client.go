@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"rgt-vault-server/internal/netguard"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/netguard"
 )
 
 // ClientOptions configures the TLS side of an HTTP client. The zero value

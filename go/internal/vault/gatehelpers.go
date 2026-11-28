@@ -3,7 +3,7 @@ package vault
 import (
 	"context"
 
-	"rgt-vault-server/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 )
 
 // Requires2FA reports whether the ACTIVE version of (namespace, name) is

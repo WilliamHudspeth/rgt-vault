@@ -22,12 +22,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
 
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/kdf"
-	"rgt-vault-server/internal/providers/providerstest"
-	"rgt-vault-server/internal/server"
-	"rgt-vault-server/internal/totp"
-	"rgt-vault-server/internal/tui"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/totp"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/tui"
 )
 
 const sentinel = "REAL-SERVER-PLAINTEXT-SENTINEL"

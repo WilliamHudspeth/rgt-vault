@@ -9,9 +9,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"rgt-vault-server/internal/mcp"
-	"rgt-vault-server/internal/transport"
-	"rgt-vault-server/internal/tui"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/mcp"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/transport"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/tui"
 )
 
 // runMCP serves MCP on in/out. out is the protocol channel; backend error

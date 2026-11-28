@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"rgt-vault-server/internal/kdf"
-	"rgt-vault-server/internal/keychain"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/keychain"
 )
 
 func TestDefaultPolicyValidatesAndMatchesDefaults(t *testing.T) {

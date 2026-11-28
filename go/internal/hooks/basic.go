@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // OffHook is the default no-op hook with freeze support (python OffHook).

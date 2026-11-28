@@ -3,7 +3,7 @@ package vault
 import (
 	"context"
 
-	"rgt-vault-server/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 )
 
 // AuditLog returns the newest limit audit rows, newest first (python

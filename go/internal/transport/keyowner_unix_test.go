@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"rgt-vault-server/internal/tlstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/tlstest"
 )
 
 func TestOwnerAllowed(t *testing.T) {

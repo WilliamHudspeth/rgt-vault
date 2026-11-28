@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"rgt-vault-server/internal/servecmd"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/servecmd"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // resolveDB resolves --db / RGT_VAULT_DB / the default for the offline

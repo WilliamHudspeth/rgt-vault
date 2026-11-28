@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"rgt-vault-server/internal/validation"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/validation"
 )
 
 type abacCase struct {

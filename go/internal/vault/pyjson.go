@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"rgt-vault-server/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 )
 
 // This file reproduces Python's json.dumps output byte for byte for the

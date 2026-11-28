@@ -6,7 +6,7 @@ import (
 	"math"
 	"testing"
 
-	"rgt-vault-server/internal/captoken"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/captoken"
 )
 
 var negZero = math.Copysign(0, -1)

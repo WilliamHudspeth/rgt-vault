@@ -9,12 +9,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/kdf"
-	rgtmcp "rgt-vault-server/internal/mcp"
-	"rgt-vault-server/internal/providers/providerstest"
-	"rgt-vault-server/internal/server"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	rgtmcp "github.com/WilliamHudspeth/rgt-vault/go/internal/mcp"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // identityPolicy lets "bot" and "peer" do everything in their own

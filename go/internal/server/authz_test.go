@@ -20,10 +20,10 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/providers/providerstest"
-	"rgt-vault-server/internal/server/handlers"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server/handlers"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // authzPolicy: alice and bob each own one namespace; nobody else gets

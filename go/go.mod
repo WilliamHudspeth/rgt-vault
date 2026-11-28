@@ -1,4 +1,4 @@
-module rgt-vault-server
+module github.com/WilliamHudspeth/rgt-vault/go
 
 go 1.26.11
 
