@@ -224,8 +224,8 @@ and darwin. `deploy/rgt-vault-go.service` gains a `file` variant using `LoadCred
     `RecoveryHint`, in `vault/provider.go`), connects it to the vault:
     - `Open` calls `ConfirmMasterSecret(vaultID, master)` after `master` has unwrapped the keychain. That
       records the vault binding and may remove `.prev` (see note 15 for when).
-    - `RotateMaster` calls it after installing the new keychain (3 lines in `vault/rotate.go`, a file RGT-535
-      edits later; +13/−1 lines). Its "restore the previous master secret" error names `.prev`.
+    - `RotateMaster` calls it after installing the new keychain (in `vault/rotate.go`, +20/−1 lines in total with note 16, a file RGT-535
+      edits later). Its "restore the previous master secret" error names `.prev`.
     - When the final unwrap fails, `Open` tries `.prev` and, if it unwraps, reports that with the `mv`
       command. It never switches keys itself.
     - `RotateMaster` loads the current key before calling the provider, so the key saved as `.prev` is known
@@ -263,3 +263,21 @@ and darwin. `deploy/rgt-vault-go.service` gains a `file` variant using `LoadCred
     - Deterministic tests: `TestConfirmCannotRemovePrevMidRotation` (the lock),
       `TestConfirmKeepsPrevWhenKeyChanged` (the compare), `TestPrevRemovedOnlyByOwningVault`,
       `TestSealForceKeepsReplacedKey` (the reviewer's repro).
+16. **Third review (MED-A, MED-B, MED-C, Windows CI).**
+    - **MED-A.** `.prev` is owned through `<key>.prev.vault-id`, written before `.prev` and removed after
+      it. Its removal no longer depends on `<key>.vault-id`, which `seal --force` and the "release the key"
+      advice delete; a `.prev` without an owner record is never removed. `seal --force` refuses while
+      `.prev` exists and holds `<key>.lock` while it replaces the key. The release advice warns when a
+      `.prev` exists.
+    - **MED-B.** The rotation takes the lock through a new optional `vault.RotationLocker`
+      (`LockForRotation`), called by `RotateMaster` before `inRotationTx`. The wait is bounded (5 s); then
+      it fails with `providers.ErrKeyLocked` while neither the database write lock nor the key is touched.
+      The lock is released when `RotateMaster` returns, so a failed rotation no longer holds it until the
+      process exits (review LOW-4). `Vault.Close` therefore does not need to close the provider, and does
+      not: a caller may share a provider between vaults.
+    - **MED-C.** Confirmation takes no lock when there is no `.prev`. A lock or binding that cannot be
+      created (read-only mount) is a warning, never a failed open.
+    - **Lock file.** Unix opens it `O_NOFOLLOW|O_NONBLOCK` and requires a regular file. Windows uses
+      `FILE_FLAG_OPEN_REPARSE_POINT` and refuses reparse points and directories.
+    - **Windows CI.** Tests close every provider that rotated, so the `LockFileEx` handle no longer blocks
+      `TempDir` cleanup.

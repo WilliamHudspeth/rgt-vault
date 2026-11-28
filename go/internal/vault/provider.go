@@ -54,3 +54,11 @@ type MasterRecovery interface {
 // keyLocator is implemented by providers that can name where the master
 // secret is kept (never the secret itself).
 type keyLocator interface{ Location() string }
+
+// RotationLocker is implemented by providers that need an exclusive lock
+// for a master rotation (RGT-522: the file provider's <key>.lock).
+// RotateMaster takes it before its database transaction, so a lock held
+// elsewhere fails the rotation fast, without the database write lock held.
+type RotationLocker interface {
+	LockForRotation() (unlock func(), err error)
+}

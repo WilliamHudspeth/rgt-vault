@@ -153,6 +153,7 @@ func TestFileProviderLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := mp.(*FileProvider)
+	t.Cleanup(func() { _ = p.Close() }) // Windows: release the lock handle before TempDir cleanup
 	if !strings.Contains(p.Location(), "<vault-id>.key") {
 		t.Fatalf("unbound location %q", p.Location())
 	}
@@ -322,6 +323,7 @@ func TestFileProviderRotationKeepsPrev(t *testing.T) {
 	path := filepath.Join(d, "master.key")
 	mp, _ := NewFileProvider(FileOptions{Path: path, Getenv: env(nil)})
 	p := mp.(*FileProvider)
+	t.Cleanup(func() { _ = p.Close() })
 	if err := p.BindVault("vault-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +372,9 @@ func TestFileProviderVaultBinding(t *testing.T) {
 	path := filepath.Join(d, "master.key")
 	newP := func() *FileProvider {
 		mp, _ := NewFileProvider(FileOptions{Path: path, Getenv: env(nil)})
-		return mp.(*FileProvider)
+		p := mp.(*FileProvider)
+		t.Cleanup(func() { _ = p.Close() })
+		return p
 	}
 	a := newP()
 	if err := a.BindVault("vault-a"); err != nil {
@@ -435,35 +439,69 @@ func boundPair(t *testing.T) (a, b *FileProvider, path string, oldKey []byte) {
 	return a, mk(), path, oldKey
 }
 
-// Review MED-1 (a): B confirms with the OLD key; A starts rotating between
-// B's comparison and B's removal of .prev. The key lock makes A wait, so
-// A's .prev survives. Without the lock in ConfirmMasterSecret, B removes the
-// .prev A has just written.
+// within runs fn and fails the test if it takes longer than d (a blocking
+// lock would otherwise hang the test binary for its whole timeout).
+func within(t *testing.T, d time.Duration, what string, fn func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { defer close(done); fn() }()
+	select {
+	case <-done:
+	case <-time.After(d):
+		t.Fatalf("%s did not return within %v (blocked on the key lock?)", what, d)
+	}
+}
+
+// Review MED-1 (a): while A rotates (A holds <key>.lock, .prev present), a
+// confirmation by another process B, even one that holds the current key,
+// returns at once and removes nothing; after A dies the old key is still in
+// .prev. Without the lock in ConfirmMasterSecret, B removes .prev.
 func TestConfirmCannotRemovePrevMidRotation(t *testing.T) {
 	a, b, path, oldKey := boundPair(t)
-	rotated := make(chan error, 1)
-	t.Cleanup(func() { confirmHook = nil })
-	confirmHook = func() {
-		confirmHook = nil
-		go func() { _, err := a.RotateMasterSecret(); rotated <- err }()
-		select {
-		case err := <-rotated: // only possible without B holding the lock
-			rotated <- err
-		case <-time.After(300 * time.Millisecond):
+	newKey, err := a.RotateMasterSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	within(t, 5*time.Second, "confirm during another process's rotation", func() {
+		if err := b.ConfirmMasterSecret("vault-1", newKey); err != nil {
+			t.Error(err)
 		}
-	}
-	if err := b.ConfirmMasterSecret("vault-1", oldKey); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-rotated; err != nil {
-		t.Fatal(err)
-	}
-	// "kill -9" of A during its re-wrap: the old key must still be there.
-	_ = a.Close()
+	})
+	_ = a.Close() // "kill -9" of A during its re-wrap
 	prev, err := b.PreviousMasterSecret()
 	if err != nil || !bytes.Equal(prev, oldKey) {
 		t.Fatalf("%s lost mid-rotation: %v", PrevPath(path), err)
 	}
+}
+
+// While B holds the key lock (between its comparison and its removal), a
+// rotation fails fast with ErrKeyLocked instead of hanging, and changes
+// nothing (review MED-B, provider side).
+func TestRotationFailsFastWhenKeyLocked(t *testing.T) {
+	a, b, path, oldKey := boundPair(t)
+	// A pending .prev (from a crashed rotation) makes B take the lock.
+	if _, err := a.RotateMasterSecret(); err != nil {
+		t.Fatal(err)
+	}
+	_ = a.Close()
+	oldWait := rotationLockWait
+	t.Cleanup(func() { rotationLockWait, confirmHook = oldWait, nil })
+	rotationLockWait = 200 * time.Millisecond
+	var rotErr error
+	confirmHook = func() {
+		confirmHook = nil
+		start := time.Now()
+		_, rotErr = a.RotateMasterSecret()
+		if time.Since(start) > 3*time.Second {
+			rotErr = errors.New("rotation waited too long")
+		}
+	}
+	cur, _ := b.GetMasterSecret()
+	within(t, 10*time.Second, "confirm", func() { _ = b.ConfirmMasterSecret("vault-1", cur) })
+	if !errors.Is(rotErr, ErrKeyLocked) || !strings.Contains(rotErr.Error(), LockPath(path)) {
+		t.Fatalf("rotation while the key is locked: %v", rotErr)
+	}
+	_ = oldKey
 }
 
 // Review MED-1 (b): A rotated and died before re-wrapping (lock released);
@@ -490,15 +528,14 @@ func TestConfirmKeepsPrevWhenKeyChanged(t *testing.T) {
 	}
 	other, _ := NewFileProvider(FileOptions{Path: a2.path, Getenv: env(nil), Warn: func(string) {}})
 	o := other.(*FileProvider)
+	t.Cleanup(func() { _ = o.Close() })
 	_ = o.BindVault("vault-1")
 	cur, _ := o.GetMasterSecret()
-	start := time.Now()
-	if err := o.ConfirmMasterSecret("vault-1", cur); err != nil {
-		t.Fatal(err)
-	}
-	if time.Since(start) > 2*time.Second {
-		t.Fatal("confirm waited for another process's rotation")
-	}
+	within(t, 2*time.Second, "confirm during another process's rotation", func() {
+		if err := o.ConfirmMasterSecret("vault-1", cur); err != nil {
+			t.Error(err)
+		}
+	})
 	if _, err := os.Stat(PrevPath(a2.path)); err != nil {
 		t.Fatal("confirm during another process's rotation removed .prev")
 	}
@@ -521,6 +558,7 @@ func TestPrevRemovedOnlyByOwningVault(t *testing.T) {
 	_ = a.Close()
 	mp, _ := NewFileProvider(FileOptions{Path: path, Getenv: env(nil)})
 	other := mp.(*FileProvider)
+	t.Cleanup(func() { _ = other.Close() })
 	other.path, other.vaultID = path, "vault-2" // even if BindVault were bypassed
 	if err := other.ConfirmMasterSecret("vault-2", newKey); err == nil {
 		t.Fatal("another vault confirmed the key")
@@ -593,5 +631,133 @@ func TestBindVaultReportsUnsafeDir(t *testing.T) {
 	err := mp.(*FileProvider).BindVault("vault-1")
 	if err == nil || strings.Contains(err.Error(), "vault binding") || !strings.Contains(err.Error(), "group-writable") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// Review MED-A: .prev is owned through its own sidecar. Even after
+// <key>.vault-id was removed (seal --force, or an operator "releasing" the
+// key) and another vault bound the key, that vault never removes .prev.
+func TestPrevOwnedByItsOwnSidecar(t *testing.T) {
+	a, _, path, oldKey := boundPair(t)
+	if _, err := a.RotateMasterSecret(); err != nil {
+		t.Fatal(err)
+	}
+	_ = a.Close() // crashed before the re-wrap: .prev is vault-1's only key
+	if b, _ := os.ReadFile(PrevOwnerPath(path)); strings.TrimSpace(string(b)) != "vault-1" {
+		t.Fatalf(".prev owner %q", b)
+	}
+	if err := os.Remove(VaultIDPath(path)); err != nil {
+		t.Fatal(err)
+	}
+	mp, _ := NewFileProvider(FileOptions{Path: path, Getenv: env(nil), Warn: func(string) {}})
+	b := mp.(*FileProvider)
+	t.Cleanup(func() { _ = b.Close() })
+	if err := b.BindVault("vault-2"); err != nil {
+		t.Fatal(err)
+	}
+	cur, _ := b.GetMasterSecret()
+	if err := b.ConfirmMasterSecret("vault-2", cur); err != nil {
+		t.Fatal(err)
+	}
+	if prev, err := b.PreviousMasterSecret(); err != nil || !bytes.Equal(prev, oldKey) {
+		t.Fatalf("vault-2 removed vault-1's .prev: %v", err)
+	}
+	// A .prev without an owner record is never removed either.
+	if err := os.Remove(PrevOwnerPath(path)); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.ConfirmMasterSecret("vault-2", cur); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(PrevPath(path)); err != nil {
+		t.Fatal("an ownerless .prev was removed")
+	}
+}
+
+// Review LOW (M7): a rotation of a key that was never confirmed binds it to
+// the rotating vault first.
+func TestRotationBindsFirst(t *testing.T) {
+	path := filepath.Join(secureDir(t), "master.key")
+	mp, _ := NewFileProvider(FileOptions{Path: path, Getenv: env(nil)})
+	p := mp.(*FileProvider)
+	t.Cleanup(func() { _ = p.Close() })
+	if err := p.BindVault("vault-9"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.BootstrapMasterSecret(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(VaultIDPath(path)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("bound before any confirmation")
+	}
+	if _, err := p.RotateMasterSecret(); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{VaultIDPath(path), PrevOwnerPath(path)} {
+		if b, err := os.ReadFile(f); err != nil || strings.TrimSpace(string(b)) != "vault-9" {
+			t.Fatalf("%s = %q, %v", f, b, err)
+		}
+	}
+}
+
+// Review MED-C: a key in a read-only directory (a Kubernetes/Docker secret
+// mount) opens: no lock file is needed without a .prev, and a binding that
+// cannot be written is only a warning.
+func TestConfirmReadOnlyKeyDir(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("Unix permissions, non-root")
+	}
+	for _, withBinding := range []bool{true, false} {
+		dir := filepath.Join(secureDir(t), "mount")
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, "k.key")
+		key := EncodeKeyFile(bytes.Repeat([]byte{0x81}, 32))
+		if err := os.WriteFile(path, key, 0o400); err != nil {
+			t.Fatal(err)
+		}
+		if withBinding {
+			if err := os.WriteFile(VaultIDPath(path), []byte("vault-ro\n"), 0o400); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Chmod(dir, 0o555); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+		var warned []string
+		mp, _ := NewFileProvider(FileOptions{Path: path, Getenv: env(nil), Warn: func(s string) { warned = append(warned, s) }})
+		p := mp.(*FileProvider)
+		if err := p.BindVault("vault-ro"); err != nil {
+			t.Fatal(err)
+		}
+		cur, err := p.GetMasterSecret()
+		if err != nil {
+			t.Fatal(err)
+		}
+		within(t, 2*time.Second, "confirm on a read-only dir", func() {
+			if err := p.ConfirmMasterSecret("vault-ro", cur); err != nil {
+				t.Errorf("binding=%v: confirm failed the open: %v", withBinding, err)
+			}
+		})
+		if _, err := os.Lstat(LockPath(path)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("a lock file was needed")
+		}
+		if !withBinding && len(warned) == 0 {
+			t.Error("no warning for the unwritable binding")
+		}
+	}
+}
+
+// Review MED-C: without a .prev, confirming takes no lock and creates no
+// lock file (opens never depend on a writable key directory).
+func TestConfirmWithoutPrevTakesNoLock(t *testing.T) {
+	_, b, path, oldKey := boundPair(t)
+	if err := b.ConfirmMasterSecret("vault-1", oldKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(LockPath(path)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("lock file created without a .prev: %v", err)
 	}
 }

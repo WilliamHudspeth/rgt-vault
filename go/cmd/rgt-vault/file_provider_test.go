@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/secfile"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
@@ -793,5 +794,102 @@ func TestInitFailureOnExistingVaultRemovesNothing(t *testing.T) {
 	}
 	if _, err := os.Stat(keyPath); err != nil {
 		t.Fatal("init removed the existing vault's key")
+	}
+}
+
+// Review MED-A: after a rotation died (k.prev is vault A's only key),
+// `seal file --force` refuses instead of replacing the key; .prev is intact.
+func TestSealForceRefusedWhilePrevPending(t *testing.T) {
+	e := newFileEnv(t)
+	keyPath := filepath.Join(e.home, "keys", "master.key")
+	e.mustInit("--master-key-file", keyPath)
+	st, prov, err := openFileStack(t, e.db, keyPath, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prov.(vault.Rotator).RotateMasterSecret(); err != nil { // then "kill -9"
+		t.Fatal(err)
+	}
+	_ = st.Close()
+	_ = prov.(*providers.FileProvider).Close()
+	prevBefore, _ := os.ReadFile(providers.PrevPath(keyPath))
+	code, _, stderr := runCLI(t, "", "provider", "seal", "file", "--generate", "--force", "--out", keyPath)
+	if code == 0 || !strings.Contains(stderr, "unfinished master-key rotation") {
+		t.Fatalf("seal --force with a pending .prev: %d %q", code, stderr)
+	}
+	if got, _ := os.ReadFile(providers.PrevPath(keyPath)); !bytes.Equal(got, prevBefore) {
+		t.Fatal(".prev changed")
+	}
+	if _, err := os.Stat(providers.VaultIDPath(keyPath)); err != nil {
+		t.Fatal("the binding was removed")
+	}
+	// The documented recovery still works.
+	if err := os.Rename(providers.PrevPath(keyPath), keyPath); err != nil {
+		t.Fatal(err)
+	}
+	st, _, err = openFileStack(t, e.db, keyPath, "")
+	if err != nil {
+		t.Fatalf("recovery: %v", err)
+	}
+	_ = st.Close()
+}
+
+// Review MED-B: with <key>.lock held by another process, a master rotation
+// fails fast (bounded wait), changes nothing, and does not hold the
+// database write lock while it waits: another writer succeeds meanwhile.
+func TestRotateMasterFailsFastWhenKeyLocked(t *testing.T) {
+	e := newFileEnv(t)
+	keyPath := filepath.Join(e.home, "keys", "master.key")
+	e.mustInit("--master-key-file", keyPath)
+	policy := writePolicy(t, e.home)
+	st, prov, err := openFileStack(t, e.db, keyPath, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	t.Cleanup(func() { _ = prov.(*providers.FileProvider).Close() })
+	other, _, err := openFileStack(t, e.db, keyPath, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	before := assertKeyFile(t, keyPath)
+	epoch := st.Vault.KeyEpoch()
+
+	unlock, err := secfile.Lock(providers.LockPath(keyPath)) // "another process"
+	if err != nil {
+		t.Fatal(err)
+	}
+	rot := make(chan error, 1)
+	start := time.Now()
+	go func() { rot <- st.Vault.RotateMaster(context.Background()) }()
+	time.Sleep(300 * time.Millisecond) // the rotation is waiting for the key lock now
+	wstart := time.Now()
+	if err := other.Vault.SetSecret(context.Background(), vault.SetSecretRequest{Name: "k", Namespace: "n", Agent: "system", Purpose: "t", Value: []byte("v")}); err != nil {
+		t.Fatalf("another writer during the rotation's wait: %v", err)
+	}
+	// Not stuck behind a rotation transaction (busy_timeout is 5 s).
+	if d := time.Since(wstart); d > 2*time.Second {
+		t.Fatalf("another writer waited %v: the rotation held the database write lock while waiting for the key lock", d)
+	}
+	var rerr error
+	select {
+	case rerr = <-rot:
+	case <-time.After(20 * time.Second):
+		t.Fatal("rotation hung on a held key lock")
+	}
+	unlock()
+	if !errors.Is(rerr, providers.ErrKeyLocked) || time.Since(start) > 15*time.Second {
+		t.Fatalf("rotation with the key locked: %v after %v", rerr, time.Since(start))
+	}
+	if got := assertKeyFile(t, keyPath); !bytes.Equal(got, before) || st.Vault.KeyEpoch() != epoch {
+		t.Fatal("a refused rotation changed the key or the epoch")
+	}
+	if _, err := os.Stat(providers.PrevPath(keyPath)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(".prev written by a refused rotation")
+	}
+	// And it works once the lock is free.
+	if err := st.Vault.RotateMaster(context.Background()); err != nil {
+		t.Fatalf("rotation after the lock was released: %v", err)
 	}
 }

@@ -79,6 +79,22 @@ func newSealFileCmd(stdout io.Writer) *cobra.Command {
 			}
 			write := secfile.CreateSecret
 			if force {
+				// Hold the key's lock for the whole replacement and refuse
+				// while a rotation is unresolved (review MED-A): <key>.prev
+				// may be the only key that opens its vault.
+				if _, err := os.Stat(path); err == nil {
+					unlock, err := secfile.TryLock(providers.LockPath(path), 5*time.Second)
+					if err != nil {
+						return fmt.Errorf("refusing to replace %s: %w (another rgt-vault process may be rotating it)", path, err)
+					}
+					defer unlock()
+				}
+				if _, err := os.Lstat(providers.PrevPath(path)); err == nil {
+					return fmt.Errorf("refusing to replace %s: %s exists, the key from an unfinished master-key rotation, "+
+						"which may be the only key that opens its vault. Resolve the rotation first: open that vault (it "+
+						"recovers or confirms and removes %s), or follow the recovery hint it prints (mv %s %s)",
+						path, providers.PrevPath(path), providers.PrevPath(path), providers.PrevPath(path), path)
+				}
 				write = secfile.ReplaceSecret
 				// The key being replaced may be a live vault's only key: keep it
 				// under a name nothing ever removes automatically (review

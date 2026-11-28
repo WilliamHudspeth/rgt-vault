@@ -222,3 +222,26 @@ func TestSecurityAttributesSize(t *testing.T) {
 		t.Fatalf("securityAttributesSize = %d, sizeof(SecurityAttributes) = %d", securityAttributesSize, got)
 	}
 }
+
+func TestLockRefusesReparseAndDir(t *testing.T) {
+	d := keyDir(t)
+	dir := filepath.Join(d, "dir.lock")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Lock(dir); err == nil {
+		t.Fatal("Lock(dir) succeeded")
+	}
+	target := filepath.Join(d, "target")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(d, "link.lock")
+	if err := os.Symlink(target, link); err != nil {
+		t.Logf("symlink not permitted (%v); skipping the reparse row", err)
+		return
+	}
+	if _, err := Lock(link); !errors.Is(err, ErrInsecure) {
+		t.Fatalf("Lock(symlink) = %v", err)
+	}
+}

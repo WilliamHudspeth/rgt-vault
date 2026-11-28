@@ -500,3 +500,28 @@ func TestLockRefusesSymlink(t *testing.T) {
 		t.Fatal("the symlink target was created")
 	}
 }
+
+func TestLockRefusesNonRegular(t *testing.T) {
+	d := keyDir(t)
+	fifo := filepath.Join(d, "fifo.lock")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("mkfifo: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := Lock(fifo); done <- err }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrInsecure) || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("Lock(fifo) = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Lock hung on a FIFO")
+	}
+	dir := filepath.Join(d, "dir.lock")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Lock(dir); err == nil {
+		t.Fatal("Lock(dir) succeeded")
+	}
+}

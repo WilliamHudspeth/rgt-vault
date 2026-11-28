@@ -303,9 +303,18 @@ func lockFile(path string, nonBlocking bool) (func(), error) {
 		return nil, err
 	}
 	h, err := windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, sa, windows.OPEN_ALWAYS, windows.FILE_ATTRIBUTE_NORMAL, 0)
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, sa, windows.OPEN_ALWAYS, windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if err != nil {
 		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
+		_ = windows.CloseHandle(h)
+		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+	if info.FileAttributes&(windows.FILE_ATTRIBUTE_REPARSE_POINT|windows.FILE_ATTRIBUTE_DIRECTORY) != 0 {
+		_ = windows.CloseHandle(h)
+		return nil, insecure("lock file %s is a reparse point or a directory", path)
 	}
 	ol := new(windows.Overlapped)
 	flags := uint32(windows.LOCKFILE_EXCLUSIVE_LOCK)

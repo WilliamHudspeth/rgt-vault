@@ -115,6 +115,13 @@ func (v *Vault) RotateMaster(ctx context.Context) error {
 		return err
 	}
 
+	if l, ok := v.provider.(RotationLocker); ok { // before the transaction (RGT-522 review MED-B)
+		unlock, err := l.LockForRotation()
+		if err != nil {
+			return err
+		}
+		defer unlock()
+	}
 	oldMaster, err := v.provider.GetMasterSecret()
 	if err != nil {
 		return err

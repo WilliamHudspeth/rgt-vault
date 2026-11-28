@@ -84,7 +84,7 @@ type FileProvider struct {
 	explicit bool
 	vaultID  string
 	created  []string // files this process created (init cleans them up on failure)
-	held     func()   // releases <key>.lock, held from RotateMasterSecret to ConfirmMasterSecret
+	held     func()   // releases <key>.lock, held from LockForRotation to ConfirmMasterSecret/Close
 	opts     secfile.Options
 }
 
@@ -207,9 +207,19 @@ func (p *FileProvider) BindVault(vaultID string) error {
 		return fmt.Errorf("%w: master key file %s belongs to vault %s, not to this vault (%s): two vaults must not "+
 			"share a key file (rotating one would lock the other out). Give this vault its own key file. If vault %s "+
 			"is really gone (check before you do this: its data cannot be opened without this key), remove %s to "+
-			"release the key", ErrMasterSecretUnavailable, p.path, owner, vaultID, owner, VaultIDPath(p.path))
+			"release the key%s", ErrMasterSecretUnavailable, p.path, owner, vaultID, owner, VaultIDPath(p.path), prevWarning(p.path))
 	}
 	return nil
+}
+
+// prevWarning warns, in the "release the key" advice, when a rotation of
+// the key is unresolved.
+func prevWarning(keyPath string) string {
+	if _, err := os.Lstat(PrevPath(keyPath)); err != nil {
+		return ""
+	}
+	return ". Do NOT do this now: " + PrevPath(keyPath) + " exists (the previous key of an unfinished " +
+		"rotation, which that vault may still need): open that vault first"
 }
 
 func dirExists(dir string) bool {
@@ -302,12 +312,19 @@ func (p *FileProvider) BootstrapMasterSecret() error {
 // key file across processes (never removed).
 func LockPath(keyPath string) string { return keyPath + ".lock" }
 
+// PrevOwnerPath records which vault a <key>.prev belongs to. Removing
+// <key>.prev depends on it, never on <key>.vault-id (which seal --force and
+// an operator releasing a key may delete).
+func PrevOwnerPath(keyPath string) string { return keyPath + ".prev.vault-id" }
+
 // Seams for tests.
 var (
 	replaceSecret = secfile.ReplaceSecret
 	// confirmHook runs inside ConfirmMasterSecret, under the key lock,
 	// between the comparison and the removal of <key>.prev.
 	confirmHook func()
+	// rotationLockWait bounds how long a rotation waits for <key>.lock.
+	rotationLockWait = 5 * time.Second
 )
 
 // confirmLockTimeout is how long ConfirmMasterSecret waits for the key
@@ -316,19 +333,8 @@ var (
 // reason to wait for another process's rotation. A seam for tests.
 var confirmLockTimeout time.Duration
 
-// lockKey takes the key lock unless this provider already holds it (from
-// RotateMasterSecret until ConfirmMasterSecret). The returned function
-// releases a lock taken here; it is a no-op otherwise. A negative wait
-// blocks.
-func (p *FileProvider) lockKey(wait time.Duration) (func(), error) {
-	if p.held != nil {
-		return func() {}, nil
-	}
-	if wait >= 0 {
-		return secfile.TryLock(LockPath(p.path), wait)
-	}
-	return secfile.Lock(LockPath(p.path))
-}
+// ErrKeyLocked means another process holds <key>.lock.
+var ErrKeyLocked = errors.New("the master key file is locked by another rgt-vault process")
 
 // Close releases the key lock a rotation still holds (it is also released
 // when the process ends). The provider stays usable.
@@ -337,7 +343,7 @@ func (p *FileProvider) Close() error {
 	return nil
 }
 
-// releaseRotationLock drops the lock held since RotateMasterSecret.
+// releaseRotationLock drops the lock held since LockForRotation.
 func (p *FileProvider) releaseRotationLock() {
 	if p.held != nil {
 		p.held()
@@ -345,32 +351,54 @@ func (p *FileProvider) releaseRotationLock() {
 	}
 }
 
-// RotateMasterSecret keeps the current key as <key>.prev, then writes a new
-// key to a temp file beside the old one and renames it over it.
-//
-// It takes <key>.lock and KEEPS it until ConfirmMasterSecret (or until the
-// process ends): no other process can confirm, and so remove <key>.prev,
-// while the re-wrapped keychain is being written (review MED-1). <key>.prev
-// is removed only by ConfirmMasterSecret, under the lock, when the key file
-// still holds the secret that unwrapped the keychain. A crash before the
-// re-wrapped keychain is on disk leaves the old key in <key>.prev.
-//
-// The vault calls it only after the current key has unwrapped the keychain
-// (vault.RotateMaster loads it first), so the key saved as .prev is good.
-func (p *FileProvider) RotateMasterSecret() ([]byte, error) {
+// LockForRotation takes <key>.lock for a master rotation, waiting at most a
+// few seconds, and returns its release function. vault.RotateMaster calls it
+// BEFORE its database transaction (review MED-B), so a lock held elsewhere
+// fails the rotation fast and cleanly instead of stalling with the database
+// write lock held. While it is held, no other process can remove <key>.prev.
+func (p *FileProvider) LockForRotation() (func(), error) {
 	if err := p.bound(); err != nil {
 		return nil, err
 	}
-	unlock, err := p.lockKey(-1)
+	if p.held != nil {
+		return func() {}, nil
+	}
+	unlock, err := secfile.TryLock(LockPath(p.path), rotationLockWait)
+	if errors.Is(err, secfile.ErrLockTimeout) {
+		return nil, fmt.Errorf("%w: another rgt-vault process holds %s (a master-key rotation in progress, or a "+
+			"process whose rotation failed, until it exits); nothing was changed, try again later", ErrKeyLocked, LockPath(p.path))
+	}
 	if err != nil {
+		return nil, fmt.Errorf("lock the master key file for rotation: %w", err)
+	}
+	p.held = unlock
+	return p.releaseRotationLock, nil
+}
+
+// RotateMasterSecret keeps the current key as <key>.prev (owned by this
+// vault, <key>.prev.vault-id), then writes a new key to a temp file beside
+// the old one and renames it over it. It needs <key>.lock: taken by
+// LockForRotation (the vault) or here, with the same bounded wait, and then
+// held until ConfirmMasterSecret or Close. <key>.prev is removed only by
+// ConfirmMasterSecret; a crash before the re-wrapped keychain is on disk
+// leaves the old key in <key>.prev.
+//
+// The vault calls it only after the current key has unwrapped the keychain
+// (vault.RotateMaster loads it first), so the key saved as .prev is good.
+func (p *FileProvider) RotateMasterSecret() (raw []byte, err error) {
+	if err := p.bound(); err != nil {
 		return nil, err
 	}
-	ok := false
-	defer func() {
-		if !ok {
-			unlock()
+	if p.held == nil {
+		if _, err := p.LockForRotation(); err != nil {
+			return nil, err
 		}
-	}()
+		defer func() { // taken here: keep it only for a rotation that happened
+			if err != nil {
+				p.releaseRotationLock()
+			}
+		}()
+	}
 	owner, err := p.boundVault()
 	if err != nil {
 		return nil, err
@@ -383,11 +411,21 @@ func (p *FileProvider) RotateMasterSecret() ([]byte, error) {
 		return nil, fmt.Errorf("file provider: refusing to rotate: %s exists from an earlier rotation that was not "+
 			"confirmed. Re-open the vault once (that removes it when the current key works), or check it and remove it", prev)
 	}
-	if owner == "" { // bind first: .prev may only ever be removed by this vault
+	if owner == "" { // bind first: the key belongs to this vault from now on
 		if err := secfile.CreateSecret(VaultIDPath(p.path), []byte(p.vaultID+"\n")); err != nil {
 			return nil, fmt.Errorf("record the vault of the master key file: %w", err)
 		}
 	}
+	// The owner of .prev is written before .prev and removed after it.
+	if err := secfile.ReplaceSecret(PrevOwnerPath(p.path), []byte(p.vaultID+"\n")); err != nil {
+		return nil, fmt.Errorf("record the vault of the previous master key: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = os.Remove(prev) // the old key is still in place
+			_ = os.Remove(PrevOwnerPath(p.path))
+		}
+	}()
 	old, err := secfile.OpenSecret(p.path, p.opts)
 	if err != nil {
 		return nil, fmt.Errorf("read the current master key file: %w", err)
@@ -397,22 +435,15 @@ func (p *FileProvider) RotateMasterSecret() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("keep the previous master key: %w", err)
 	}
-	raw, err := newMasterSecret()
-	if err != nil {
-		_ = os.Remove(prev)
+	if raw, err = newMasterSecret(); err != nil {
 		return nil, err
 	}
 	text := EncodeKeyFile(raw)
 	defer Wipe(text)
-	if err := replaceSecret(p.path, text); err != nil {
+	if err = replaceSecret(p.path, text); err != nil {
 		Wipe(raw)
-		_ = os.Remove(prev) // the old key is still in place
 		return nil, fmt.Errorf("write master key file: %w", err)
 	}
-	if p.held == nil {
-		p.held = unlock // held until ConfirmMasterSecret
-	}
-	ok = true
 	return raw, nil
 }
 
@@ -426,30 +457,24 @@ func (p *FileProvider) PreviousMasterSecret() ([]byte, error) {
 	})
 }
 
+func (p *FileProvider) warn(msg string) {
+	if p.opts.Warn != nil {
+		p.opts.Warn("WARNING: " + msg)
+	}
+}
+
 // ConfirmMasterSecret is called once master has unwrapped the keychain of
-// vaultID. Under <key>.lock it records the binding in <key>.vault-id (once)
-// and removes <key>.prev, but only when the key file still holds master and
-// the key is bound to vaultID: a process that opened the vault with the OLD
-// key while another rotates must never remove the new rotation's .prev
-// (review MED-1), and another vault never removes this vault's (MED-2).
+// vaultID. It records the binding in <key>.vault-id (once) and, if a
+// <key>.prev exists, removes it under <key>.lock, but only when the key file
+// still holds master and <key>.prev.vault-id names vaultID: a process that
+// opened the vault with the OLD key while another rotates never removes the
+// new rotation's .prev (MED-1), and no other vault ever removes this vault's
+// (MED-2, MED-A). It never fails an open over the lock or a read-only key
+// directory (MED-C): it then skips, which removes nothing.
 func (p *FileProvider) ConfirmMasterSecret(vaultID string, master []byte) error {
 	if err := p.bound(); err != nil {
 		return err
 	}
-	unlock, err := p.lockKey(confirmLockTimeout)
-	if errors.Is(err, secfile.ErrLockTimeout) {
-		// Another process holds the key for a rotation (possibly a failed
-		// one, until it exits): skip; nothing is removed.
-		if p.opts.Warn != nil {
-			p.opts.Warn("WARNING: " + LockPath(p.path) + " is held by another process (a master-key rotation?); " +
-				"not confirming the master key now")
-		}
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	defer unlock()
 	defer p.releaseRotationLock()
 
 	owner, err := p.boundVault()
@@ -465,13 +490,28 @@ func (p *FileProvider) ConfirmMasterSecret(vaultID string, master []byte) error 
 			if owner, err = p.boundVault(); err != nil {
 				return err
 			}
-		default:
-			return fmt.Errorf("record the vault of the master key file: %w", err)
+		default: // e.g. a read-only secret mount: the key works, binding is skipped
+			p.warn("could not record the vault of the master key file (" + err.Error() + ")")
+			owner = vaultID
 		}
 	}
 	if owner != vaultID {
 		return fmt.Errorf("%w: master key file %s is bound to vault %s, not %s", ErrMasterSecretUnavailable, p.path, owner, vaultID)
 	}
+	prev := PrevPath(p.path)
+	if _, err := os.Lstat(prev); err != nil {
+		return nil // nothing to remove: no lock needed (if .prev appears now, it is not removed)
+	}
+	unlock := func() {}
+	if p.held == nil {
+		u, err := secfile.TryLock(LockPath(p.path), confirmLockTimeout)
+		if err != nil {
+			p.warn("not removing " + prev + " now: " + err.Error())
+			return nil
+		}
+		unlock = u
+	}
+	defer unlock()
 	cur, err := readKeyFile(p.path, p.opts, func() error { return fs.ErrNotExist })
 	same := err == nil && subtle.ConstantTimeCompare(cur, master) == 1
 	Wipe(cur)
@@ -481,9 +521,16 @@ func (p *FileProvider) ConfirmMasterSecret(vaultID string, master []byte) error 
 	if !same {
 		return nil // the key changed since master was read: keep .prev
 	}
-	if err := os.Remove(PrevPath(p.path)); err != nil && !errors.Is(err, fs.ErrNotExist) && p.opts.Warn != nil {
-		p.opts.Warn("WARNING: could not remove the previous master key " + PrevPath(p.path) + ": " + err.Error())
+	prevOwner, err := secfile.OpenSecret(PrevOwnerPath(p.path), secfile.Options{MaxSize: 256, InsecureACL: p.opts.InsecureACL, Warn: p.opts.Warn})
+	if err != nil || strings.TrimSpace(string(prevOwner)) != vaultID {
+		p.warn("keeping " + prev + ": it is not recorded as this vault's previous key")
+		return nil
 	}
+	if err := os.Remove(prev); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		p.warn("could not remove the previous master key " + prev + ": " + err.Error())
+		return nil
+	}
+	_ = os.Remove(PrevOwnerPath(p.path))
 	return nil
 }
 

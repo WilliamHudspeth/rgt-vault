@@ -224,9 +224,20 @@ func Lock(path string) (func(), error) {
 func tryLockOnce(path string) (func(), error) { return lockFile(path, true) }
 
 func lockFile(path string, nonBlocking bool) (func(), error) {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+	// O_NONBLOCK: a FIFO planted at the path must not hang the open.
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
 	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, insecure("lock file %s is a symlink", path)
+		}
 		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		_ = f.Close()
+		if err != nil {
+			return nil, fmt.Errorf("lock %s: %w", path, err)
+		}
+		return nil, insecure("lock file %s is not a regular file (%s)", path, fi.Mode().Type())
 	}
 	how := syscall.LOCK_EX
 	if nonBlocking {
