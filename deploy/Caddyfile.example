@@ -1,0 +1,69 @@
+# Hardened Caddy v2 TLS reverse proxy for rgt-vault (RGT-251, 455, 456, 457).
+#
+# The daemon stays on 127.0.0.1:8765 over plain HTTP; Caddy terminates TLS and
+# gets/renews the certificate itself (ACME), so there is no key file to
+# protect by hand and no renewal cron. Replace vault.example.com. Run:
+#   caddy validate --config Caddyfile && systemctl reload caddy
+#
+# Caddy's defaults already give TLS 1.2+ with ECDHE AEAD suites, OCSP stapling
+# and automatic HTTP -> HTTPS redirects; the block below pins them explicitly
+# so a future default change cannot weaken the deployment unnoticed.
+
+{
+	# Only this CA may issue for the name (also publish a CAA record that says
+	# the same: docs/guides/tls.md "CAA and revocation").
+	# acme_ca https://acme-v02.api.letsencrypt.org/directory
+	# email security@example.com
+	servers {
+		protocols h1 h2
+	}
+}
+
+vault.example.com {
+	tls {
+		protocols tls1.2 tls1.3
+		ciphers TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+		curves x25519mlkem768 x25519 secp256r1 secp384r1
+
+		# Optional mutual TLS for server-to-server clients (RGT-458). The
+		# bearer token is still required.
+		# client_auth {
+		#	mode require_and_verify
+		#	trust_pool file /etc/caddy/rgt-clients-ca.pem
+		# }
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options    "nosniff"
+		Cache-Control             "no-store"
+		-Server
+	}
+
+	request_body {
+		max_size 1MB
+	}
+
+	reverse_proxy 127.0.0.1:8765 {
+		# Overwrite, never append: the daemon ignores forwarded headers, they
+		# are for logs only.
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto https
+		# An approval request holds the response up to --approval-timeout.
+		transport http {
+			response_header_timeout 180s
+		}
+		flush_interval -1
+	}
+
+	log {
+		# Authorization is never logged by default; keep it that way.
+		output file /var/log/caddy/rgt-vault.access.log
+		format filter {
+			request>headers>Authorization delete
+			request>uri query {
+				delete token
+			}
+		}
+	}
+}
