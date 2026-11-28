@@ -63,7 +63,7 @@ func TestDefaults(t *testing.T) {
 	if len(cfg.origins) != 0 {
 		t.Errorf("CORS must default to empty allow-list, got %v", cfg.origins)
 	}
-	if cfg.approvalTimeout != 120*time.Second || cfg.requireApproval || cfg.allowPrivateNetwork || cfg.allowNonL {
+	if cfg.approvalTimeout != 120*time.Second || cfg.requireApproval || cfg.allowPrivateNetwork || cfg.allowInsecure {
 		t.Errorf("defaults: %+v", cfg)
 	}
 }

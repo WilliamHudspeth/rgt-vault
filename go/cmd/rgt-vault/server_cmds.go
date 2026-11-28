@@ -10,14 +10,15 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"rgt-vault-server/internal/mcp"
-	"rgt-vault-server/internal/netguard"
+	"rgt-vault-server/internal/transport"
 	"rgt-vault-server/internal/tui"
 )
 
 // runMCP serves MCP on in/out. out is the protocol channel; backend error
 // details go to errOut (the command's stderr), never to out.
-func runMCP(host, token, agent string, in io.Reader, out, errOut io.Writer) error {
+func runMCP(host string, rt http.RoundTripper, token, agent string, in io.Reader, out, errOut io.Writer) error {
 	s := mcp.NewServer(host, token)
+	s.SetTransport(rt)
 	if err := s.SetAgent(agent); err != nil {
 		return fmt.Errorf("agent label (--agent / RGT_VAULT_MCP_AGENT): %w", err)
 	}
@@ -25,19 +26,17 @@ func runMCP(host, token, agent string, in io.Reader, out, errOut io.Writer) erro
 	return s.Serve(in, out)
 }
 
-func runTUI(host, token, namespace string) error {
+func runTUI(host string, rt http.RoundTripper, token, namespace string) error {
 	client := tui.NewHTTPClient(host, token)
+	client.SetTransport(rt)
 	m := tui.New(client, namespace)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }
 
-func runStatus(host string, out io.Writer) error {
-	client := &http.Client{
-		Timeout:   5 * time.Second,
-		Transport: &http.Transport{DialContext: netguard.NewDialer(true).DialContext},
-	}
+func runStatus(host string, rt http.RoundTripper, out io.Writer) error {
+	client := &http.Client{Timeout: 5 * time.Second, Transport: rt, CheckRedirect: transport.NoRedirect}
 	resp, err := client.Get(host + "/healthz")
 	if err != nil {
 		fmt.Fprintf(out, "Server unreachable: %s\n", host)
