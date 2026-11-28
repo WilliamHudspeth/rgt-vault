@@ -492,7 +492,7 @@ func TestKeyFiles(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		data []byte
-	}{{"pub.pem", pemOf(t, "PUBLIC KEY", pubDER)}, {"pub.raw", pub}} {
+	}{{"pub.pem", pemOf(t, "PUBLIC KEY", pubDER)}} {
 		got, err := LoadEd25519PublicKeyFile(writeKey(t, c.name, c.data, 0o644))
 		if err != nil || !got.Equal(pub) {
 			t.Fatalf("%s: %v", c.name, err)
@@ -519,6 +519,7 @@ func TestKeyFiles(t *testing.T) {
 		{"garbage DER", pemOf(t, "PUBLIC KEY", []byte{1, 2, 3}), 0o644},
 		{"cert block", pemOf(t, "CERTIFICATE", []byte{1}), 0o644},
 		{"trailing data", append(pemOf(t, "PUBLIC KEY", pubDER), "junk"...), 0o644},
+		{"raw 32 bytes (could be a private seed)", pub, 0o600},
 		{"raw 33 bytes", append(append([]byte(nil), pub...), '\n'), 0o644},
 		{"hex text", []byte(hex.EncodeToString(pub)), 0o644},
 		{"too large", bytes.Repeat([]byte{'a'}, maxKeyFile+1), 0o644},
@@ -629,3 +630,108 @@ func FuzzEd25519Verify(f *testing.F) {
 // (same seed, json.dumps(sort_keys=True, separators=(",", ":")) payload,
 // SigningContextV3 prefix): see docs/design/asymmetric-tokens.md.
 const v3VectorToken = "eyJhZ2VudF9pZCI6ImFnZW50LVx1MDBlOSIsImNhcGFiaWxpdHkiOiJzZWNyZXRzLnVzZSIsImNhcGFiaWxpdHlfdmVyc2lvbiI6MiwiY29udGV4dF9iaW5kaW5ncyI6eyJ1cmwiOiJodHRwczovL3gvP2E9MSZiPTwyPiJ9LCJleHAiOjE5MDAwMDAzMDAsImtpZCI6ImsxIiwidiI6M30.hPAd_eckxbdji095r-6wquU14EsZ8ZV_ACMZXvkyOdRgx2a2S5-nkCgUR1C0ZbYbTNQKrXSvNtgSm0XLOpqABQ"
+
+// TestRejectWeakPublicKeys (review MED-3): every small-order and
+// non-canonical encoding is refused by the constructor and the loader, and
+// the identity key really would have accepted a forgery.
+func TestRejectWeakPublicKeys(t *testing.T) {
+	var weak [][]byte
+	weak = append(weak, smallOrderKeys...)
+	// Non-canonical y >= p, with and without the sign bit.
+	for _, lo := range []byte{0xed, 0xee, 0xf0, 0xff} {
+		for _, hi := range []byte{0x7f, 0xff} {
+			k := bytes.Repeat([]byte{0xff}, 32)
+			k[0], k[31] = lo, hi
+			weak = append(weak, k)
+		}
+	}
+	if len(smallOrderKeys) != 10 {
+		t.Fatalf("blocklist has %d entries", len(smallOrderKeys))
+	}
+	for _, k := range weak {
+		if _, err := NewEd25519Verifier(map[string]ed25519.PublicKey{"k": k}); !errors.Is(err, ErrValidation) {
+			t.Errorf("weak key %x accepted: %v", k, err)
+		}
+		// Through a PEM file as well (x509 accepts any 32 bytes).
+		der, err := x509.MarshalPKIXPublicKey(ed25519.PublicKey(k))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadEd25519PublicKeyFile(writeKey(t, "w.pem", pemOf(t, "PUBLIC KEY", der), 0o644)); !errors.Is(err, ErrValidation) {
+			t.Errorf("weak key %x loaded from PEM: %v", k, err)
+		}
+	}
+	// Boundary: y = p - 1 (ec ff.. 7f) is the order-2 point (listed);
+	// y = p - 2 is canonical and not small order, so it passes the check.
+	edge := bytes.Repeat([]byte{0xff}, 32)
+	edge[0], edge[31] = 0xeb, 0x7f
+	if nonCanonicalY(edge) || checkPublicKey(edge) != nil {
+		t.Fatal("y = p-2 wrongly refused")
+	}
+	// Why it matters: with the identity key, R = identity and S = 0 is a
+	// valid signature for ANY message under Go's verifier.
+	identity := ed25519.PublicKey(smallOrderKeys[0])
+	sig := append(append([]byte(nil), smallOrderKeys[0]...), make([]byte, 32)...)
+	if !ed25519.Verify(identity, []byte("anything"), sig) {
+		t.Skip("this Go version rejects the identity forgery itself; the check is still required for other small-order keys")
+	}
+	zero := ed25519.PublicKey(make([]byte, 32))
+	if !ed25519.Verify(zero, []byte("x"), make([]byte, 64)) {
+		t.Log("all-zero forgery not accepted by this Go version")
+	}
+	// Real keys never trip the check.
+	for i := 0; i < 200; i++ {
+		pub, _, _ := ed25519.GenerateKey(rand.Reader)
+		if err := checkPublicKey(pub); err != nil {
+			t.Fatalf("generated key refused: %v", err)
+		}
+	}
+}
+
+// TestV3UntrustedKidSignedByTrustedKey (review LOW-1): a token signed by a
+// trusted private key but carrying a kid the verifier does not trust is
+// refused; the kid is never ignored or defaulted.
+func TestV3UntrustedKidSignedByTrustedKey(t *testing.T) {
+	_, v := newPair(t, "a")
+	rogue, err := NewEd25519Signer(testSeed("a"), "not-trusted", WithEd25519Clock(v3Clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.Verify(mustSign(t, rogue, nil)); !errors.Is(err, ErrSignature) {
+		t.Fatalf("untrusted kid: %v", err)
+	}
+}
+
+// TestV3Strictness (review LOW-5): v3 refuses duplicate keys and exp <= 0;
+// v2 keeps Python's behaviour byte for byte.
+func TestV3Strictness(t *testing.T) {
+	s, v := newPair(t, "a")
+	sign := func(p string) string { return reseal([]byte(p), ed25519.Sign(s.priv, signingInputV3([]byte(p)))) }
+	kid := `"kid":"` + s.KeyID() + `"`
+	base := `"agent_id":"a","capability":"c","capability_version":1,"context_bindings":{},` + kid + `,"v":3`
+	for _, c := range []struct{ name, payload string }{
+		{"duplicate top-level key", `{"agent_id":"b",` + base + `,"exp":1900000060}`},
+		{"duplicate exp", `{` + base + `,"exp":1,"exp":1900000060}`},
+		{"duplicate nested key", `{"agent_id":"a","capability":"c","capability_version":1,"context_bindings":{"x":1,"x":2},` + kid + `,"v":3,"exp":1900000060}`},
+		{"duplicate via escape", `{"agent_id":"a","agent\u005fid":"b","capability":"c","capability_version":1,"context_bindings":{},` + kid + `,"v":3,"exp":1900000060}`},
+		{"duplicate in array object", `{"agent_id":"a","capability":"c","capability_version":1,"context_bindings":{"l":[{"k":1,"k":2}]},` + kid + `,"v":3,"exp":1900000060}`},
+		{"exp zero", `{` + base + `,"exp":0}`},
+		{"exp negative", `{` + base + `,"exp":-5}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := v.Verify(sign(c.payload)); !errors.Is(err, ErrMalformed) {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+	if _, err := v.Verify(sign(`{` + base + `,"exp":1900000060,"context_bindings2":{"l":[{"k":1},{"k":2}]}}`)); err != nil {
+		t.Fatalf("same key in sibling objects is not a duplicate: %v", err)
+	}
+	// v2 unchanged: duplicate keys still parse last-wins, exp 0 still never expires.
+	h, _ := NewHMACTokenVerifier(bytes.Repeat([]byte{3}, 32), WithClock(v3Clock))
+	p2 := []byte(`{"agent_id":"x","agent_id":"a","capability":"c","capability_version":1,"context_bindings":{},"exp":0,"v":2}`)
+	tok, err := h.Verify(reseal(p2, h.mac(p2)))
+	if err != nil || tok.AgentID != "a" || tok.ExpiresAt != 0 {
+		t.Fatalf("v2 behaviour changed: %+v %v", tok, err)
+	}
+}

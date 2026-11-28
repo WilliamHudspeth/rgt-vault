@@ -12,7 +12,85 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
+	"sync"
+	"time"
+	"unicode/utf8"
 )
+
+// Honey audit flood limits (RGT-30 review MED-1). Within one window an agent
+// gets a HONEY_CAPABILITY_TRIGGERED row for each of its first
+// HoneyAuditPerAgent probes; after that only for the probes whose running
+// count is a power of two (64, 128, 256, ...). Every row carries
+// "probes_in_window", so the log still says how many probes there were
+// while a flood adds only O(log n) rows. The alert side has its own
+// de-duplication (internal/honeycap).
+const (
+	HoneyAuditPerAgent = 32
+	HoneyAuditWindow   = time.Minute
+	// honeyMaxAgents bounds the limiter; past it, agents share one bucket.
+	honeyMaxAgents = 4096
+	// HoneyNameClip is how many bytes of a probed name reach an audit row
+	// or an alert; the rest is replaced by a "(+N bytes)" marker.
+	HoneyNameClip = 128
+)
+
+// ClipHoneyName cuts s to at most HoneyNameClip bytes on a rune boundary
+// and appends "(+N bytes)" naming what was cut.
+func ClipHoneyName(s string) string {
+	if len(s) <= HoneyNameClip {
+		return s
+	}
+	cut := HoneyNameClip
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "(+" + strconv.Itoa(len(s)-cut) + " bytes)"
+}
+
+type honeyWindow struct {
+	start time.Time
+	n     uint64
+}
+
+// honeyLimiter decides which probes get an audit row.
+type honeyLimiter struct {
+	mu  sync.Mutex
+	now func() time.Time
+	m   map[string]*honeyWindow
+}
+
+func newHoneyLimiter() *honeyLimiter {
+	return &honeyLimiter{now: time.Now, m: map[string]*honeyWindow{}}
+}
+
+// admit counts a probe by agent and reports the running count in the
+// window and whether to write a row for it.
+func (l *honeyLimiter) admit(agent string) (uint64, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	if _, known := l.m[agent]; !known && len(l.m) >= honeyMaxAgents {
+		for k, old := range l.m {
+			if now.Sub(old.start) >= HoneyAuditWindow {
+				delete(l.m, k)
+			}
+		}
+		if len(l.m) >= honeyMaxAgents {
+			agent = honeyOverflowKey // every further agent shares one bucket
+		}
+	}
+	w := l.m[agent]
+	if w == nil || now.Sub(w.start) >= HoneyAuditWindow {
+		w = &honeyWindow{start: now}
+		l.m[agent] = w
+	}
+	w.n++
+	return w.n, w.n <= HoneyAuditPerAgent || w.n&(w.n-1) == 0
+}
+
+// honeyOverflowKey cannot be an agent id (agent ids are validated text).
+const honeyOverflowKey = "\x00overflow"
 
 // HoneyCapabilityEvent is the audit action of a honey-capability probe.
 // It is a new, additive event name; no existing row format changes.
@@ -47,15 +125,32 @@ type HoneyDetector interface {
 	Tripped(ctx context.Context, p HoneyProbe)
 }
 
-// checkHoneyRegistry refuses a configuration in which a honey name is
-// actually registered: a trap that could be granted is not a trap.
+// ReservingRegistry is a CapabilityRegistry that can atomically check its
+// names against a matcher and refuse matching registrations from then on
+// (internal/capabilities.Registry implements it).
+type ReservingRegistry interface {
+	ReserveNames(reserved func(name string) bool) error
+}
+
+// checkHoneyRegistry refuses a configuration in which a registered
+// capability is a honey name under the detector's own matching (case and
+// surrounding whitespace ignored): a trap that could be granted is not a
+// trap, and a real capability shadowed by a trap would be silently
+// disabled. A ReservingRegistry also refuses such names from then on.
+// Another registry is checked by exact Lookup of the configured names.
 func checkHoneyRegistry(h HoneyDetector, reg CapabilityRegistry) error {
 	if h == nil || reg == nil {
 		return nil
 	}
+	if rr, ok := reg.(ReservingRegistry); ok {
+		if err := rr.ReserveNames(h.IsHoney); err != nil {
+			return fmt.Errorf("vault: %w", err)
+		}
+		return nil
+	}
 	for _, n := range h.Names() {
 		if spec, err := reg.Lookup(n); err == nil && spec != nil {
-			return fmt.Errorf("vault: honey capability %q is also a registered capability", n)
+			return fmt.Errorf("vault: registered capability %q matches a honey capability name; rename one of them", n)
 		}
 	}
 	return nil
@@ -68,18 +163,26 @@ func (v *Vault) honeyProbe(ctx context.Context, p HoneyProbe) bool {
 	if v.honey == nil || !v.honey.IsHoney(p.Capability) {
 		return false
 	}
+	count, write := v.honeyLimit.admit(p.Agent)
+	if write {
+		v.writeHoneyRow(ctx, p, count)
+	}
+	v.honey.Tripped(ctx, p)
+	return true
+}
+
+func (v *Vault) writeHoneyRow(ctx context.Context, p HoneyProbe, count uint64) {
 	details := pyDumps(pyObject{
-		{"agent", p.Agent},
-		{"capability", p.Capability},
+		{"agent", ClipHoneyName(p.Agent)},
+		{"capability", ClipHoneyName(p.Capability)},
 		{"capability_version", p.Version},
 		{"severity", "critical"},
 		{"source", p.Source},
 		{"token_presented", p.TokenPresented},
 		{"payload_keys", p.PayloadKeys},
+		{"probes_in_window", int(count)},
 	})
 	_ = v.withR(func() error {
 		return v.logAudit(ctx, HoneyCapabilityEvent, sql.NullString{}, details)
 	})
-	v.honey.Tripped(ctx, p)
-	return true
 }

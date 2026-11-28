@@ -20,9 +20,14 @@ import (
 // maxCriticalInFlight is a SEPARATE budget for events that must not be lost
 // to flood noise (approval.EventKind.Critical): a lockout alert is delivered
 // even while the ordinary slots are all busy with a slow receiver.
+// maxHoneyInFlight is a THIRD budget, only for honey-capability probes
+// (approval.EventHoneyCapability): they are Critical, but an attacker can
+// raise them at will, so they must never use up the slots a lockout or
+// self-approval alert needs.
 const (
 	maxEventsInFlight   = 8
 	maxCriticalInFlight = 4
+	maxHoneyInFlight    = 2
 )
 
 // EventWebhook is an approval.Notifier that POSTs each security event to a
@@ -39,12 +44,13 @@ const (
 // The body carries the event kind, request id, agent, token id and a short
 // description; never a TOTP code, a token or a secret value.
 type EventWebhook struct {
-	url     string
-	client  *http.Client
-	timeout time.Duration
-	sem     chan struct{}
-	critSem chan struct{}
-	logf    func(format string, args ...any)
+	url      string
+	client   *http.Client
+	timeout  time.Duration
+	sem      chan struct{}
+	critSem  chan struct{}
+	honeySem chan struct{}
+	logf     func(format string, args ...any)
 	// done is signalled after each delivery attempt (tests).
 	done chan struct{}
 }
@@ -70,7 +76,8 @@ func NewEventWebhook(rawURL string, allowRemote bool, opts ...EventWebhookOption
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, errors.New("security webhook url must be an absolute http(s) URL")
 	}
-	w := &EventWebhook{url: rawURL, timeout: DefaultWebhookTimeout, sem: make(chan struct{}, maxEventsInFlight), critSem: make(chan struct{}, maxCriticalInFlight), logf: log.Printf}
+	w := &EventWebhook{url: rawURL, timeout: DefaultWebhookTimeout, sem: make(chan struct{}, maxEventsInFlight), critSem: make(chan struct{}, maxCriticalInFlight),
+		honeySem: make(chan struct{}, maxHoneyInFlight), logf: log.Printf}
 	for _, o := range opts {
 		o(w)
 	}
@@ -102,7 +109,10 @@ type eventBody struct {
 // Notify implements approval.Notifier. It returns immediately.
 func (w *EventWebhook) Notify(_ context.Context, e approval.Event) {
 	sem := w.sem
-	if e.Kind.Critical() {
+	switch {
+	case e.Kind == approval.EventHoneyCapability:
+		sem = w.honeySem
+	case e.Kind.Critical():
 		sem = w.critSem
 	}
 	select {

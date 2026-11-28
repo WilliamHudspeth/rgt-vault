@@ -13,17 +13,20 @@ import (
 // maxKeyFile bounds what is read from an Ed25519 key file.
 const maxKeyFile = 16 * 1024
 
-// Key files hold either one PEM block or the raw key bytes:
+// Key files:
 //
-//	public key:  PEM "PUBLIC KEY" (PKIX, as `openssl pkey -pubout` writes)
-//	             or exactly 32 raw bytes;
+//	public key:  PEM "PUBLIC KEY" only (PKIX, as `openssl pkey -pubout`
+//	             writes). Raw bytes are refused: 32 raw bytes could just as
+//	             well be a private seed, and a public-key file is allowed to
+//	             be world-readable.
 //	private key: PEM "PRIVATE KEY" (PKCS #8, as `openssl genpkey -algorithm
 //	             ed25519` writes) or exactly 32 raw bytes (the seed).
 //
-// Permissions (not checked on Windows, where mode bits do not describe the
-// ACL): a private key file must not be accessible to group or others
-// (0600 or stricter); a public key file must not be writable by group or
-// others (anyone who can replace it can mint tokens).
+// Permissions and ownership (not checked on Windows, where mode bits do not
+// describe the ACL): both files must be owned by the user running the
+// process or by root; a private key file must not be accessible to group or
+// others (0600 or stricter); a public key file must not be writable by group
+// or others (anyone who can replace it can mint tokens).
 
 // LoadEd25519PublicKeyFile reads a trusted public key. A file holding a
 // private key is refused: a verifier-only deployment never holds one.
@@ -46,6 +49,9 @@ func LoadEd25519PublicKeyFile(path string) (ed25519.PublicKey, error) {
 			if !ok {
 				return nil, keyErr(path, "public key is not Ed25519")
 			}
+			if err := checkPublicKey(pub); err != nil {
+				return nil, keyErr(path, "public key "+err.Error())
+			}
 			return pub, nil
 		case "PRIVATE KEY", "ED25519 PRIVATE KEY", "OPENSSH PRIVATE KEY":
 			return nil, keyErr(path, "holds a PRIVATE key; a verifier needs only the public key")
@@ -53,10 +59,7 @@ func LoadEd25519PublicKeyFile(path string) (ed25519.PublicKey, error) {
 			return nil, keyErr(path, fmt.Sprintf("unsupported PEM block %q", blk.Type))
 		}
 	}
-	if len(raw) != ed25519.PublicKeySize {
-		return nil, keyErr(path, "expected a PEM PUBLIC KEY or exactly 32 raw bytes")
-	}
-	return ed25519.PublicKey(append([]byte(nil), raw...)), nil
+	return nil, keyErr(path, "expected a PEM PUBLIC KEY block (raw bytes are accepted for private keys only)")
 }
 
 // LoadEd25519PrivateKeyFile reads an issuer's private key.
@@ -120,6 +123,9 @@ func readKeyFile(path string, forbidden os.FileMode) ([]byte, error) {
 		return nil, keyErr(path, "not a regular file")
 	}
 	if err := checkKeyMode(st.Mode(), forbidden, runtime.GOOS); err != nil {
+		return nil, keyErr(path, err.Error())
+	}
+	if err := checkKeyOwner(st); err != nil {
 		return nil, keyErr(path, err.Error())
 	}
 	raw, err := io.ReadAll(io.LimitReader(f, maxKeyFile+1))

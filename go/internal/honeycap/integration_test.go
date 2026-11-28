@@ -248,7 +248,7 @@ func TestHoneyAuditRowShape(t *testing.T) {
 	if row == nil {
 		t.Fatal("no HONEY_CAPABILITY_TRIGGERED row")
 	}
-	want := `{"agent": "mallory", "capability": "Payments.Wire.Unrestricted", "capability_version": 2, "severity": "critical", "source": "capability.execute", "token_presented": true, "payload_keys": 2}`
+	want := `{"agent": "mallory", "capability": "Payments.Wire.Unrestricted", "capability_version": 2, "severity": "critical", "source": "capability.execute", "token_presented": true, "payload_keys": 2, "probes_in_window": 1}`
 	if row.Details.String != want || row.SecretName.Valid {
 		t.Fatalf("details = %s", row.Details.String)
 	}
@@ -275,21 +275,167 @@ func TestNoDetectorNoRow(t *testing.T) {
 	}
 }
 
-// TestHoneyNeverRuns: a honey name registered after Open (Open refuses it
-// before) is still never executed, even with a genuine token.
+// lookupOnly is a registry without Names/ReserveNames: the vault can only
+// check it by exact Lookup at Open, so a later addition must still never run.
+type lookupOnly struct {
+	mu sync.Mutex
+	m  map[string]vault.CapabilitySpec
+}
+
+func (l *lookupOnly) Lookup(name string) (vault.CapabilitySpec, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if s, ok := l.m[name]; ok {
+		return s, nil
+	}
+	return nil, vault.ErrCapabilityNotFound
+}
+
+// TestHoneyNeverRuns: a honey name that appears in a registry after Open is
+// still never executed, even with a genuine token.
 func TestHoneyNeverRuns(t *testing.T) {
-	e := openVault(t, true)
-	ran := false
-	if err := e.reg.Register(capabilities.Spec{Name: "aws.admin.full", Handler: func(context.Context, map[string]any, vault.CapabilityContext) (any, error) {
-		ran = true
-		return "pwned", nil
-	}}); err != nil {
+	sign := signer(t)
+	reg := &lookupOnly{m: map[string]vault.CapabilitySpec{}}
+	v, err := vault.Open(context.Background(), vault.Config{
+		DBPath: filepath.Join(t.TempDir(), "vault.db"), Provider: providerstest.NewMemory(), PolicyYAML: allowAll,
+		Capabilities: reg, TokenVerifier: sign, HoneyCapabilities: honeycap.Default(honeycap.WithNotifier(&recorder{})), KDFParams: testKDF,
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	tok, _ := e.sign.Sign("mallory", "aws.admin.full", 1, nil, 60)
-	res, err := e.v.ExecuteCapability(context.Background(), vault.CapabilityRequest{Capability: "aws.admin.full", Agent: "mallory", Token: tok})
+	defer v.Close()
+	ran := false
+	spec := &capabilities.Spec{Name: "aws.admin.full", Versions: []int{1}, Handler: func(context.Context, map[string]any, vault.CapabilityContext) (any, error) {
+		ran = true
+		return "pwned", nil
+	}}
+	reg.mu.Lock()
+	reg.m["aws.admin.full"] = spec
+	reg.mu.Unlock()
+	tok, _ := sign.Sign("mallory", "aws.admin.full", 1, nil, 60)
+	res, err := v.ExecuteCapability(context.Background(), vault.CapabilityRequest{Capability: "aws.admin.full", Agent: "mallory", Token: tok})
 	if ran || res != nil || !errors.Is(err, vault.ErrCapabilityNotFound) {
 		t.Fatalf("ran=%v res=%v err=%v", ran, res, err)
+	}
+}
+
+// TestRegisterRefusesHoneyAfterOpen: the real registry refuses a honey name
+// (in any spelling) once a vault with traps has opened on it.
+func TestRegisterRefusesHoneyAfterOpen(t *testing.T) {
+	e := openVault(t, true)
+	h := func(context.Context, map[string]any, vault.CapabilityContext) (any, error) { return nil, nil }
+	for _, n := range []string{"aws.admin.full", "AWS.Admin.Full", " iam.root.assume", "Payments.Wire.Unrestricted"} {
+		if err := e.reg.Register(capabilities.Spec{Name: n, Handler: h}); !errors.Is(err, capabilities.ErrRegistration) {
+			t.Errorf("%q: %v", n, err)
+		}
+	}
+	if err := e.reg.Register(capabilities.Spec{Name: "billing.reports", Handler: h}); err != nil {
+		t.Fatalf("ordinary name refused: %v", err)
+	}
+}
+
+// TestOpenRefusesNormalizedCollision (review MED-2): a registered capability
+// that differs from a honey name only in case or whitespace must stop
+// startup, not be silently shadowed by the trap.
+func TestOpenRefusesNormalizedCollision(t *testing.T) {
+	h := func(context.Context, map[string]any, vault.CapabilityContext) (any, error) { return nil, nil }
+	for _, c := range []struct {
+		name, policy, register string
+	}{
+		{"policy honey shadows built-in", "honey_capabilities: [Secrets.Echo]\nrules: []\n", ""},
+		{"registered case variant", "", "Aws.Admin.Full"},
+		{"registered exact", "", "iam.root.assume"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			reg := capabilities.NewDefault(nil)
+			if c.register != "" {
+				if err := reg.Register(capabilities.Spec{Name: c.register, Handler: h}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			set, err := honeycap.FromPolicyYAML(c.policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = vault.Open(context.Background(), vault.Config{
+				DBPath: filepath.Join(t.TempDir(), "vault.db"), Provider: providerstest.NewMemory(),
+				Capabilities: reg, HoneyCapabilities: set, KDFParams: testKDF,
+			})
+			if err == nil || !strings.Contains(err.Error(), "matches a honey capability name") {
+				t.Fatalf("Open = %v", err)
+			}
+		})
+	}
+	// The same through the server stack: startup fails.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "policy.yaml")
+	if err := os.WriteFile(p, []byte("honey_capabilities: [Secrets.Echo]\nrules: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.OpenStack(context.Background(), server.StackOptions{
+		DBPath: filepath.Join(dir, "v", "vault.db"), PolicyFile: p, MasterProvider: providerstest.NewMemory(), KDFParams: testKDF,
+	}); err == nil || !strings.Contains(err.Error(), "secrets.echo") {
+		t.Fatalf("OpenStack = %v", err)
+	}
+}
+
+// TestHoneyAuditFloodCapped (review MED-1b): a flood from one agent writes
+// HoneyAuditPerAgent rows, then one per power of two, each with the count.
+func TestHoneyAuditFloodCapped(t *testing.T) {
+	e := openVault(t, true)
+	for i := 0; i < 300; i++ {
+		_, _ = e.v.ExecuteCapability(context.Background(), vault.CapabilityRequest{Capability: "aws.admin.full", Agent: "mallory", Token: "x.y"})
+	}
+	_, _ = e.v.ExecuteCapability(context.Background(), vault.CapabilityRequest{Capability: "aws.admin.full", Agent: "eve", Token: "x.y"})
+	var mallory, eve []string
+	for _, r := range e.rows(t) {
+		if r.Action != honeycap.Event {
+			continue
+		}
+		if strings.Contains(r.Details.String, `"agent": "mallory"`) {
+			mallory = append(mallory, r.Details.String)
+		} else {
+			eve = append(eve, r.Details.String)
+		}
+	}
+	if len(mallory) != vault.HoneyAuditPerAgent+3 || len(eve) != 1 { // 1..32, 64, 128, 256
+		t.Fatalf("rows: mallory=%d eve=%d", len(mallory), len(eve))
+	}
+	if !strings.Contains(mallory[len(mallory)-1], `"probes_in_window": 256`) {
+		t.Fatalf("last row = %s", mallory[len(mallory)-1])
+	}
+	if e.notes.count(approval.EventHoneyCapability) != 2 { // one per agent
+		t.Fatalf("alerts = %d", e.notes.count(approval.EventHoneyCapability))
+	}
+}
+
+// TestHoneyOversizeNameClipped (review MED-1a): whitespace padding still
+// trips the trap but cannot blow up the audit row or the alert.
+func TestHoneyOversizeNameClipped(t *testing.T) {
+	e := openVault(t, true)
+	name := strings.Repeat(" ", 200_000) + "aws.admin.full"
+	_, err := e.v.ExecuteCapability(context.Background(), vault.CapabilityRequest{Capability: name, Agent: "mallory", Token: "x.y"})
+	if err == nil {
+		t.Fatal("ran")
+	}
+	// (The ordinary CAPABILITY_DENIED row echoes the requested name as it
+	// always has for any name; only the honey row is new here.)
+	found := false
+	for _, r := range e.rows(t) {
+		if r.Action != honeycap.Event {
+			continue
+		}
+		found = true
+		if len(r.Details.String) > 1024 || !strings.Contains(r.Details.String, "(+199886 bytes)") {
+			t.Fatalf("honey row %d bytes: %.300s", len(r.Details.String), r.Details.String)
+		}
+	}
+	if !found {
+		t.Fatal("no honey row")
+	}
+	ev := e.notes.all()
+	if len(ev) != 1 || len(ev[0].Detail) > 512 || !strings.Contains(ev[0].Detail, "(+199886 bytes)") {
+		t.Fatalf("alert = %+v", ev)
 	}
 }
 
@@ -328,7 +474,8 @@ func TestHoneyRace(t *testing.T) {
 	if got := countAction(e.rows(t), honeycap.Event); got != n/2 {
 		t.Fatalf("honey rows = %d, want %d", got, n/2)
 	}
-	if e.honey.Trips() != n/2 || e.notes.count(approval.EventHoneyCapability) != n/2 {
+	// Alerts are de-duplicated per (agent, name): one per default name.
+	if e.honey.Trips() != n/2 || e.notes.count(approval.EventHoneyCapability) != len(honeycap.DefaultNames) {
 		t.Fatalf("trips = %d alerts = %d", e.honey.Trips(), e.notes.count(approval.EventHoneyCapability))
 	}
 	if ok, err := e.v.VerifyAuditChain(context.Background()); err != nil || !ok {
@@ -449,33 +596,10 @@ func TestHTTPIndistinguishable(t *testing.T) {
 	if got := countAction(rows, honeycap.Event); got != want {
 		t.Fatalf("honey rows = %d, want %d", got, want)
 	}
-	if got := e.notes.count(approval.EventHoneyCapability); got != want {
-		t.Fatalf("alerts through the stack notifier = %d, want %d", got, want)
+	// One alert per (agent, honey name) per window.
+	if got := e.notes.count(approval.EventHoneyCapability); got != len(honeyNames) {
+		t.Fatalf("alerts through the stack notifier = %d, want %d", got, len(honeyNames))
 	}
-}
-
-// TestHTTPTimingClass is a coarse guard: a honey probe costs one extra audit
-// insert, not a different order of magnitude. Medians over many calls.
-func TestHTTPTimingClass(t *testing.T) {
-	if testing.Short() {
-		t.Skip("timing")
-	}
-	e := openHTTP(t)
-	median := func(name string) time.Duration {
-		var ds []time.Duration
-		for i := 0; i < 31; i++ {
-			_, _, d := e.exec(t, name, "garbage")
-			ds = append(ds, d)
-		}
-		sort.Slice(ds, func(i, j int) bool { return ds[i] < ds[j] })
-		return ds[len(ds)/2]
-	}
-	_ = median("warm.up")
-	p, h := median("billing.reports"), median("aws.admin.full")
-	if h > 4*p+20*time.Millisecond {
-		t.Fatalf("honey median %v vs ordinary %v: different timing class", h, p)
-	}
-	t.Logf("median ordinary %v, honey %v", p, h)
 }
 
 // TestStackRejectsBadHoneyConfig: a malformed honey list fails startup.

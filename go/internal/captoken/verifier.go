@@ -42,9 +42,11 @@ func NewHMACTokenVerifier(sharedSecret []byte, opts ...Option) (*HMACTokenVerifi
 	if len(sharedSecret) < MinSecretLen {
 		return nil, newErr(kindValidation, "shared_secret must be at least %d bytes of random material", MinSecretLen)
 	}
-	// Algorithm-confusion guard (RGT-35): an HMAC secret is random bytes,
-	// never a PEM-encoded (public) key. Keying HMAC with a public key would
-	// let anyone who has that public key forge tokens.
+	// Speed bump against algorithm confusion (RGT-35): refuse a PEM-encoded
+	// key as the HMAC secret, since keying HMAC with a public key lets anyone
+	// who has that key forge tokens. The real defence is that each verifier
+	// type accepts exactly one algorithm/version; a raw public key pasted in
+	// here cannot be detected. Go-only: Python still accepts such a secret.
 	if bytes.Contains(sharedSecret, []byte("-----BEGIN")) {
 		return nil, newErr(kindValidation, "shared_secret looks like a PEM-encoded key; an HMAC key must be random secret bytes, never a public key")
 	}

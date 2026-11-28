@@ -18,8 +18,14 @@
 //     that it hit a trap.
 //
 // Names match case-insensitively after trimming surrounding whitespace, so
-// "AWS.Admin.Full " trips the same trap. vault.Open refuses a configuration
-// in which a honey name is also a registered capability.
+// "AWS.Admin.Full " trips the same trap. vault.Open refuses a registry in
+// which a registered capability matches a honey name under that same
+// matching, and the registry then refuses such names.
+//
+// Flood limits: audit rows per agent are capped (vault.HoneyAuditPerAgent,
+// then powers of two), alerts are de-duplicated per (agent, name) per
+// AlertWindow, names are clipped to vault.HoneyNameClip bytes, and the
+// security webhook gives honey events their own delivery budget.
 //
 // Configuration: DefaultNames are always active. A policy file that is a
 // mapping may add more under a top-level "honey_capabilities" list; the ABAC
@@ -41,6 +47,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -59,8 +66,12 @@ const PolicyKey = "honey_capabilities"
 // MaxNameLen bounds a configured honey name, in bytes.
 const MaxNameLen = 128
 
-// maxDetailName bounds how much of a probed name reaches an alert.
-const maxDetailName = 128
+// AlertWindow is the default per-(agent, name) alert de-duplication window.
+const AlertWindow = time.Minute
+
+// maxAlertKeys bounds the de-duplication state; past it, agents share one
+// window per honey name.
+const maxAlertKeys = 4096
 
 // DefaultNames are the honey capabilities registered by default. They are
 // named like the most tempting capabilities an attacker could hope for.
@@ -83,7 +94,12 @@ type Set struct {
 	names    map[string]string // normalized -> configured spelling
 	notifier approval.Notifier
 	now      func() time.Time
+	window   time.Duration
 	trips    atomic.Uint64
+
+	suppressed atomic.Uint64
+	mu         sync.Mutex
+	alerts     map[string]*alertWindow
 }
 
 // Option configures a Set.
@@ -95,6 +111,16 @@ func WithNotifier(n approval.Notifier) Option {
 	return func(s *Set) {
 		if n != nil {
 			s.notifier = n
+		}
+	}
+}
+
+// WithAlertWindow sets the alert de-duplication window (default
+// AlertWindow; d <= 0 keeps the default).
+func WithAlertWindow(d time.Duration) Option {
+	return func(s *Set) {
+		if d > 0 {
+			s.window = d
 		}
 	}
 }
@@ -123,14 +149,15 @@ func validName(n string) bool {
 // MaxNameLen bytes of [A-Za-z0-9._:/-]; duplicates (after normalization)
 // are merged.
 func New(extra []string, opts ...Option) (*Set, error) {
-	s := &Set{names: map[string]string{}, notifier: approval.LogNotifier{}, now: time.Now}
+	s := &Set{names: map[string]string{}, notifier: approval.LogNotifier{}, now: time.Now,
+		window: AlertWindow, alerts: map[string]*alertWindow{}}
 	for _, o := range opts {
 		o(s)
 	}
 	for _, n := range append(append([]string(nil), DefaultNames...), extra...) {
 		if !validName(n) {
 			return nil, fmt.Errorf("%w: honey capability name %s must be 1-%d characters of [A-Za-z0-9._:/-]",
-				ErrConfig, strconv.Quote(clip(n)), MaxNameLen)
+				ErrConfig, strconv.Quote(vault.ClipHoneyName(n)), MaxNameLen)
 		}
 		if _, dup := s.names[normalize(n)]; !dup {
 			s.names[normalize(n)] = n
@@ -222,29 +249,67 @@ func (s *Set) Trips() uint64 { return s.trips.Load() }
 // HONEY_CAPABILITY_TRIGGERED security event. The event carries the agent,
 // the (clipped, quoted) name, the version and the entry point; never a token
 // or payload value. A panicking notifier is contained.
+//
+// Alerts are de-duplicated per (agent, honey name): the first probe alerts
+// at once; further probes within AlertWindow are only counted, and the next
+// alert after the window says how many were suppressed. (The audit log
+// records the probes themselves; see vault.HoneyAuditPerAgent.)
 func (s *Set) Tripped(ctx context.Context, p vault.HoneyProbe) {
 	s.trips.Add(1)
+	suppressed, send := s.admitAlert(p.Agent, p.Capability)
+	if !send {
+		return
+	}
+	detail := fmt.Sprintf("honey capability %s probed via %s (version %d, token presented: %t)",
+		strconv.Quote(vault.ClipHoneyName(p.Capability)), p.Source, p.Version, p.TokenPresented)
+	if suppressed > 0 {
+		detail += fmt.Sprintf("; %d earlier alerts for this agent and name suppressed", suppressed)
+	}
 	e := approval.Event{
-		Kind:  approval.EventHoneyCapability,
-		Agent: clip(p.Agent),
-		Detail: fmt.Sprintf("honey capability %s probed via %s (version %d, token presented: %t)",
-			strconv.Quote(clip(p.Capability)), p.Source, p.Version, p.TokenPresented),
-		Time: s.now(),
+		Kind:   approval.EventHoneyCapability,
+		Agent:  vault.ClipHoneyName(p.Agent),
+		Detail: detail,
+		Time:   s.now(),
 	}
 	defer func() { _ = recover() }()
 	s.notifier.Notify(ctx, e)
 }
 
-func clip(v string) string {
-	if len(v) <= maxDetailName {
-		return v
-	}
-	// Cut on a rune boundary.
-	cut := maxDetailName
-	for cut > 0 && !utf8RuneStart(v[cut]) {
-		cut--
-	}
-	return v[:cut] + "..."
+// Suppressed returns how many alerts de-duplication has dropped so far.
+func (s *Set) Suppressed() uint64 { return s.suppressed.Load() }
+
+type alertWindow struct {
+	start      time.Time
+	suppressed uint64
 }
 
-func utf8RuneStart(b byte) bool { return b&0xC0 != 0x80 }
+// admitAlert applies the per-(agent, name) alert window. The key uses the
+// normalized honey name, so spelling variants share one window.
+func (s *Set) admitAlert(agent, name string) (uint64, bool) {
+	key := vault.ClipHoneyName(agent) + "\x00" + normalize(name)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	if _, known := s.alerts[key]; !known && len(s.alerts) >= maxAlertKeys {
+		for k, w := range s.alerts {
+			if now.Sub(w.start) >= s.window {
+				delete(s.alerts, k)
+			}
+		}
+		if len(s.alerts) >= maxAlertKeys {
+			key = "\x00overflow\x00" + normalize(name)
+		}
+	}
+	w := s.alerts[key]
+	if w != nil && now.Sub(w.start) < s.window {
+		w.suppressed++
+		s.suppressed.Add(1)
+		return 0, false
+	}
+	var prev uint64
+	if w != nil {
+		prev = w.suppressed
+	}
+	s.alerts[key] = &alertWindow{start: now}
+	return prev, true
+}

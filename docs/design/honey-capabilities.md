@@ -31,17 +31,55 @@ capability, or genuine.
    capability, and 404 "unknown capability" for a valid token. Nothing tells
    the caller it hit a trap.
 
-These tests pin the behaviour:
+`TestHTTPIndistinguishable` and `TestVaultIndistinguishable` pin this: the
+status, the body and the error class match those of an ordinary
+unregistered name, and the audit trail is the ordinary one plus the honey
+row.
 
-- `TestHTTPIndistinguishable` and `TestVaultIndistinguishable` check that
-  status, body and error class match.
-- The audit trail is the ordinary one plus the honey row.
-- `TestHTTPTimingClass` is a coarse check that the extra cost is one audit
-  insert.
+## Flood limits
+
+An attacker can send probes at will, so every output of the trap is bounded.
+
+- **Audit rows.** Per agent, per minute (`vault.HoneyAuditPerAgent` = 32,
+  `vault.HoneyAuditWindow`):
+  - each of the agent's first 32 probes gets a row;
+  - after that, only probes whose running count is a power of two get one
+    (64, 128, 256, ...);
+  - every row carries `probes_in_window`, so 1,000,000 probes produce about
+    46 rows and the log still shows how many there were.
+
+  The limiter tracks at most 4096 agents; beyond that, new agents share one
+  bucket (`TestHoneyAuditFloodCapped`).
+- **Alerts.** Per (agent, honey name), per minute (`honeycap.AlertWindow`):
+  - the first probe alerts at once;
+  - later probes in the window are only counted;
+  - the next alert after the window says how many were suppressed.
+
+  Spelling variants share one window (`TestAlertDedup`). If probing stops
+  inside a window, its suppressed count is never alerted, but it is in the
+  audit rows.
+- **Webhook.** Honey events have their own delivery budget of 2 in flight on
+  `--security-webhook`. They therefore cannot use up the reserved slots of
+  lockout, auto-deny or separation-of-duties alerts
+  (`TestEventWebhookHoneyFloodCannotStarveCritical`).
+- **Size.** In the honey row and in the alert, the name and the agent are
+  clipped to 128 bytes, with a `(+N bytes)` marker. A name padded with
+  200,000 spaces still trips the trap but writes a row under 1 KiB
+  (`TestHoneyOversizeNameClipped`).
+
+  The ordinary `CAPABILITY_DENIED` row written afterwards still echoes the
+  requested name in full. That is existing behaviour for every name,
+  bounded only by the request body limit.
 
 ## Never grantable
 
-- `vault.Open` refuses a capability registry that registers a honey name.
+- `vault.Open` refuses a registry with a registered capability that matches
+  a honey name under the trap's own matching (case and whitespace
+  ignored). Without this, `honey_capabilities: [Secrets.Echo]` would
+  silently disable the built-in `secrets.echo` and turn every legitimate
+  call into a false critical alert. After `Open`, the registry refuses such
+  names in `Register` (`TestOpenRefusesNormalizedCollision`,
+  `TestRegisterRefusesHoneyAfterOpen`).
 - A honey name registered at runtime after `Open` is still never executed,
   even with a genuine token (`TestHoneyNeverRuns`).
 - Names match case-insensitively after trimming whitespace. `AWS.Admin.FULL`
@@ -72,6 +110,9 @@ honey names. They are never executed anyway.
   would change the Python-compatible listing, and would invite legitimate
   agents to try them. Agents find them by guessing names, or by reading
   configuration or documentation the operator plants on purpose.
-- A probe costs one extra audit insert, which is well under a millisecond on
-  local SQLite. An attacker with very precise timing over many requests could
-  in principle notice this. Only the configured names are affected.
+- A probe costs one extra audit insert, while it is under the row cap. An
+  independent review measured about 45-50 µs, roughly 30% slower, on ext4
+  with SQLite WAL. A determined local attacker who times many requests can
+  therefore tell a honey name from an ordinary one. They can do that only
+  after probing it, by which point the alert has fired. There is no timing
+  test: a check loose enough to be stable in CI would guard nothing.

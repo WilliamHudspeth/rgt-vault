@@ -103,6 +103,7 @@ type Vault struct {
 	tokenVerifier      captoken.TokenVerifier
 	capabilities       CapabilityRegistry
 	honey              HoneyDetector
+	honeyLimit         *honeyLimiter
 	provider           MasterProvider
 	kdfParams          kdf.Params
 	vaultID            string
@@ -189,6 +190,7 @@ func Open(ctx context.Context, cfg Config) (*Vault, error) {
 		tokenVerifier:      cfg.TokenVerifier,
 		capabilities:       cfg.Capabilities,
 		honey:              cfg.HoneyCapabilities,
+		honeyLimit:         newHoneyLimiter(),
 		provider:           cfg.Provider,
 		kdfParams:          cfg.KDFParams,
 		keychainPath:       filepath.Join(filepath.Dir(dbPath), keychain.FileName),

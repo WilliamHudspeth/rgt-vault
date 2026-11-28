@@ -28,9 +28,13 @@ package captoken
 // keys, and it is covered by the signature.
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"sort"
 	"time"
 )
@@ -57,6 +61,66 @@ var ErrNoSigningKey = &Error{kind: kindNoSigningKey}
 func KeyID(pub ed25519.PublicKey) string {
 	sum := sha256.Sum256(pub)
 	return hex.EncodeToString(sum[:])[:16]
+}
+
+// smallOrderKeys are the encodings of the 8 points of small order on
+// edwards25519 (identity, order 2, order 4 x2, order 8 x4), plus the two
+// "x = 0 with the sign bit set" encodings of the order-1/2 points. With such
+// a public key Go's cofactorless verification accepts forgeries (for the
+// identity, R = identity and S = 0 verify for ANY message), so no verifier
+// may trust one. Values checked independently (point order computed with
+// exact integer arithmetic) before they were written down here.
+var smallOrderKeys = [][]byte{
+	decodeHexConst("0100000000000000000000000000000000000000000000000000000000000000"), // order 1
+	decodeHexConst("ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"), // order 2
+	decodeHexConst("0000000000000000000000000000000000000000000000000000000000000000"), // order 4
+	decodeHexConst("0000000000000000000000000000000000000000000000000000000000000080"), // order 4
+	decodeHexConst("26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05"), // order 8
+	decodeHexConst("26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85"), // order 8
+	decodeHexConst("c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a"), // order 8
+	decodeHexConst("c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa"), // order 8
+	decodeHexConst("0100000000000000000000000000000000000000000000000000000000000080"), // x=0, sign 1
+	decodeHexConst("ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"), // x=0, sign 1
+}
+
+func decodeHexConst(s string) []byte {
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// checkPublicKey refuses public keys no honest issuer produces: wrong size,
+// a small-order point, or a non-canonical encoding (y >= p, which Go's
+// decoder accepts). Keys derived from a private key never hit these.
+func checkPublicKey(pub ed25519.PublicKey) error {
+	if len(pub) != ed25519.PublicKeySize {
+		return fmt.Errorf("must be %d bytes", ed25519.PublicKeySize)
+	}
+	for _, bad := range smallOrderKeys {
+		if bytes.Equal(pub, bad) {
+			return errors.New("is a small-order point")
+		}
+	}
+	if nonCanonicalY(pub) {
+		return errors.New("is not a canonical encoding")
+	}
+	return nil
+}
+
+// nonCanonicalY reports whether the little-endian y coordinate (sign bit
+// cleared) is >= p = 2^255 - 19, i.e. bytes ed..ff ff.. 7f or above.
+func nonCanonicalY(pub []byte) bool {
+	if pub[31]&0x7f != 0x7f {
+		return false
+	}
+	for i := 30; i >= 1; i-- {
+		if pub[i] != 0xff {
+			return false
+		}
+	}
+	return pub[0] >= 0xed
 }
 
 func validKeyID(kid string) bool {
@@ -210,8 +274,8 @@ func NewEd25519Verifier(keys map[string]ed25519.PublicKey, opts ...Ed25519Option
 		if !validKeyID(kid) {
 			return nil, newErr(kindValidation, "key id must be 1-%d characters of [A-Za-z0-9._-]", MaxKeyIDLen)
 		}
-		if len(pub) != ed25519.PublicKeySize {
-			return nil, newErr(kindValidation, "ed25519 public key %s must be %d bytes", kid, ed25519.PublicKeySize)
+		if err := checkPublicKey(pub); err != nil {
+			return nil, newErr(kindValidation, "ed25519 public key %s %v", kid, err)
 		}
 		v.keys[kid] = append(ed25519.PublicKey(nil), pub...)
 	}
@@ -292,13 +356,65 @@ func (v *Ed25519Verifier) Verify(token string) (*CapabilityV2Token, error) {
 	if !ed25519.Verify(pub, signingInputV3(payload), sig) {
 		return nil, newErr(kindSignature, "token signature did not verify")
 	}
+	// v3 drops two v2 (Python) leniencies: duplicate JSON keys (last one
+	// wins in v2) and exp <= 0 ("never expires" in v2).
+	if hasDuplicateKeys(payload) {
+		return nil, newErr(kindMalformed, "token payload has duplicate keys")
+	}
 	tok, err := parsePayloadVersion(payload, TokenFormatVersionEd25519)
 	if err != nil {
 		return nil, err
+	}
+	if tok.ExpiresAt <= 0 {
+		return nil, newErr(kindMalformed, "token payload field exp must be > 0")
 	}
 	tok.KeyID = kid
 	if tok.IsExpired(v.now()) {
 		return nil, newErr(kindExpired, "token for %q expired at %d", tok.Capability, tok.ExpiresAt)
 	}
 	return tok, nil
+}
+
+// hasDuplicateKeys reports whether any JSON object in payload repeats a key
+// (after unescaping). payload is known to be one valid JSON value.
+func hasDuplicateKeys(payload []byte) bool {
+	dec := json.NewDecoder(bytes.NewReader(payload))
+	dec.UseNumber()
+	var walk func() bool // returns true on a duplicate (or a decode error)
+	walk = func() bool {
+		tok, err := dec.Token()
+		if err != nil {
+			return true
+		}
+		switch tok {
+		case json.Delim('{'):
+			seen := map[string]bool{}
+			for dec.More() {
+				k, err := dec.Token()
+				if err != nil {
+					return true
+				}
+				key, _ := k.(string)
+				if seen[key] {
+					return true
+				}
+				seen[key] = true
+				if walk() {
+					return true
+				}
+			}
+			_, err = dec.Token() // '}'
+			return err != nil
+		case json.Delim('['):
+			for dec.More() {
+				if walk() {
+					return true
+				}
+			}
+			_, err = dec.Token() // ']'
+			return err != nil
+		}
+		return false
+	}
+	return walk()
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -159,15 +160,70 @@ func TestTrippedClipsAndQuotes(t *testing.T) {
 	long := strings.Repeat("é", 200) + "\nINJECTED"
 	s.Tripped(context.Background(), vault.HoneyProbe{Agent: strings.Repeat("a", 300), Capability: long})
 	e := rec.all()[0]
-	if strings.Contains(e.Detail, "\n") || strings.Contains(e.Detail, "INJECTED") {
+	if strings.Contains(e.Detail, "\n") || strings.Contains(e.Detail, "INJECTED") || !strings.Contains(e.Detail, "bytes)") {
 		t.Fatalf("detail not clipped/quoted: %q", e.Detail)
 	}
-	if len(e.Agent) > maxDetailName+3 || !strings.HasSuffix(e.Agent, "...") {
-		t.Fatalf("agent not clipped: %d", len(e.Agent))
+	if e.Agent != strings.Repeat("a", vault.HoneyNameClip)+"(+172 bytes)" {
+		t.Fatalf("agent not clipped: %q", e.Agent)
 	}
-	if c := clip(strings.Repeat("é", 200)); !strings.HasSuffix(c, "...") || strings.ContainsRune(c, '�') ||
-		len(c) > maxDetailName+3 {
-		t.Fatalf("clip broke a rune: %q", c)
+}
+
+// TestAlertDedup: one alert per (agent, honey name) per window, spelling
+// variants included; the next alert reports how many were suppressed.
+func TestAlertDedup(t *testing.T) {
+	rec := &recorder{}
+	now := time.Unix(1_900_000_000, 0)
+	s := Default(WithNotifier(rec), WithClock(func() time.Time { return now }), WithAlertWindow(10*time.Second))
+	probe := func(agent, name string) {
+		s.Tripped(context.Background(), vault.HoneyProbe{Agent: agent, Capability: name, Source: "capability.execute"})
+	}
+	for i := 0; i < 1000; i++ {
+		probe("mallory", "aws.admin.full")
+		probe("mallory", " AWS.Admin.Full")
+	}
+	if n := len(rec.all()); n != 1 {
+		t.Fatalf("alerts during flood = %d, want 1", n)
+	}
+	probe("mallory", "iam.root.assume") // another name: its own window
+	probe("eve", "aws.admin.full")      // another agent: its own window
+	if n := len(rec.all()); n != 3 {
+		t.Fatalf("alerts = %d, want 3", n)
+	}
+	if s.Trips() != 2002 || s.Suppressed() != 1999 {
+		t.Fatalf("trips=%d suppressed=%d", s.Trips(), s.Suppressed())
+	}
+	now = now.Add(10 * time.Second)
+	probe("mallory", "aws.admin.full")
+	ev := rec.all()
+	if len(ev) != 4 || !strings.HasSuffix(ev[3].Detail, "; 1999 earlier alerts for this agent and name suppressed") {
+		t.Fatalf("after window: %v", ev[len(ev)-1])
+	}
+	if strings.Contains(ev[0].Detail, "suppressed") {
+		t.Fatal("first alert must not claim suppression")
+	}
+}
+
+func TestAlertDedupBounded(t *testing.T) {
+	rec := &recorder{}
+	now := time.Unix(1_900_000_000, 0)
+	s := Default(WithNotifier(rec), WithClock(func() time.Time { return now }), WithAlertWindow(0))
+	for i := 0; i < maxAlertKeys+100; i++ {
+		s.Tripped(context.Background(), vault.HoneyProbe{Agent: "a" + strconv.Itoa(i), Capability: "aws.admin.full"})
+	}
+	s.mu.Lock()
+	n := len(s.alerts)
+	s.mu.Unlock()
+	if n > maxAlertKeys+1 {
+		t.Fatalf("alert state grew to %d", n)
+	}
+	// The overflow bucket alerted once for the 100 extra agents.
+	if got := len(rec.all()); got != maxAlertKeys+1 {
+		t.Fatalf("alerts = %d", got)
+	}
+	now = now.Add(AlertWindow)
+	s.Tripped(context.Background(), vault.HoneyProbe{Agent: "fresh", Capability: "aws.admin.full"})
+	if got := len(rec.all()); got != maxAlertKeys+2 {
+		t.Fatal("expired state not reclaimed")
 	}
 }
 
