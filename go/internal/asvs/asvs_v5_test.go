@@ -441,15 +441,15 @@ func TestASVS_V5_SourceScanNoShellExecAndAllowlistedImports(t *testing.T) {
 	// Forbidden imports across all first-party go/ files. Strings are split so a
 	// plain grep over go/ does not match this test file itself.
 	forbiddenImports := map[string]string{
-		"C":                       "cgo is forbidden in first-party go/ (RGT-374)",
-		"encoding/" + "gob":       "gob deserialization is forbidden (RGT-240/RGT-379)",
-		"encoding/" + "xml":       "XML parsing is not used (RGT-373/RGT-378)",
-		"html/" + "template":      "HTML templates are not used (RGT-356/RGT-360/RGT-434/RGT-435)",
-		"text/" + "template":      "text templates are not used in first-party go/ (RGT-360/RGT-363/RGT-434/RGT-435)",
-		"net/" + "smtp":           "SMTP mail is not used (RGT-358)",
-		"net/" + "mail":           "mail parsing is not used (RGT-358)",
-		"mime/" + "multipart":     "multipart file uploads are not used (RGT-258)",
-		"plug" + "in":             "dynamic Go plugin loading is forbidden (RGT-359)",
+		"C":                   "cgo is forbidden in first-party go/ (RGT-374)",
+		"encoding/" + "gob":   "gob deserialization is forbidden (RGT-240/RGT-379)",
+		"encoding/" + "xml":   "XML parsing is not used (RGT-373/RGT-378)",
+		"html/" + "template":  "HTML templates are not used (RGT-356/RGT-360/RGT-434/RGT-435)",
+		"text/" + "template":  "text templates are not used in first-party go/ (RGT-360/RGT-363/RGT-434/RGT-435)",
+		"net/" + "smtp":       "SMTP mail is not used (RGT-358)",
+		"net/" + "mail":       "mail parsing is not used (RGT-358)",
+		"mime/" + "multipart": "multipart file uploads are not used (RGT-258)",
+		"plug" + "in":         "dynamic Go plugin loading is forbidden (RGT-359)",
 	}
 	shellNames := map[string]bool{
 		"sh": true, "/bin/sh": true, "bash": true, "/bin/bash": true, "zsh": true,
@@ -548,13 +548,12 @@ func TestASVS_V5_SourceScanNoShellExecAndAllowlistedImports(t *testing.T) {
 						}
 					}
 
-					// 4. SQL query methods in production code must never format queries with fmt.Sprintf (RGT-367, RGT-368).
+					// 4. SQL query methods in production code must never format or concatenate
+					// queries inline (RGT-367, RGT-368). See sqlGuardViolation for the exact scope.
 					if !isTest {
-						if qIdx, ok := sqlQueryArgIndex(fnName); ok && qIdx < len(call.Args) {
-							if isSprintfCall(call.Args[qIdx]) {
-								pos := fset.Position(call.Pos())
-								t.Errorf("%s:%d passes fmt.Sprintf to SQL method %s (RGT-367/RGT-368)", rel, pos.Line, fnName)
-							}
+						if why, bad := sqlGuardViolation(call); bad {
+							pos := fset.Position(call.Pos())
+							t.Errorf("%s:%d passes %s to SQL method %s (RGT-367/RGT-368)", rel, pos.Line, why, fnName)
 						}
 					}
 				}
@@ -767,6 +766,63 @@ func enclosingFuncLitHasFormatParam(root ast.Node, target *ast.CallExpr) bool {
 	return found
 }
 
+// TestASVS_V5_SQLGuardAcceptsAndRejects pins the behaviour of the SQL AST guard
+// used by TestASVS_V5_SourceScanNoShellExecAndAllowlistedImports: constant and
+// placeholder queries are accepted; inline fmt.Sprintf and inline concatenation
+// with a non-constant operand are rejected for Exec*, Query*, QueryRow* and
+// Prepare*. Queries assembled in a local variable first are deliberately out of
+// scope (no dataflow tracking) and are asserted as accepted so the documented
+// limit cannot silently change.
+func TestASVS_V5_SQLGuardAcceptsAndRejects(t *testing.T) {
+	scan := func(t *testing.T, src string) []string {
+		t.Helper()
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, "sample.go", src, 0)
+		if err != nil {
+			t.Fatalf("ParseFile: %v", err)
+		}
+		var got []string
+		ast.Inspect(f, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				if why, bad := sqlGuardViolation(call); bad {
+					got = append(got, why)
+				}
+			}
+			return true
+		})
+		return got
+	}
+
+	const pre = `package sample
+import ("context"; "database/sql"; "fmt")
+var _ = fmt.Sprintf
+var _ context.Context
+`
+	for _, tc := range []struct {
+		name string
+		body string
+		want []string
+	}{
+		{"constant query with placeholder", `func f(ctx context.Context, db *sql.DB, v string) { _, _ = db.ExecContext(ctx, "UPDATE t SET a = ? WHERE b = ?", v, v) }`, nil},
+		{"constant multi-line concatenation", `func f(ctx context.Context, db *sql.DB) { _, _ = db.ExecContext(ctx, "INSERT INTO t (k) VALUES (?) "+"ON CONFLICT(k) DO NOTHING", 1) }`, nil},
+		{"parenthesised constant concatenation", `func f(db *sql.DB) { _, _ = db.Exec(("SELECT 1 " + "FROM t")) }`, nil},
+		{"query passed by name (documented dataflow limit)", `func f(ctx context.Context, db *sql.DB, v string) { q := "SELECT '" + v + "'"; _, _ = db.QueryContext(ctx, q) }`, nil},
+		{"fmt.Sprintf inside ExecContext", `func f(ctx context.Context, db *sql.DB, v string) { _, _ = db.ExecContext(ctx, fmt.Sprintf("DELETE FROM t WHERE a = '%s'", v)) }`, []string{"fmt.Sprintf"}},
+		{"fmt.Sprintf inside Query", `func f(db *sql.DB, v string) { _, _ = db.Query(fmt.Sprintf("SELECT %s", v)) }`, []string{"fmt.Sprintf"}},
+		{"fmt.Sprintf inside Prepare", `func f(db *sql.DB, v string) { _, _ = db.Prepare(fmt.Sprintf("SELECT %s", v)) }`, []string{"fmt.Sprintf"}},
+		{"concatenation inside ExecContext", `func f(ctx context.Context, db *sql.DB, v string) { _, _ = db.ExecContext(ctx, "DELETE FROM t WHERE a = '"+v+"'") }`, []string{"a non-constant string concatenation"}},
+		{"concatenation inside QueryRow", `func f(db *sql.DB, v string) { _ = db.QueryRow("SELECT a FROM t WHERE b = " + v) }`, []string{"a non-constant string concatenation"}},
+		{"concatenation inside PrepareContext", `func f(ctx context.Context, db *sql.DB, v string) { _, _ = db.PrepareContext(ctx, "SELECT a FROM " + v) }`, []string{"a non-constant string concatenation"}},
+		{"parenthesised concatenation inside Query", `func f(db *sql.DB, v string) { _, _ = db.Query(("SELECT " + v)) }`, []string{"a non-constant string concatenation"}},
+		{"call on a transaction", `func f(tx *sql.Tx, v string) { _, _ = tx.Exec("UPDATE t SET a = " + v) }`, []string{"a non-constant string concatenation"}},
+	} {
+		got := scan(t, pre+tc.body)
+		if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+			t.Errorf("%s: got violations %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 // formatArgIndex returns the index of the format string argument for any method
 // or package function that takes a printf/scanf format specifier (including
 // fmt.*, log.*, testing.TB.*, cobra.Command.Printf, mcp.Server.logf, etc.).
@@ -782,12 +838,44 @@ func formatArgIndex(fn string) (int, bool) {
 
 func sqlQueryArgIndex(fn string) (int, bool) {
 	switch fn {
-	case "Exec", "Query", "QueryRow":
+	case "Exec", "Query", "QueryRow", "Prepare":
 		return 0, true
-	case "ExecContext", "QueryContext", "QueryRowContext":
+	case "ExecContext", "QueryContext", "QueryRowContext", "PrepareContext":
 		return 1, true
 	}
 	return 0, false
+}
+
+// sqlGuardViolation reports whether call is an Exec*/Query*/Prepare* method call
+// whose query argument is, syntactically and directly in the argument list,
+// (a) a fmt.Sprintf call, or (b) a `+` concatenation with at least one
+// non-literal operand (e.g. "... '"+v+"'"). It does no dataflow tracking: a query
+// built in a local variable first and then passed by name is out of its reach
+// (covered by the manual review recorded in docs/security/asvs/V5.md section 4).
+func sqlGuardViolation(call *ast.CallExpr) (string, bool) {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return "", false
+	}
+	qIdx, ok := sqlQueryArgIndex(sel.Sel.Name)
+	if !ok || qIdx >= len(call.Args) {
+		return "", false
+	}
+	arg := call.Args[qIdx]
+	for {
+		p, ok := arg.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		arg = p.X
+	}
+	if isSprintfCall(arg) {
+		return "fmt.Sprintf", true
+	}
+	if b, ok := arg.(*ast.BinaryExpr); ok && b.Op == token.ADD && !isConstantStringExpr(b) {
+		return "a non-constant string concatenation", true
+	}
+	return "", false
 }
 
 // isConstantFormatArg reports whether expr is a constant string literal (or
