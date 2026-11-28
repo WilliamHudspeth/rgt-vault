@@ -53,7 +53,7 @@ func (p *KeyringProvider) GetMasterSecret() ([]byte, error) {
 		if errors.Is(err, errKeyNotFound) {
 			return nil, p.missingError()
 		}
-		return nil, fmt.Errorf("read OS keyring entry %q/%q: %w", p.Service, p.User, err)
+		return nil, fmt.Errorf("read OS keyring entry %q/%q: %w", p.Service, p.User, classifyKeyringError(err))
 	}
 	if encoded == "" {
 		return nil, p.missingError()
@@ -77,7 +77,7 @@ func (p *KeyringProvider) RotateMasterSecret() ([]byte, error) {
 	}
 	if err := keyringSet(p.Service, p.User, base64.URLEncoding.EncodeToString(raw)); err != nil {
 		Wipe(raw)
-		return nil, fmt.Errorf("write OS keyring entry %q/%q: %w", p.Service, p.User, err)
+		return nil, fmt.Errorf("write OS keyring entry %q/%q: %w", p.Service, p.User, classifyKeyringError(err))
 	}
 	return raw, nil
 }
@@ -101,7 +101,7 @@ func (p *KeyringProvider) InitializeIfMissing() ([]byte, error) {
 	case err == nil && existing != "":
 		return decodeKeyringSecret(existing)
 	case err != nil && !errors.Is(err, errKeyNotFound):
-		return nil, fmt.Errorf("read OS keyring entry %q/%q: %w", p.Service, p.User, err)
+		return nil, fmt.Errorf("read OS keyring entry %q/%q: %w", p.Service, p.User, classifyKeyringError(err))
 	}
 	return p.RotateMasterSecret()
 }

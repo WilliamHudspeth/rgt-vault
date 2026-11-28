@@ -255,3 +255,29 @@ existing sealed blob is not replaced without `--force`/`--update`. At run time t
 provider reads `VAULT_DPAPI_BLOB`, `VAULT_KEYCHAIN_SERVICE` / `VAULT_KEYCHAIN_ACCOUNT` and
 `VAULT_TPM_PRIV` / `VAULT_TPM_PUB`, as in Python. TPM sealing and DPAPI need the real hardware or OS
 and are not exercised by the automated tests.
+
+## Providers
+
+`--provider` / `RGT_VAULT_PROVIDER` chooses where the vault's master key lives: `keyring` (the default),
+`file` or `platform`. On a headless server, a container or any host without a desktop keyring, use `file`:
+
+```bash
+rgt-vault init --provider file                     # key at ~/.config/rgt-vault/keys/<vault-id>.key (0600)
+rgt-vault serve --provider file --policy policy.yaml
+rgt-vault --provider file --master-key-file /srv/keys/master.key init   # or RGT_VAULT_MASTER_KEY_FILE
+```
+
+Under systemd the `file` provider reads `$CREDENTIALS_DIRECTORY/rgt-vault-master`
+(`LoadCredentialEncrypted=`), so the key can be sealed at rest with `systemd-creds` (TPM2 or host key).
+To move an existing keyring vault to a key file, or to provision a key before `init`:
+
+```bash
+rgt-vault provider seal file --from-keyring --out ~/keys/master.key   # or --generate / --master-file F
+rgt-vault provider seal file --generate --out - | systemd-creds encrypt --name=rgt-vault-master - OUT
+```
+
+The key file is refused when other users could read or replace it (mode, owner, hard links, a writable
+directory on its path; on Windows any ACE beyond you, SYSTEM and Administrators). When the keyring is
+unreachable, `init` stops before creating anything and lists these options. A plain key file is weaker than
+the TPM or DPAPI at rest. Read [providers.md](providers.md) for the checks, the systemd recipe and the threat
+model.

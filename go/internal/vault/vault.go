@@ -266,6 +266,11 @@ func (v *Vault) load(ctx context.Context) error {
 		return fmt.Errorf("vault: stat keychain: %w", statErr)
 	}
 
+	if b, ok := v.provider.(VaultBinder); ok {
+		if err := b.BindVault(v.vaultID); err != nil {
+			return err
+		}
+	}
 	if fresh {
 		if b, ok := v.provider.(Bootstrapper); ok {
 			if err := b.BootstrapMasterSecret(); err != nil {
@@ -291,10 +296,46 @@ func (v *Vault) load(ctx context.Context) error {
 		}
 	}
 	if err != nil {
+		if errors.Is(err, keychain.ErrUnwrapFailed) {
+			return v.explainUnwrap(err)
+		}
 		return err
+	}
+	if r, ok := v.provider.(MasterRecovery); ok {
+		if err := r.ConfirmMasterSecret(v.vaultID, master); err != nil {
+			_ = km.Close()
+			keychain.Wipe(dek)
+			return err
+		}
 	}
 	v.km, v.dek = km, dek
 	return nil
+}
+
+// explainUnwrap turns "unable to unwrap DEK" into a message that names the
+// key source and the vault, and says whether the previous master secret
+// kept by an interrupted rotation (MasterRecovery) would open it. It never
+// switches keys on its own.
+func (v *Vault) explainUnwrap(orig error) error {
+	src := "the master secret"
+	if l, ok := v.provider.(keyLocator); ok {
+		src += " from " + l.Location()
+	}
+	if r, ok := v.provider.(MasterRecovery); ok {
+		if prev, err := r.PreviousMasterSecret(); err == nil {
+			km := keychain.New(v.keychainPath)
+			dek, lerr := km.Load(prev, v.vaultID, v.keyEpoch)
+			keychain.Wipe(dek)
+			keychain.Wipe(prev)
+			_ = km.Close()
+			if lerr == nil {
+				return fmt.Errorf("vault %s: %s does not unwrap keychain.json, but the PREVIOUS master secret, kept by an "+
+					"interrupted master-key rotation, does. Nothing was changed; %s: %w", v.vaultID, src, r.RecoveryHint(), orig)
+			}
+		}
+	}
+	return fmt.Errorf("vault %s: %s does not match this vault (keychain.json cannot be unwrapped with it; is it the "+
+		"right key for this vault?): %w", v.vaultID, src, orig)
 }
 
 // recoverRotation completes a rotation that was interrupted around the

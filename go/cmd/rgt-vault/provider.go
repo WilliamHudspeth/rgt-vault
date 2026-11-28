@@ -9,10 +9,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/secfile"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
@@ -24,18 +26,119 @@ var (
 	sealMacOS       = providers.SealMacOSKeychain
 	sealTPM         = providers.SealTPM
 	keyringProvider = func() vault.MasterProvider { return providers.NewKeyringProvider("", "") }
+	// stdoutIsTerminal reports whether w is a terminal (seal file --out -; enroll.go).
+	stdoutIsTerminal = isTerminal
 )
+
+func newSealFileCmd(stdout io.Writer) *cobra.Command {
+	var src masterSource
+	var out string
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "file",
+		Short: "Write the master secret to a key file for `--provider file`",
+		Long: "Write the master secret as urlsafe-base64 of 32 bytes plus a newline (the keyring's text form) to\n" +
+			"--out, created 0600 with O_EXCL (Windows: an owner+SYSTEM DACL). It is the migration path from the\n" +
+			"keyring (--from-keyring) and the way to provision a key before `init --provider file\n" +
+			"--master-key-file PATH`. --out - writes to standard output, only when it is not a terminal (to\n" +
+			"pipe into `systemd-creds encrypt`). An existing file is replaced only with --force.\n\n" +
+			"A key file is weaker than TPM or DPAPI at rest unless it is delivered as an encrypted systemd\n" +
+			"credential: docs/guides/providers.md.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if out == "" {
+				return errors.New("--out PATH is required (\"-\" for standard output)")
+			}
+			secret, err := src.secret(false)
+			if err != nil {
+				return err
+			}
+			defer providers.Wipe(secret)
+			if len(secret) != providers.MasterSecretSize {
+				return fmt.Errorf("the file provider holds exactly %d bytes; this source has %d "+
+					"(a --master-file must hold exactly 32 raw bytes)", providers.MasterSecretSize, len(secret))
+			}
+			text := providers.EncodeKeyFile(secret)
+			defer providers.Wipe(text)
+			if out == "-" {
+				if stdoutIsTerminal(stdout) {
+					return errors.New("refusing to print the master key to a terminal: redirect it (--out - | systemd-creds encrypt ...) or use --out PATH")
+				}
+				_, err := stdout.Write(text)
+				return err
+			}
+			path, err := server.ExpandHome(out)
+			if err != nil {
+				return err
+			}
+			if err := refuseOverwrite(path, force); err != nil {
+				return err
+			}
+			if err := secfile.EnsureDir(filepath.Dir(path)); err != nil {
+				return err
+			}
+			write := secfile.CreateSecret
+			if force {
+				// Hold the key's lock for the whole replacement and refuse
+				// while a rotation is unresolved (review MED-A): <key>.prev
+				// may be the only key that opens its vault.
+				if _, err := os.Stat(path); err == nil {
+					unlock, err := secfile.TryLock(providers.LockPath(path), 5*time.Second)
+					if err != nil {
+						return fmt.Errorf("refusing to replace %s: %w (another rgt-vault process may be rotating it)", path, err)
+					}
+					defer unlock()
+				}
+				if _, err := os.Lstat(providers.PrevPath(path)); err == nil {
+					return fmt.Errorf("refusing to replace %s: %s exists, the key from an unfinished master-key rotation, "+
+						"which may be the only key that opens its vault. Resolve the rotation first: open that vault (it "+
+						"recovers or confirms and removes %s), or follow the recovery hint it prints (mv %s %s)",
+						path, providers.PrevPath(path), providers.PrevPath(path), providers.PrevPath(path), path)
+				}
+				write = secfile.ReplaceSecret
+				// The key being replaced may be a live vault's only key: keep it
+				// under a name nothing ever removes automatically (review
+				// MED-2; .prev belongs to rotations and is auto-removed), and
+				// drop the vault binding so the new key can serve a new vault.
+				if old, err := secfile.OpenSecret(path, secfile.Options{MaxSize: providers.MaxKeyFileSize}); err == nil {
+					kept := path + ".replaced-" + time.Now().UTC().Format("20060102T150405.000000000Z")
+					err = secfile.CreateSecret(kept, old)
+					providers.Wipe(old)
+					if err != nil {
+						return fmt.Errorf("keeping the replaced key as %s: %w", kept, err)
+					}
+					fmt.Fprintf(stdout, "The replaced key is kept in %s: it is the only key of the vault that used it. "+
+						"Delete it yourself once you are sure that vault is gone or re-keyed.\n", kept)
+				} else if !errors.Is(err, os.ErrNotExist) {
+					return fmt.Errorf("refusing to replace %s: %w", path, err)
+				}
+				if err := os.Remove(providers.VaultIDPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
+					return err
+				}
+			}
+			if err := write(path, text); err != nil {
+				return err
+			}
+			fmt.Fprintf(stdout, "Wrote the master key to %s (0600).\nUse it with: rgt-vault --provider file --master-key-file %s serve\n", path, path)
+			return nil
+		},
+	}
+	src.register(cmd)
+	cmd.Flags().StringVar(&out, "out", "", "key file to write, or - for standard output (not a terminal)")
+	cmd.Flags().BoolVar(&force, "force", false, "replace an existing key file")
+	return cmd
+}
 
 func newProviderCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 	prov := &cobra.Command{
 		Use:   "provider",
-		Short: "Provision a master-secret provider for `--provider platform`",
+		Short: "Provision a master-secret provider for `--provider platform` or `--provider file`",
 	}
 	seal := &cobra.Command{
 		Use:   "seal",
-		Short: "Seal the master secret into the Windows DPAPI, macOS Keychain or Linux TPM backend",
+		Short: "Seal the master secret into the Windows DPAPI, macOS Keychain or Linux TPM backend, or a key file",
 	}
-	seal.AddCommand(newSealDPAPICmd(stdout), newSealMacOSCmd(stdout), newSealTPMCmd(stdout))
+	seal.AddCommand(newSealDPAPICmd(stdout), newSealMacOSCmd(stdout), newSealTPMCmd(stdout), newSealFileCmd(stdout))
 	prov.AddCommand(seal)
 	return prov
 }

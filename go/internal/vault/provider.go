@@ -23,3 +23,42 @@ type Rotator interface {
 type Bootstrapper interface {
 	BootstrapMasterSecret() error
 }
+
+// VaultBinder is implemented by providers whose storage location depends on
+// the vault (RGT-522: the file provider's per-vault key path; RGT-535: the
+// per-vault keyring account). Open calls it once, after reading the vault id
+// and before Bootstrap/GetMasterSecret.
+type VaultBinder interface {
+	BindVault(vaultID string) error
+}
+
+// MasterRecovery is implemented by providers that keep the previous master
+// secret across a rotation until the vault has proven the new one (RGT-522:
+// the file provider's <key>.prev). It closes the window in which a crash
+// between the provider's switch and the re-wrapped keychain would leave no
+// key that opens the vault.
+type MasterRecovery interface {
+	// PreviousMasterSecret returns the secret from before the last,
+	// unconfirmed rotation; an error (wrapping fs.ErrNotExist) when none is
+	// kept.
+	PreviousMasterSecret() ([]byte, error)
+	// ConfirmMasterSecret is called once master has unwrapped keychain.json
+	// of vault vaultID: the provider may drop the previous secret (if it
+	// still holds master) and record which vault the key belongs to. An
+	// error fails the open.
+	ConfirmMasterSecret(vaultID string, master []byte) error
+	// RecoveryHint tells the operator how to restore the previous secret.
+	RecoveryHint() string
+}
+
+// keyLocator is implemented by providers that can name where the master
+// secret is kept (never the secret itself).
+type keyLocator interface{ Location() string }
+
+// RotationLocker is implemented by providers that need an exclusive lock
+// for a master rotation (RGT-522: the file provider's <key>.lock).
+// RotateMaster takes it before its database transaction, so a lock held
+// elsewhere fails the rotation fast, without the database write lock held.
+type RotationLocker interface {
+	LockForRotation() (unlock func(), err error)
+}

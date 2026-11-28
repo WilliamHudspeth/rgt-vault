@@ -31,6 +31,10 @@ const DefaultDBPath = "~/.secure-vault/vault.db"
 const (
 	ProviderKeyring  = "keyring"
 	ProviderPlatform = "platform"
+	// ProviderFile is the key-file provider (RGT-522): an explicit
+	// --master-key-file, a systemd credential, or the per-vault default
+	// ~/.config/rgt-vault/keys/<vault-id>.key.
+	ProviderFile = "file"
 )
 
 // StackOptions describe the vault the server runs on: the Go equivalent of
@@ -45,10 +49,12 @@ type StackOptions struct {
 	// PolicyFile is the ABAC policy YAML. Empty means no policy: every
 	// request is denied (Python's default).
 	PolicyFile string
-	// Provider is "keyring" (default, as in Python) or "platform"
-	// (DPAPI / macOS Keychain / TPM, from the environment). Ignored when
-	// MasterProvider is set.
+	// Provider is "keyring" (default, as in Python), "platform"
+	// (DPAPI / macOS Keychain / TPM, from the environment) or "file".
+	// Ignored when MasterProvider is set.
 	Provider string
+	// MasterKeyFile is the explicit key file of the "file" provider.
+	MasterKeyFile string
 	// MasterProvider overrides Provider (tests, embedding).
 	MasterProvider vault.MasterProvider
 
@@ -127,15 +133,39 @@ func ExpandHome(p string) (string, error) {
 }
 
 // NewProvider returns the named master-secret provider (python
-// _build_provider).
+// _build_provider). The "file" provider reads its path from the
+// environment; use [NewProviderWith] to pass --master-key-file.
 func NewProvider(name string) (vault.MasterProvider, error) {
+	return NewProviderWith(name, ProviderOptions{})
+}
+
+// ProviderOptions are the provider settings that do not come from the
+// environment.
+type ProviderOptions struct {
+	// MasterKeyFile is the explicit key file of the "file" provider
+	// (empty: $RGT_VAULT_MASTER_KEY_FILE, then the systemd credential, then
+	// the per-vault default path).
+	MasterKeyFile string
+}
+
+// NewProviderWith returns the named master-secret provider.
+func NewProviderWith(name string, o ProviderOptions) (vault.MasterProvider, error) {
 	switch name {
 	case "", ProviderKeyring:
 		return providers.NewKeyringProvider("", ""), nil
 	case ProviderPlatform:
 		return providers.NewPlatformProvider()
+	case ProviderFile:
+		path := firstNonEmpty(o.MasterKeyFile, os.Getenv(providers.EnvMasterKeyFile))
+		if path != "" {
+			var err error
+			if path, err = ExpandHome(path); err != nil {
+				return nil, err
+			}
+		}
+		return providers.NewFileProvider(providers.FileOptions{Path: path})
 	default:
-		return nil, fmt.Errorf("unknown provider %q: use 'keyring' or 'platform'", name)
+		return nil, fmt.Errorf("unknown provider %q: use 'keyring', 'file' or 'platform'", name)
 	}
 }
 
@@ -178,7 +208,7 @@ func OpenStack(ctx context.Context, o StackOptions) (*Stack, error) {
 
 	prov := o.MasterProvider
 	if prov == nil {
-		if prov, err = NewProvider(o.Provider); err != nil {
+		if prov, err = NewProviderWith(o.Provider, ProviderOptions{MasterKeyFile: o.MasterKeyFile}); err != nil {
 			return nil, err
 		}
 	}
