@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/crypto"
-	"rgt-vault-server/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/crypto"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
 )
 
 var small = kdf.Params{MemoryCost: 1024, TimeCost: 1, Parallelism: 1}

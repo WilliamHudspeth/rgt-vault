@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/captoken"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/captoken"
 )
 
 var capKey = []byte("0123456789abcdef0123456789abcdef-test-key")

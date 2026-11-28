@@ -19,8 +19,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"rgt-vault-server/internal/kdf"
-	"rgt-vault-server/internal/keychain"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/keychain"
 )
 
 // Built-in cryptographic defaults and immutable format constants.

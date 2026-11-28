@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"rgt-vault-server/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
 )
 
 // selfTestKAT is the ciphertext that Python's run_crypto_selftest inputs

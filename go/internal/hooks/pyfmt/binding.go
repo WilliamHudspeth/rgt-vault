@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"rgt-vault-server/internal/captoken"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/captoken"
 )
 
 // BindingError is a context-binding failure carrying Python's

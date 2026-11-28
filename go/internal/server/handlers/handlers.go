@@ -29,14 +29,14 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"rgt-vault-server/internal/actions"
-	"rgt-vault-server/internal/approval"
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/capabilities"
-	"rgt-vault-server/internal/hooks/pyfmt"
-	"rgt-vault-server/internal/store"
-	"rgt-vault-server/internal/validation"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/actions"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/capabilities"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/hooks/pyfmt"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/validation"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // Version is reported by /healthz outside production.

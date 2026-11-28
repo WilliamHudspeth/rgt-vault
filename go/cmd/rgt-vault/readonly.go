@@ -12,8 +12,8 @@ import (
 	"sort"
 	"strings"
 
-	"rgt-vault-server/internal/audit"
-	"rgt-vault-server/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/audit"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 
 	_ "modernc.org/sqlite" // the pure-Go driver store registers too; explicit for this file
 )

@@ -5,12 +5,12 @@ import (
 	"net/http"
 	"time"
 
-	"rgt-vault-server/internal/actions"
-	"rgt-vault-server/internal/approval"
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/capabilities"
-	"rgt-vault-server/internal/server/handlers"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/actions"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/capabilities"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server/handlers"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // Config configures New.

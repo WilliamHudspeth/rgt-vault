@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"rgt-vault-server/internal/store"
-	"rgt-vault-server/internal/validation"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/validation"
 )
 
 // Sentinel errors. Every error returned by this package can be matched with

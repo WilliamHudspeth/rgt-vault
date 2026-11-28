@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
 )
 
 // TestEventWebhookHoneyFloodCannotStarveCritical (RGT-30 review MED-1c): a

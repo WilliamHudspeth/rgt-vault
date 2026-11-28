@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"rgt-vault-server/internal/actions"
-	"rgt-vault-server/internal/capabilities"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/actions"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/capabilities"
 )
 
 // ActionBridge adapts the built-in action registry (internal/actions) to

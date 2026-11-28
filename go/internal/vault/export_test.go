@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 )
 
 func TestPyJSON(t *testing.T) {

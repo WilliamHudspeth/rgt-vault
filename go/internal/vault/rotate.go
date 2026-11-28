@@ -17,9 +17,9 @@ import (
 	// "sqlite"); imported here for the vault's own rotation connection.
 	_ "modernc.org/sqlite"
 
-	"rgt-vault-server/internal/crypto"
-	"rgt-vault-server/internal/keychain"
-	"rgt-vault-server/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/crypto"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/keychain"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 )
 
 // auxConnParams are the store's connection parameters (the PRAGMAs of

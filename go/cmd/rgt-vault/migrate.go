@@ -15,8 +15,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"rgt-vault-server/internal/keychain"
-	"rgt-vault-server/internal/servecmd"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/keychain"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/servecmd"
 )
 
 // supportedMigrations is the number of schema migrations this build knows

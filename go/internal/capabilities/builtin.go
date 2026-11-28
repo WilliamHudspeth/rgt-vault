@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"rgt-vault-server/internal/hooks/pyfmt"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/hooks/pyfmt"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // Built-in capability names.

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"unicode/utf8"
 
-	"rgt-vault-server/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 )
 
 // Export dumps every secret row (ciphertext only), the audit log and the

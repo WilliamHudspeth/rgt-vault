@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"rgt-vault-server/internal/netguard"
-	"rgt-vault-server/internal/transport"
-	"rgt-vault-server/internal/validation"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/netguard"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/transport"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/validation"
 )
 
 // DefaultBaseURL is the server the TUI talks to when none is given: the vault

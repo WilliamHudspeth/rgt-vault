@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/tlstest"
-	"rgt-vault-server/internal/transport"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/tlstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/transport"
 )
 
 func TestCheckListen(t *testing.T) {

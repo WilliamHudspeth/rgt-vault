@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"rgt-vault-server/internal/captoken"
-	"rgt-vault-server/internal/hooks/pyfmt"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/captoken"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/hooks/pyfmt"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // DefaultReplayCacheSize is TwoFactorHook's replay-cache bound (Python

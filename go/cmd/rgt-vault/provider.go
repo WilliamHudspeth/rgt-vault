@@ -12,9 +12,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"rgt-vault-server/internal/providers"
-	"rgt-vault-server/internal/server"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // Seams for the provisioning backends: tests replace them (there is no TPM

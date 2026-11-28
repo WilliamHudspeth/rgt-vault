@@ -42,7 +42,7 @@ import (
 	"sync"
 	"time"
 
-	"rgt-vault-server/internal/audit"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/audit"
 
 	_ "modernc.org/sqlite" // registers the pure-Go "sqlite" driver (CGO_ENABLED=0)
 )

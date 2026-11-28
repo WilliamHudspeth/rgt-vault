@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/providers/providerstest"
-	"rgt-vault-server/internal/server"
-	"rgt-vault-server/internal/tlstest"
-	"rgt-vault-server/internal/transport"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/tlstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/transport"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // syncBuf is a bytes.Buffer safe for the server's goroutines.

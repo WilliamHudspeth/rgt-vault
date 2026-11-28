@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // Regression tests for the Gemini 4 Neon review of the G8a diff.

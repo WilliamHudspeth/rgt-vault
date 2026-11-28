@@ -8,11 +8,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"rgt-vault-server/internal/cryptopolicy"
-	"rgt-vault-server/internal/kdf"
-	"rgt-vault-server/internal/keychain"
-	"rgt-vault-server/internal/providers"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/cryptopolicy"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/keychain"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // Test seams for crypto-audit failure-path coverage.

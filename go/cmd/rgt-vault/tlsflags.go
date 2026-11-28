@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"rgt-vault-server/internal/transport"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/transport"
 )
 
 // clientTLSFlags are the transport options of every command that talks to a

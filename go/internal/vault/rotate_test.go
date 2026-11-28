@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"testing"
 
-	"rgt-vault-server/internal/keychain"
-	"rgt-vault-server/internal/providers/providerstest"
-	"rgt-vault-server/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/keychain"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 )
 
 // TestRotateDEKKeepsAllVersions is RGT-499: after RotateDEK, SUPERSEDED and

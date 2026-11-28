@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"rgt-vault-server/internal/approval"
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/hooks"
-	"rgt-vault-server/internal/servecmd"
-	"rgt-vault-server/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/hooks"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/servecmd"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 )
 
 // Audit events written by the token commands (batch H2, RGT-279 / RGT-296):

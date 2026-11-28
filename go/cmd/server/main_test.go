@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"rgt-vault-server/internal/kdf"
-	"rgt-vault-server/internal/providers/providerstest"
-	"rgt-vault-server/internal/servecmd"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/servecmd"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // The alias is a thin wrapper: its behaviour is covered in

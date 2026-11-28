@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/validation"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/validation"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // Every hook type must satisfy Hook.

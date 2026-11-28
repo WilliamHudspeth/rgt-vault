@@ -74,14 +74,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"rgt-vault-server/internal/approval"
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/hooks"
-	"rgt-vault-server/internal/kdf"
-	"rgt-vault-server/internal/server"
-	"rgt-vault-server/internal/server/handlers"
-	"rgt-vault-server/internal/transport"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/hooks"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server/handlers"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/transport"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // Defaults of Python's `rgt-vault serve` (decision D6).

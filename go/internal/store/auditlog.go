@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"rgt-vault-server/internal/audit"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/audit"
 )
 
 // AuditEvent is one audit entry to append. SecretName and AgentID are

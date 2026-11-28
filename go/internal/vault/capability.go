@@ -21,8 +21,8 @@ import (
 	"strconv"
 	"strings"
 
-	"rgt-vault-server/internal/captoken"
-	"rgt-vault-server/internal/hooks/pyfmt"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/captoken"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/hooks/pyfmt"
 )
 
 var (

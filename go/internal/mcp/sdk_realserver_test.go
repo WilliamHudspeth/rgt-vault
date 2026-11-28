@@ -25,12 +25,12 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/captoken"
-	"rgt-vault-server/internal/kdf"
-	rgtmcp "rgt-vault-server/internal/mcp"
-	"rgt-vault-server/internal/providers/providerstest"
-	"rgt-vault-server/internal/server"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/captoken"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	rgtmcp "github.com/WilliamHudspeth/rgt-vault/go/internal/mcp"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
 )
 
 // realPolicy allows everything except the agent "intruder" (denied

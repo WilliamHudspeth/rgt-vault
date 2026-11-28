@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"rgt-vault-server/internal/validation"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/validation"
 )
 
 // Scope is a permission carried by a token in the per-agent token store.

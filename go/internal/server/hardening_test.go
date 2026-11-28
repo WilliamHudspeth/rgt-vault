@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/server/handlers"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server/handlers"
 )
 
 // hardenedServer builds a router over a real (test) vault with the supplied

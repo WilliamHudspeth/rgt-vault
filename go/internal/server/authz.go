@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/server/handlers"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server/handlers"
 )
 
 // Route authorization (batch H1). Every authenticated route requires a

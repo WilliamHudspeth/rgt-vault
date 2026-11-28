@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/captoken"
-	"rgt-vault-server/internal/hooks"
-	"rgt-vault-server/internal/kdf"
-	"rgt-vault-server/internal/providers/providerstest"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/captoken"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/hooks"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 var testKey = []byte("0123456789abcdef0123456789abcdef")

@@ -10,8 +10,8 @@ import (
 
 	"golang.org/x/crypto/blake2b"
 
-	"rgt-vault-server/internal/hooks/pyfmt"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/hooks/pyfmt"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // SensitiveKeys matches map keys whose values are always redacted

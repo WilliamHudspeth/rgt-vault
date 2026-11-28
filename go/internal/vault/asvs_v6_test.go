@@ -15,11 +15,11 @@ import (
 	"strings"
 	"testing"
 
-	"rgt-vault-server/internal/crypto"
-	"rgt-vault-server/internal/cryptopolicy"
-	"rgt-vault-server/internal/kdf"
-	"rgt-vault-server/internal/keychain"
-	"rgt-vault-server/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/crypto"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/cryptopolicy"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/keychain"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 )
 
 const asvsV6Policy = `

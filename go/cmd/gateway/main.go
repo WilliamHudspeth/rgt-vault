@@ -30,9 +30,9 @@ import (
 	"syscall"
 	"time"
 
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/gateway"
-	"rgt-vault-server/internal/transport"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/gateway"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/transport"
 )
 
 func defaultTokenPath() string {

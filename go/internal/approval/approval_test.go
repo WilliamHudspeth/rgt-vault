@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/totp"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/totp"
 )
 
 func waitPending(t *testing.T, b *Broker, n int) []Request {

@@ -31,8 +31,8 @@ import (
 	"sync"
 	"time"
 
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/server/handlers"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server/handlers"
 )
 
 // DefaultMaxBodyBytes is the default request-body limit (1 MiB).

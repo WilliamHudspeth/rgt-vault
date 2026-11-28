@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"rgt-vault-server/internal/servecmd"
-	"rgt-vault-server/internal/server"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/servecmd"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 func newExportCmd(vf *servecmd.VaultFlags, stdout io.Writer) *cobra.Command {

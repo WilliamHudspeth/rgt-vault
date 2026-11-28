@@ -13,7 +13,7 @@ import (
 	"reflect"
 	"testing"
 
-	"rgt-vault-server/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
 )
 
 // TestPythonServerParity: a vault created by the REAL Python VaultManager

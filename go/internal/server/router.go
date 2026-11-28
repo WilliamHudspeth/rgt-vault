@@ -6,8 +6,8 @@ package server
 import (
 	"net/http"
 
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server/handlers"
 	"github.com/go-chi/chi/v5"
-	"rgt-vault-server/internal/server/handlers"
 )
 
 // NewRouter creates the chi router with all routes and middleware. Most

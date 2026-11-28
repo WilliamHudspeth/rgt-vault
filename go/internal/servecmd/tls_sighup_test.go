@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/tlstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/tlstest"
 )
 
 // SIGHUP reloads the certificate immediately, with file polling off.

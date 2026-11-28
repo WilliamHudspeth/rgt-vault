@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"rgt-vault-server/internal/kdf"
-	"rgt-vault-server/internal/providers/providerstest"
-	"rgt-vault-server/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 )
 
 // testParams are cheap Argon2 parameters for keychains created in tests.

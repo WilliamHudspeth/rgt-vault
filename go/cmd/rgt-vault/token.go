@@ -12,9 +12,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/servecmd"
-	"rgt-vault-server/internal/server"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/servecmd"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
 )
 
 // `rgt-vault token ...`: manage the per-agent token store (batch H1).

@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"rgt-vault-server/internal/audit"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/audit"
 )
 
 // Secret status values stored in secrets.status.

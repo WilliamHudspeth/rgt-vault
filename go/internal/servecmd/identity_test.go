@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"rgt-vault-server/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
 )
 
 // `serve` defaults to the per-agent token store (batch H1).

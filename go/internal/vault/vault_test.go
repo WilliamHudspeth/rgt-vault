@@ -11,9 +11,9 @@ import (
 	"sync"
 	"testing"
 
-	"rgt-vault-server/internal/approval"
-	"rgt-vault-server/internal/providers/providerstest"
-	"rgt-vault-server/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 )
 
 const offHookAllow = `{"hook_id": "off", "decision": "allow", "reason": "hook disabled"}`

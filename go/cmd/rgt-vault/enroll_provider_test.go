@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"rgt-vault-server/internal/providers"
-	"rgt-vault-server/internal/providers/providerstest"
-	"rgt-vault-server/internal/totp"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/totp"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 func TestEnroll2FA(t *testing.T) {

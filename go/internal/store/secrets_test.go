@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/audit"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/audit"
 )
 
 func newStore(t *testing.T) *Store {

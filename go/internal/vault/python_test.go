@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"testing"
 
-	"rgt-vault-server/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
 )
 
 type pyExpect struct {

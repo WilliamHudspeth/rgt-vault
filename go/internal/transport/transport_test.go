@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"rgt-vault-server/internal/tlstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/tlstest"
 )
 
 // logSink collects Logf output.

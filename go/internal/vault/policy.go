@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 
-	"rgt-vault-server/internal/policy"
-	"rgt-vault-server/internal/validation"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/policy"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/validation"
 )
 
 // Simulate evaluates the ABAC policy without touching any secret (python

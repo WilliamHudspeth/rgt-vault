@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"rgt-vault-server/internal/hooks/pyfmt"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/hooks/pyfmt"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // Schema validates a capability payload at the vault boundary. Errors match

@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"rgt-vault-server/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
 )
 
 const testOperatorToken = "operator-test-token-0123456789abcdef"

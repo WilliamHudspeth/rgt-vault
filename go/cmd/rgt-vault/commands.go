@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"rgt-vault-server/internal/transport"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/transport"
 )
 
 // exitError carries a specific process exit code (default for errors is 1).

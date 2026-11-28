@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"rgt-vault-server/internal/providers/providerstest"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers/providerstest"
 )
 
 // Compile-time structural conformance (no import of the vault package).

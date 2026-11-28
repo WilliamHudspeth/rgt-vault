@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"rgt-vault-server/internal/approval"
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/store"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // Approval hardening (batch H2). The operator endpoints write one audit row

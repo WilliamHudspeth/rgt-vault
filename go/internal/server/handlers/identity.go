@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/validation"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/validation"
 )
 
 // Identity (batch H1).

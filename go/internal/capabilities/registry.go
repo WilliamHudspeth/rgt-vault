@@ -15,8 +15,8 @@ import (
 	"sort"
 	"sync"
 
-	"rgt-vault-server/internal/hooks/pyfmt"
-	"rgt-vault-server/internal/vault"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/hooks/pyfmt"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // ErrRegistration is a programming error at registration time (Python

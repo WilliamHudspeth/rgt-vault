@@ -13,8 +13,8 @@ import (
 	"sync"
 	"testing"
 
-	"rgt-vault-server/internal/auth"
-	"rgt-vault-server/internal/store"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 )
 
 // Batch H2: re-enrolment of the authenticator and token changes are

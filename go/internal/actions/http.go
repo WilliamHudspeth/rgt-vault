@@ -15,7 +15,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"rgt-vault-server/internal/netguard"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/netguard"
 )
 
 // outReq is a fully validated outbound request minus the Authorization header.
