@@ -189,7 +189,7 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 	rootCmd.PersistentFlags().StringVar(&token, "token", "", "bearer token (overrides env RGT_VAULT_TOKEN and $RGT_VAULT_TOKEN_FILE; operator commands then fall back to ~/.config/rgt-vault/operator.token, all but mcp to the legacy server.token)")
 	tf.register(rootCmd)
 	var asOperator bool
-	rootCmd.PersistentFlags().BoolVar(&asOperator, "as-operator", false, "let an agent command (set, get, list, revoke, simulate, fingerprint) fall back to ~/.config/rgt-vault/operator.token")
+	rootCmd.PersistentFlags().BoolVar(&asOperator, "as-operator", false, "let an agent command (set, get, list, revoke, simulate, fingerprint, use, actions) fall back to ~/.config/rgt-vault/operator.token")
 
 	// --db / --policy / --provider select the vault for every subcommand that
 	// opens the vault files (Python's global options).

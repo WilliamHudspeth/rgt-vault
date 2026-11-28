@@ -21,7 +21,7 @@ var clientCommands = []struct {
 	{"rotate", []string{"rotate", "--target", "dek"}},
 	{"verify-audit", []string{"verify-audit"}},
 	{"audit", []string{"audit"}},
-	{"use", []string{"use", "k", "--action", "echo"}},
+	{"use", []string{"use", "k", "--action", "echo", "--purpose", "p"}},
 	{"actions", []string{"actions"}},
 	{"requests list", []string{"requests", "list"}},
 	{"approve", []string{"requests", "approve", "r1", "--totp-code", "123456"}},
@@ -134,6 +134,12 @@ func TestGetWithoutLeaseScopeHint(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr, "insufficient scope for this route (HTTP 403 AuthorizationError, incident c0ffee)") ||
 		!strings.Contains(stderr, "agent,lease") || !strings.Contains(stderr, "--offline") {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	// The same class for an agent-name mismatch is not a scope problem.
+	srv3, _ := recordingServer(t, 403, `{"error":"AuthorizationError","detail":"agent does not match the authenticated token","incident_id":"c0ffee"}`)
+	_, _, stderr = runCLI(t, "", "--host", srv3.URL, "--token", cliToken, "get", "k", "--agent", "other")
+	if strings.Contains(stderr, "lease") || !strings.Contains(stderr, "agent does not match the authenticated token (HTTP 403 AuthorizationError") {
+		t.Errorf("agent mismatch got the scope hint: %q", stderr)
 	}
 	// Another 403 (a policy denial) gets no scope hint.
 	srv2, _ := recordingServer(t, 403, `{"error":"PolicyDeniedError","detail":"denied","incident_id":"c0ffee"}`)

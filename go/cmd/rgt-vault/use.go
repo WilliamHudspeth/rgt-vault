@@ -74,6 +74,9 @@ func (c *cli) runUse(name, namespace, agent, purpose, action string, params map[
 	if action == "" {
 		return errors.New("--action is required (rgt-vault actions lists them)")
 	}
+	if purpose == "" {
+		return errors.New("--purpose is required: the server refuses an empty purpose, and the policy decides on it")
+	}
 	reqBody := struct {
 		Action  string         `json:"action"`
 		Agent   string         `json:"agent,omitempty"`
@@ -85,7 +88,7 @@ func (c *cli) runUse(name, namespace, agent, purpose, action string, params map[
 		return err
 	}
 	if status != http.StatusOK {
-		return apiError("use", status, body)
+		return c.apiErr("use", status, body)
 	}
 	var resp struct {
 		Result json.RawMessage `json:"result"`
@@ -97,7 +100,8 @@ func (c *cli) runUse(name, namespace, agent, purpose, action string, params map[
 	if err := json.Indent(&out, resp.Result, "", "  "); err != nil {
 		return fmt.Errorf("parsing response: %w", err)
 	}
-	fmt.Fprintln(c.stdout, out.String())
+	// The result is upstream data: escape what a terminal would act on.
+	fmt.Fprintln(c.stdout, escapeJSONText(out.String()))
 	return nil
 }
 
@@ -105,7 +109,7 @@ func newUseCmd(newCLI func() *cli) *cobra.Command {
 	var namespace, agent, purpose, action, paramsJSON string
 	var pairs []string
 	cmd := &cobra.Command{
-		Use:   "use <name> --action ACTION [--purpose P] [--param k=v ...] [--params-json FILE|-]",
+		Use:   "use <name> --action ACTION --purpose P [--param k=v ...] [--params-json FILE|-]",
 		Short: "Run an action with a secret (the server uses it; you never see it)",
 		Long: "Ask the server to run a registered action with a secret and print the action's result as JSON.\n" +
 			"The server unseals the secret, calls the upstream service with it and returns only the result:\n" +
@@ -113,7 +117,7 @@ func newUseCmd(newCLI func() *cli) *cobra.Command {
 			"and the parameters each accepts.\n\n" +
 			"Parameters: --param key=value (repeatable, the value is always a string) and/or --params-json\n" +
 			"FILE (or - for stdin), a JSON object for values that are not strings (messages, headers, ...).\n" +
-			"A key given twice is an error. The token needs the agent scope; a refusal prints the server's reason\n" +
+			"A key given twice is an error. --action and --purpose are required. The token needs the agent scope; a refusal prints the server's reason\n" +
 			"and incident id.\n\n" +
 			"Examples:\n" +
 			"  rgt-vault use GITHUB_TOKEN --namespace ci --action http_get_with_auth \\\n" +
@@ -131,12 +135,13 @@ func newUseCmd(newCLI func() *cli) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "default", "secret namespace")
-	cmd.Flags().StringVar(&action, "action", "", "action to run (required; see `rgt-vault actions`)")
-	cmd.Flags().StringVar(&purpose, "purpose", "", "purpose label, checked by the policy")
+	cmd.Flags().StringVar(&action, "action", "", "action to run (required; list them with: rgt-vault actions)")
+	cmd.Flags().StringVar(&purpose, "purpose", "", "purpose label (required): the policy decides on it and the audit log records it")
 	cmd.Flags().StringVar(&agent, "agent", "", "agent label: with per-agent tokens the server uses the token's agent and refuses a different one (only legacy shared-token servers use it)")
 	cmd.Flags().StringArrayVar(&pairs, "param", nil, "action parameter key=value (repeatable; string values)")
 	cmd.Flags().StringVar(&paramsJSON, "params-json", "", "JSON object of action parameters from FILE, or - for stdin")
 	_ = cmd.MarkFlagRequired("action")
+	_ = cmd.MarkFlagRequired("purpose")
 	return cmd
 }
 
@@ -147,7 +152,7 @@ func (c *cli) runActions() error {
 		return err
 	}
 	if status != http.StatusOK {
-		return apiError("actions", status, body)
+		return c.apiErr("actions", status, body)
 	}
 	var resp struct {
 		Actions []struct {

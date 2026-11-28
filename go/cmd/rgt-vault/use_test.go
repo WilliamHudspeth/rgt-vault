@@ -252,10 +252,10 @@ func TestUseFlagsAndParams(t *testing.T) {
 
 	// agent and purpose are omitted when not given; params is always an object.
 	*seen = nil
-	if code, _, e := run("", "use", "k", "--action", "echo"); code != 0 {
+	if code, _, e := run("", "use", "k", "--action", "echo", "--purpose", "p"); code != 0 {
 		t.Fatalf("exit %d %s", code, e)
 	}
-	if b, _ := json.Marshal((*seen)[0].Body); string(b) != `{"action":"echo","params":{}}` {
+	if b, _ := json.Marshal((*seen)[0].Body); string(b) != `{"action":"echo","params":{},"purpose":"p"}` {
 		t.Errorf("minimal body %s", b)
 	}
 
@@ -264,13 +264,15 @@ func TestUseFlagsAndParams(t *testing.T) {
 	pf := filepath.Join(t.TempDir(), "p.json")
 	_ = os.WriteFile(pf, []byte(`{"k":"v"}`), 0o600)
 	bad := map[string][]string{
-		"no action":         {"use", "k"},
-		"param no equals":   {"use", "k", "--action", "echo", "--param", "oops"},
-		"param empty key":   {"use", "k", "--action", "echo", "--param", "=v"},
-		"duplicate param":   {"use", "k", "--action", "echo", "--param", "a=1", "--param", "a=2"},
-		"dup json and flag": {"use", "k", "--action", "echo", "--params-json", pf, "--param", "k=2"},
-		"missing file":      {"use", "k", "--action", "echo", "--params-json", pf + ".nope"},
-		"empty name":        {"use", "", "--action", "echo"},
+		"no action":         {"use", "k", "--purpose", "p"},
+		"no purpose":        {"use", "k", "--action", "echo"},
+		"empty purpose":     {"use", "k", "--action", "echo", "--purpose", ""},
+		"param no equals":   {"use", "k", "--action", "echo", "--purpose", "p", "--param", "oops"},
+		"param empty key":   {"use", "k", "--action", "echo", "--purpose", "p", "--param", "=v"},
+		"duplicate param":   {"use", "k", "--action", "echo", "--purpose", "p", "--param", "a=1", "--param", "a=2"},
+		"dup json and flag": {"use", "k", "--action", "echo", "--purpose", "p", "--params-json", pf, "--param", "k=2"},
+		"missing file":      {"use", "k", "--action", "echo", "--purpose", "p", "--params-json", pf + ".nope"},
+		"empty name":        {"use", "", "--action", "echo", "--purpose", "p"},
 	}
 	for name, args := range bad {
 		if code, _, _ := run("", args...); code != 1 {
@@ -278,7 +280,7 @@ func TestUseFlagsAndParams(t *testing.T) {
 		}
 	}
 	for name, stdin := range map[string]string{"array": `[1]`, "string": `"x"`, "null": `null`, "two objects": `{"a":1}{"b":2}`, "garbage": `{`} {
-		if code, _, e := run(stdin, "use", "k", "--action", "echo", "--params-json", "-"); code != 1 || !strings.Contains(e, "--params-json") {
+		if code, _, e := run(stdin, "use", "k", "--action", "echo", "--purpose", "p", "--params-json", "-"); code != 1 || !strings.Contains(e, "--params-json") {
 			t.Errorf("params-json %s: exit %d err %q", name, code, e)
 		}
 	}
@@ -287,7 +289,7 @@ func TestUseFlagsAndParams(t *testing.T) {
 	}
 	// A server answer without a result is an error, not an empty success.
 	srv2, _ := recordingServer(t, 200, `{"ok":true}`)
-	if code, _, e := runCLI(t, "", "--host", srv2.URL, "--token", cliToken, "use", "k", "--action", "echo"); code != 1 || !strings.Contains(e, "no result") {
+	if code, _, e := runCLI(t, "", "--host", srv2.URL, "--token", cliToken, "use", "k", "--action", "echo", "--purpose", "p"); code != 1 || !strings.Contains(e, "no result") {
 		t.Errorf("no result: %d %q", code, e)
 	}
 	srv3, _ := recordingServer(t, 200, `not json`)
@@ -311,5 +313,86 @@ func TestSetRequire2FAAndNoteBody(t *testing.T) {
 	b := (*seen)[0].Body
 	if b["require_2fa"] != true || b["note"] != "deploy key" {
 		t.Errorf("body %v", b)
+	}
+}
+
+// The action result is upstream data: terminal-active characters in it are
+// escaped, and the output is still the same valid JSON (this fails without
+// escapeJSONText).
+func TestUseEscapesHostileResult(t *testing.T) {
+	isolateEnv(t)
+	const hostile = "a\u202eb\u2066c\u2028d\u007fe\u009bf\x1b[2Jg\U000e0041h\ufeffi"
+	// Raw characters, as Go's own encoder emits them for such a result.
+	raw := "a\u202eb\u2066c\u2028d\u007fe\u009bf\\u001b[2Jg\U000e0041h\ufeffi"
+	srv, _ := recordingServer(t, 200, `{"ok":true,"result":{"k\u202e":"`+raw+`","n":[1,{"x":null}]}}`)
+	code, out, e := runCLI(t, "", "--host", srv.URL, "--token", cliToken, "use", "k", "--action", "echo", "--purpose", "p")
+	if code != 0 {
+		t.Fatalf("exit %d %s", code, e)
+	}
+	for _, r := range out {
+		if r != '\n' && r != ' ' && (r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || r == 0x202e || r == 0x2066 || r == 0x2028 || r == 0xfeff || r >= 0xe0000) {
+			t.Errorf("output contains raw %U: %q", r, out)
+		}
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	if got["k\u202e"] != hostile {
+		t.Errorf("value changed: %q", got["k\u202e"])
+	}
+}
+
+func TestEscapeJSONTextInvalidUTF8(t *testing.T) {
+	if got := escapeJSONText("\"a\xffb\""); got != `"a\ufffdb"` {
+		t.Errorf("got %q", got)
+	}
+}
+
+// A response over the read cap is an error that says so, not a cut body.
+func TestResponseOverLimitIsReported(t *testing.T) {
+	isolateEnv(t)
+	big := `{"ok":true,"result":{"x":"` + strings.Repeat("a", maxResponseBytes) + `"}}`
+	srv, _ := recordingServer(t, 200, big)
+	code, out, e := runCLI(t, "", "--host", srv.URL, "--token", cliToken, "use", "k", "--action", "echo", "--purpose", "p")
+	if code != 1 || out != "" || !strings.Contains(e, "exceeds the 16 MiB limit") || strings.Contains(e, "no result") {
+		t.Errorf("exit %d out-len %d err %q", code, len(out), e)
+	}
+}
+
+// 429 Retry-After reaches the error line.
+func TestRetryAfterInErrorLine(t *testing.T) {
+	isolateEnv(t)
+	for body, want := range map[string]string{
+		`{"error":"PermissionError","detail":"rate limited","incident_id":"i9"}`: "rate limited (HTTP 429 PermissionError, incident i9, retry after 30)",
+		`<html>slow down</html>`: "use failed: HTTP 429 (retry after 30)",
+	} {
+		srv := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Retry-After", "30\u009b[2J")
+			w.WriteHeader(429)
+			_, _ = io.WriteString(w, body)
+		}))
+		_, _, e := runCLI(t, "", "--host", srv.URL, "--token", cliToken, "use", "k", "--action", "echo", "--purpose", "p")
+		if !strings.Contains(e, strings.Replace(want, "retry after 30", "retry after 30?[2J", 1)) || strings.Contains(e, "\u009b") {
+			t.Errorf("stderr %q, want %q", e, want)
+		}
+	}
+	// No header: nothing added.
+	if err := apiError("x", 429, nil); strings.Contains(err.Error(), "retry") {
+		t.Errorf("%v", err)
+	}
+}
+
+func TestUseHelp(t *testing.T) {
+	_, out, _ := runCLI(t, "", "use", "--help")
+	if !strings.Contains(out, "--action string") || !strings.Contains(out, "--purpose string") || strings.Contains(out, "--action rgt-vault") {
+		t.Errorf("help flag names:\n%s", out)
+	}
+	if !strings.Contains(out, "--action ACTION --purpose P") {
+		t.Errorf("purpose is not shown as required:\n%s", out)
+	}
+	_, out, _ = runCLI(t, "", "--help")
+	if !strings.Contains(out, "fingerprint, use, actions)") {
+		t.Errorf("--as-operator help does not list use and actions:\n%s", out)
 	}
 }

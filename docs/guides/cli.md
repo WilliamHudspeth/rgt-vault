@@ -186,6 +186,7 @@ reaches the CLI. The built-in actions are `http_get_with_auth`, `http_post_with_
 - `--param key=value` is repeatable and always a string. `--params-json FILE` (or `-` for stdin) takes a
   JSON object for values that are not strings (a `messages` list, a `body` object). The two combine; a key
   given twice is an error.
+- `--action` and `--purpose` are required (the server refuses an empty purpose, and the policy decides on it).
 - The token needs the `agent` scope. A policy denial prints the server's reason and incident id (see
   "Errors" below).
 - On a server started with `--require-approval`, `use` waits until an operator decides (see below).
@@ -225,7 +226,9 @@ The incident id finds the matching line in the server log. When the answer is no
 body (a proxy's page, for example) only the status is shown (`use failed: HTTP 502`). Text from the server is
 shown with control characters replaced by `?`, so it cannot change what the terminal displays. Exit codes are
 unchanged: 1 for an error, 2 for a broken audit chain. `get` with a token that lacks the `lease` scope says
-so and points to a token with `--scope agent,lease` or to `--offline`.
+so and points to a token with `--scope agent,lease` or to `--offline`. A 429 answer adds the server's
+`Retry-After` to the line (`..., retry after 30`). The action result printed by `use` is upstream data, so
+control characters and bidirectional overrides in it are shown as `\uXXXX` escapes (the output stays valid JSON).
 
 ## Coming from the Python line
 

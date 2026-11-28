@@ -31,7 +31,7 @@ func (c *cli) fetchRequests() ([]pendingRequest, error) {
 		return nil, err
 	}
 	if status != http.StatusOK {
-		return nil, apiError("requests list", status, body)
+		return nil, c.apiErr("requests list", status, body)
 	}
 	var resp struct {
 		Requests []pendingRequest `json:"requests"`
@@ -105,7 +105,7 @@ func (c *cli) runRequestsApprove(id, totpCode string, stderr io.Writer) error {
 		return err
 	}
 	if status != http.StatusOK {
-		return apiError("approve", status, body)
+		return c.apiErr("approve", status, body)
 	}
 	fmt.Fprintf(c.stdout, "Request %s approved.\n", safeText(id, maxIDCol))
 	return nil
@@ -125,7 +125,7 @@ func (c *cli) runRequestsDeny(id, reason string) error {
 		return err
 	}
 	if status != http.StatusOK {
-		return apiError("deny", status, body)
+		return c.apiErr("deny", status, body)
 	}
 	fmt.Fprintf(c.stdout, "Request %s denied.\n", safeText(id, maxIDCol))
 	return nil
