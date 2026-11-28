@@ -1,6 +1,7 @@
 package captoken
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"time"
@@ -40,6 +41,12 @@ var _ TokenVerifier = (*HMACTokenVerifier)(nil)
 func NewHMACTokenVerifier(sharedSecret []byte, opts ...Option) (*HMACTokenVerifier, error) {
 	if len(sharedSecret) < MinSecretLen {
 		return nil, newErr(kindValidation, "shared_secret must be at least %d bytes of random material", MinSecretLen)
+	}
+	// Algorithm-confusion guard (RGT-35): an HMAC secret is random bytes,
+	// never a PEM-encoded (public) key. Keying HMAC with a public key would
+	// let anyone who has that public key forge tokens.
+	if bytes.Contains(sharedSecret, []byte("-----BEGIN")) {
+		return nil, newErr(kindValidation, "shared_secret looks like a PEM-encoded key; an HMAC key must be random secret bytes, never a public key")
 	}
 	v := &HMACTokenVerifier{secret: append([]byte(nil), sharedSecret...), now: time.Now}
 	for _, o := range opts {
@@ -95,28 +102,4 @@ func (v *HMACTokenVerifier) Verify(token string) (*CapabilityV2Token, error) {
 		return nil, newErr(kindExpired, "token for %q expired at %d", tok.Capability, tok.ExpiresAt)
 	}
 	return tok, nil
-}
-
-// Ed25519Verifier is an architectural placeholder (RGT-35 / RGT-46): it
-// exists so callers can wire asymmetric verification without changing call
-// sites. Every method returns ErrNotImplemented. No Ed25519 code is
-// provided yet; use HMACTokenVerifier.
-type Ed25519Verifier struct{}
-
-var _ TokenVerifier = (*Ed25519Verifier)(nil)
-
-// NewEd25519Verifier always fails with ErrNotImplemented, like the Python
-// constructor raising NotImplementedError.
-func NewEd25519Verifier(_ ...any) (*Ed25519Verifier, error) {
-	return nil, newErr(kindNotImplemented, "Ed25519Verifier is an architectural stub; use HMACTokenVerifier")
-}
-
-// Sign implements TokenVerifier.
-func (*Ed25519Verifier) Sign(string, string, int, map[string]any, int) (string, error) {
-	return "", newErr(kindNotImplemented, "Ed25519 signing")
-}
-
-// Verify implements TokenVerifier.
-func (*Ed25519Verifier) Verify(string) (*CapabilityV2Token, error) {
-	return nil, newErr(kindNotImplemented, "Ed25519 verification")
 }

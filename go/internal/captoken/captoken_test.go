@@ -369,8 +369,10 @@ func TestDecodeErrors(t *testing.T) {
 	}
 }
 
-func TestEd25519Placeholder(t *testing.T) {
-	if v, err := NewEd25519Verifier(); v != nil || !errors.Is(err, ErrNotImplemented) {
+// TestEd25519ZeroValue: the RGT-35 placeholder became the real verifier
+// (RGT-46); an unconfigured zero value still fails closed.
+func TestEd25519ZeroValue(t *testing.T) {
+	if v, err := NewEd25519Verifier(nil); v != nil || !errors.Is(err, ErrValidation) {
 		t.Fatalf("%v %v", v, err)
 	}
 	var tv TokenVerifier = &Ed25519Verifier{}

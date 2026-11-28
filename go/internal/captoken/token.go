@@ -46,6 +46,8 @@ type CapabilityV2Token struct {
 	ContextBindings   map[string]any
 	ExpiresAt         int64 // unix seconds; <= 0 means "never expires" (as in Python)
 	TokenID           string
+	// KeyID is the Ed25519 key id of a v3 token ("" for v2 HMAC tokens).
+	KeyID string
 }
 
 // IsExpired reports whether now is past ExpiresAt. As in Python, a token
@@ -171,6 +173,12 @@ func openEnvelope(token string) (payload, sig []byte, err error) {
 // post-signature half of HMACTokenVerifier.verify (without the expiry
 // check, which the caller does with its clock).
 func parseV2Payload(payload []byte) (*CapabilityV2Token, error) {
+	return parsePayloadVersion(payload, TokenFormatVersion)
+}
+
+// parsePayloadVersion is parseV2Payload for a given format version (v2
+// HMAC, v3 Ed25519): the claim set and its checks are the same.
+func parsePayloadVersion(payload []byte, want int64) (*CapabilityV2Token, error) {
 	data, err := decodeObject(payload)
 	if err != nil {
 		return nil, newErr(kindMalformed, "token payload not valid JSON object")
@@ -179,8 +187,8 @@ func parseV2Payload(payload []byte) (*CapabilityV2Token, error) {
 	if !ok {
 		return nil, newErr(kindMalformed, "token payload field v is not an integer")
 	}
-	if version != TokenFormatVersion {
-		return nil, newErr(kindVersion, "token format version %d not supported; this verifier only handles v%d", version, TokenFormatVersion)
+	if version != want {
+		return nil, newErr(kindVersion, "token format version %d not supported; this verifier only handles v%d", version, want)
 	}
 	agent, ok1 := data["agent_id"].(string)
 	capability, ok2 := data["capability"].(string)
