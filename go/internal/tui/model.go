@@ -4,6 +4,8 @@ package tui
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -101,6 +103,46 @@ type Model struct {
 	requestPoll time.Duration // refresh interval of the requests view
 	target      *PendingRequest
 	totpInput   string // digits typed so far; masked in the view, cleared on submit
+
+	// RGT-528: dashboard pending-request badge and optional bell.
+	pending      int       // last observed number of pending requests
+	pendingKnown bool      // a poll has answered at least once
+	bellOn       bool      // off by default; "b" toggles it
+	bell         io.Writer // where the terminal bell goes (os.Stdout by default)
+}
+
+// pendingMsg carries the number of pending requests for the dashboard badge.
+// A negative count means the poll failed; the last known count is kept.
+type pendingMsg struct{ count int }
+
+// pendingTickMsg asks for another pending-requests poll.
+type pendingTickMsg struct{}
+
+func pendingTickCmd(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(time.Time) tea.Msg { return pendingTickMsg{} })
+}
+
+func (m Model) loadPendingCmd() tea.Cmd {
+	ap := m.approver
+	if ap == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		reqs, err := ap.ListRequests()
+		if err != nil {
+			return pendingMsg{count: -1}
+		}
+		return pendingMsg{count: len(reqs)}
+	}
+}
+
+func bellCmd(w io.Writer) tea.Cmd {
+	return func() tea.Msg {
+		if w != nil {
+			_, _ = io.WriteString(w, "\a")
+		}
+		return nil
+	}
 }
 
 // totpTickCmd arms a one-second tick that emits totpTickMsg.
@@ -144,6 +186,7 @@ func New(client Client, namespace string) Model {
 		totpRemaining:    TOTPRemaining(time.Now(), TOTPPeriod),
 		clipboard:        &MemoryClipboard{},
 		clipboardTimeout: 30 * time.Second,
+		bell:             os.Stdout,
 	}
 }
 
@@ -167,7 +210,11 @@ func (m Model) WithRequestPollInterval(d time.Duration) Model {
 // Init initializes the Model by triggering the loading command and starting the
 // TOTP tick.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadCmd(), totpTickCmd())
+	cmds := []tea.Cmd{m.loadCmd(), totpTickCmd()}
+	if m.approver != nil {
+		cmds = append(cmds, m.loadPendingCmd(), pendingTickCmd(m.requestPoll))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m Model) loadCmd() tea.Cmd {
@@ -243,6 +290,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		nm, cmd, _ := m.updateRequestsMsg(msg)
 		return nm, cmd
 
+	case pendingMsg:
+		if msg.count < 0 {
+			// Poll failed: keep the last known badge and try again next tick.
+			return m, pendingTickCmd(m.requestPoll)
+		}
+		ring := m.bellOn && m.pendingKnown && msg.count > m.pending
+		m.pending = msg.count
+		m.pendingKnown = true
+		if ring {
+			return m, tea.Batch(pendingTickCmd(m.requestPoll), bellCmd(m.bell))
+		}
+		return m, pendingTickCmd(m.requestPoll)
+
+	case pendingTickMsg:
+		if m.approver == nil {
+			return m, nil
+		}
+		return m, m.loadPendingCmd()
+
 	case tea.KeyMsg:
 		if m.inRequests() {
 			return m.updateRequestsKey(msg)
@@ -269,11 +335,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.cursor++
 				}
 			case "P":
+				// Clears the local view and quits; the server keeps running.
 				m.secrets = nil
 				m.filtered = nil
 				m.search = ""
-				m.status = "vault locked"
+				m.status = "screen cleared; quitting"
 				return m, tea.Quit
+
+			case "b":
+				m.bellOn = !m.bellOn
+				if m.bellOn {
+					m.status = "bell on: rings when new requests arrive"
+				} else {
+					m.status = "bell off"
+				}
 
 			case "tab", "i":
 				return m.enterRequests()
@@ -403,7 +478,8 @@ func (m Model) View() string {
 		sb.WriteString("========================\n\n")
 		sb.WriteString("  /        Search secrets\n")
 		sb.WriteString("  r        Rotate master key\n")
-		sb.WriteString("  P        Panic lock & exit\n")
+		sb.WriteString("  P        Clear screen & quit\n")
+		sb.WriteString("  b        Toggle terminal bell on new requests (off by default)\n")
 		sb.WriteString("  t        Toggle tree view\n")
 		sb.WriteString("  a        Live audit log stream\n")
 		sb.WriteString("  tab/i    Pending approval requests (approve/deny)\n")
@@ -464,6 +540,10 @@ func (m Model) View() string {
 		auditStr = "audit: OK"
 	}
 	headerText := fmt.Sprintf("[%s] [%s] Namespace: %s", healthStr, auditStr, safeText(m.namespace, maxFieldRunes))
+	if m.approver != nil {
+		headerText = fmt.Sprintf("[%s] [%s] requests: %d Namespace: %s",
+			healthStr, auditStr, m.pending, safeText(m.namespace, maxFieldRunes))
+	}
 	sb.WriteString(headerStyle.Render(headerText) + "\n\n")
 
 	if m.err != nil {
@@ -512,7 +592,7 @@ func (m Model) View() string {
 
 	var footerParts []string
 	if m.mode == modeDashboard {
-		footerParts = append(footerParts, "[/] search", "[r] rotate", "[a] audit", "[P] panic-lock", "[t] tree", "[c] copy", "[tab] requests", "[?] help", "[q] quit")
+		footerParts = append(footerParts, "[/] search", "[r] rotate", "[a] audit", "[P] clear screen & quit", "[t] tree", "[c] copy", "[b] bell", "[tab] requests", "[?] help", "[q] quit")
 	} else if m.mode == modeSearch {
 		footerParts = append(footerParts, "[esc] cancel search", "[enter] keep filter")
 	} else if m.mode == modeConfirm {

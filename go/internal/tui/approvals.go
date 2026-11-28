@@ -32,6 +32,20 @@ const DefaultRequestPoll = 2 * time.Second
 // maxTOTPDigits bounds the TOTP entry (python: max_length=8).
 const maxTOTPDigits = 8
 
+// appendTOTPDigits adds only the decimal digits of runes, never past the cap.
+// A paste arrives as one multi-rune key message; it must not bypass either rule.
+func (m *Model) appendTOTPDigits(runes []rune) {
+	for _, r := range runes {
+		if r < '0' || r > '9' {
+			continue
+		}
+		if len(m.totpInput) >= maxTOTPDigits {
+			break
+		}
+		m.totpInput += string(r)
+	}
+}
+
 type requestsLoadedMsg struct {
 	gen  int
 	reqs []PendingRequest
@@ -209,6 +223,13 @@ func (m Model) updateRequestsKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 
 	case modeTOTPPrompt:
+		// A paste (bracketed or a tmux-style multi-rune key message) arrives as
+		// one KeyMsg. Its String() form is either "[...]" or the whole run, so
+		// handle it before the single-key switch instead of dropping it.
+		if msg.Type == tea.KeyRunes && (msg.Paste || len(msg.Runes) > 1) {
+			m.appendTOTPDigits(msg.Runes)
+			return m, nil
+		}
 		switch key {
 		case "esc":
 			m.mode, m.target, m.totpInput = modeRequests, nil, ""
@@ -228,8 +249,8 @@ func (m Model) updateRequestsKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		default:
 			// Digits only, bounded: a code can never grow without limit and
 			// stray keys cannot trigger the dashboard's shortcuts.
-			if len(key) == 1 && key[0] >= '0' && key[0] <= '9' && len(m.totpInput) < maxTOTPDigits {
-				m.totpInput += key
+			if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 {
+				m.appendTOTPDigits(msg.Runes)
 			}
 		}
 	}
@@ -248,7 +269,7 @@ func (m Model) viewRequests() string {
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
 	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	var sb strings.Builder
-	sb.WriteString(headerStyle.Render("Pending approval requests - Namespace: "+safeText(m.namespace, maxFieldRunes)) + "\n\n")
+	sb.WriteString(headerStyle.Render("Pending approval requests - all namespaces") + "\n\n")
 
 	switch {
 	case m.reqErr != nil:
