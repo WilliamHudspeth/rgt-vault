@@ -22,7 +22,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"reflect"
 	"sort"
 	"strconv"
@@ -32,15 +31,13 @@ import (
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/actions"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/capabilities"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/hooks/pyfmt"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/validation"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
-
-// Version is reported by /healthz outside production.
-const Version = "0.3.0"
 
 // Handlers holds the HTTP handlers and their dependencies.
 type Handlers struct {
@@ -353,18 +350,24 @@ func queryDefault(r *http.Request, name, def string) string {
 // GET /healthz, XML policy stubs
 // ---------------------------------------------------------------------------
 
-// HealthCheck returns server health information. No auth required.
+// HealthCheck answers GET /healthz. The route is reachable without a token
+// (the auth middleware passes it through, attaching the caller when a valid
+// token was sent), so the default body reveals nothing: exactly
+// {"status":"ok"}. Only a caller holding the audit or operator scope also
+// gets the vault id, key epoch, action list and the build version.
+// APP_ENV=production has no effect: nothing detailed is public any more.
 func (h *Handlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
-	version := Version
-	if os.Getenv("APP_ENV") == "production" {
-		version = ""
+	p, ok := PrincipalFromContext(r.Context())
+	if !ok || !p.Has(auth.ScopeAudit) { // Has(audit) is also true for operator
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":    "ok",
 		"vault_id":  h.Vault.VaultID(),
 		"key_epoch": h.Vault.KeyEpoch(),
 		"actions":   h.actionNames(),
-		"version":   version,
+		"version":   buildinfo.Version(),
 	})
 }
 

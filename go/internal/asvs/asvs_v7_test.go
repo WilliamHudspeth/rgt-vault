@@ -820,9 +820,11 @@ func TestRealServerAuthAuthzSeparationInjectionAndErrorSanitization(t *testing.T
 		}
 	}
 
-	// Global RecoverMiddleware on handler nil-Vault panic.
+	// Global RecoverMiddleware on handler nil-Vault panic. An authenticated
+	// vault route is the trigger: unauthenticated /healthz no longer touches
+	// the vault.
 	panicRouter := server.NewRouter(&handlers.Handlers{}, server.NewStoreMiddleware(tokStore))
-	recPanic := send(panicRouter, "GET", "/healthz", "", "")
+	recPanic := send(panicRouter, "GET", "/v1/secrets", agentTok, "")
 	if recPanic.Code != http.StatusInternalServerError {
 		t.Fatalf("panic status = %d, want 500", recPanic.Code)
 	}

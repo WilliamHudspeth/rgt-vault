@@ -222,7 +222,8 @@ func TestAllTwelveSubcommandsRegistered(t *testing.T) {
 	}
 	for _, name := range []string{"set", "get", "list", "revoke", "simulate", "fingerprint",
 		"rotate", "verify-audit", "audit", "init", "serve", "status",
-		"enroll-2fa", "export", "import", "migrate", "provider", "mcp"} {
+		"enroll-2fa", "export", "import", "migrate", "provider", "mcp",
+		"use", "actions", "requests"} {
 		if !have[name] {
 			t.Errorf("subcommand %q not registered", name)
 		}
