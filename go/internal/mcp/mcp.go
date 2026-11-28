@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"rgt-vault-server/internal/netguard"
+	"rgt-vault-server/internal/transport"
 	"rgt-vault-server/internal/validation"
 )
 
@@ -88,8 +89,9 @@ func NewServer(backendURL, token string) *Server {
 		backendURL: strings.TrimSuffix(backendURL, "/"),
 		token:      token,
 		httpClient: &http.Client{
-			Timeout:   10 * time.Second,
-			Transport: &http.Transport{DialContext: netguard.NewDialer(true).DialContext},
+			Timeout:       10 * time.Second,
+			Transport:     &http.Transport{DialContext: netguard.NewDialer(true).DialContext},
+			CheckRedirect: transport.NoRedirect, // never replay the bearer token to a redirect target
 		},
 		serverName:    "rgt-vault-mcp",
 		serverVersion: "0.3.0",

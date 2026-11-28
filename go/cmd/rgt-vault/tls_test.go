@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -210,5 +212,82 @@ func TestMCPAndTUIUseTheSharedTransport(t *testing.T) {
 	var sb strings.Builder
 	if err := runStatus(b.url, tr, &sb); err != nil || !strings.Contains(sb.String(), "Server OK") {
 		t.Errorf("runStatus: %v %q", err, sb.String())
+	}
+}
+
+// MED-1 of the H6 security review: a redirect from the https server to a
+// plain-http listener must never carry the bearer token (or be followed).
+func TestNoClientFollowsRedirectsOrReplaysTheToken(t *testing.T) {
+	isolateEnv(t)
+	var mu sync.Mutex
+	var leaked []string
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		leaked = append(leaked, r.Method+" "+r.URL.Path+" auth="+r.Header.Get("Authorization"))
+		mu.Unlock()
+		fmt.Fprint(w, `{"secrets":[{"name":"stolen"}]}`)
+	}))
+	defer plain.Close()
+
+	ca := tlstest.NewCA(t)
+	f := ca.Localhost(t, t.TempDir())
+	s, err := transport.NewServerTLS(transport.ServerOptions{CertFile: f.Cert, KeyFile: f.Key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	redirector := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Same host NAME, different scheme and port: Go's default policy
+			// would re-send Authorization here. 307 keeps method and body.
+			_, pport, _ := net.SplitHostPort(strings.TrimPrefix(plain.URL, "http://"))
+			http.Redirect(w, r, "http://localhost:"+pport+r.URL.Path, http.StatusTemporaryRedirect)
+		}),
+		TLSConfig: s.Config(), ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() { _ = redirector.ServeTLS(ln, "", "") }()
+	defer redirector.Close()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	url := "https://localhost:" + port
+
+	const secretToken = "redirect-test-token"
+	// CLI subcommands.
+	for _, args := range [][]string{{"list"}, {"status"}} {
+		a := append([]string{"--host", url, "--cacert", ca.PEMFile, "--token", secretToken}, args...)
+		if code, out, _ := runCLI(t, "", a...); code == 0 || strings.Contains(out, "stolen") {
+			t.Errorf("%v followed a redirect: exit %d %q", args, code, out)
+		}
+	}
+	// MCP and TUI clients, and the shared constructor.
+	tr, _ := transport.NewTransport(transport.ClientOptions{CACertFile: ca.PEMFile})
+	call := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_secrets","arguments":{"namespace":"default"}}}` + "\n"
+	var out, errb bytes.Buffer
+	if err := runMCP(url, tr, secretToken, "", strings.NewReader(call), &out, &errb); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "stolen") {
+		t.Errorf("mcp followed the redirect: %s", out.String())
+	}
+	c := tui.NewHTTPClient(url, secretToken)
+	c.SetTransport(tr)
+	if _, err := c.ListRequests(); err == nil {
+		t.Error("tui: redirect answer treated as success")
+	}
+	hc, _ := transport.NewHTTPClient(transport.ClientOptions{CACertFile: ca.PEMFile}, 5*time.Second)
+	req, _ := http.NewRequest("GET", url+"/v1/secrets", nil)
+	req.Header.Set("Authorization", "Bearer "+secretToken)
+	resp, err := hc.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTemporaryRedirect {
+		t.Errorf("transport.NewHTTPClient: status %d, want the 307 returned as is", resp.StatusCode)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(leaked) != 0 {
+		t.Fatalf("the plain-http listener received requests: %v", leaked)
 	}
 }

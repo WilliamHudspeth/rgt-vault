@@ -44,11 +44,11 @@ Implemented once in `go/internal/transport` and used by the server, the cutover 
 | Session tickets | **Disabled**, for TLS 1.2 and 1.3. Go keeps ticket keys in process memory for days; a memory disclosure would let recorded sessions be decrypted afterwards. A local vault's connection rate does not need the saved handshake. |
 | HSTS | `Strict-Transport-Security: max-age=31536000` on every response served over TLS (no `includeSubDomains`: the daemon does not own the rest of the domain). |
 | Certificate checks at startup | Pair must match; leaf inside its validity window (**expired or not-yet-valid refuses to start**); expiry within 14 days is a warning; at least one SAN (the CN is ignored by every client); `serverAuth` key usage; not a CA certificate; no MD2/MD5/SHA-1 signature; RSA keys of at least 2048 bits. A warning if the certificate does not cover `--host`. |
-| Key file | Must be a regular file with mode `0600`/`0400`. A key readable by group/other gives `private key ... has mode 0640 ... Restrict it first: chmod 600 ...` and the server does not start. Symlinks are judged by their target. |
+| Key file | Must be a regular file with mode `0600`/`0400`. A key readable by group/other gives `private key ... has mode 0640 ... Restrict it first: chmod 600 ...` and the server does not start. Symlinks are judged by their target. The key is opened once and the open descriptor is checked and read (no check-then-read race); on Unix it must also be owned by the user running the server or by root. |
 
 ### Key file permissions and Windows
 
-On Unix the daemon checks the mode bits. **On Windows Go's mode bits do not reflect the ACL, so the check is skipped**;
+On Unix the daemon checks the mode bits. **On Windows Go's mode bits do not reflect the ACL, so the check is skipped (the server logs a startup warning saying so)**;
 the operator must restrict the key's ACL to the service account and `Administrators`:
 
 ```powershell
@@ -66,6 +66,7 @@ running; new handshakes use the new certificate (`tls.Config.GetCertificate`).
 
 - `kill -HUP $(pidof rgt-vault)` or `systemctl reload rgt-vault-go` reloads immediately. With no `--tls-cert`, SIGHUP is ignored and logged.
 - Independently the files are checked every `--tls-reload-interval` (modification time and size).
+- A certificate that is not yet valid (NotBefore in the future) is retried on every poll until its window opens, and reported once.
 - If the new material is invalid (key mismatch, expired, key permissions, unreadable) the **old certificate keeps being served** and the error is logged. A running certificate that expires is logged once as an `ERROR`.
 
 Certbot hook example (`/etc/letsencrypt/renewal-hooks/deploy/rgt-vault.sh`):
@@ -91,6 +92,7 @@ systemctl reload rgt-vault-go
 - The client floor is TLS 1.2 with the same AEAD suites as the server.
 - `http://` is accepted only for loopback hosts. For any other host the CLI, MCP and TUI refuse **before sending the token**.
 - `status`, every HTTP subcommand, `mcp` and `tui` share the one transport (`internal/transport`). Proxy environment variables (`HTTPS_PROXY`) are not used.
+- **Redirects are never followed** (the vault API does not redirect): a 3xx answer is returned as an error, so the bearer token cannot be replayed to an `http://` or other-host target. A test with an https server redirecting to a plain-http listener proves nothing is delivered.
 - Credentials travel only in the `Authorization` header, never in the URL: a token in the query string is not accepted (`401`).
 
 ## Mutual TLS (opt-in, RGT-458)
@@ -141,5 +143,6 @@ testssl.sh --protocols --ciphers vault.example.com:8765
 
 - The daemon's per-source authentication-failure limiter keys on the TCP peer address. Behind a reverse proxy every client appears as the proxy's address, and the daemon ignores `X-Forwarded-For` on purpose (it is client-controlled). Rate-limit at the proxy (`limit_req` in the nginx example) until a trusted-proxy setting exists.
 - Outbound webhooks and built-in actions may still use `http://` URLs chosen by the operator; see the follow-up in `V9-TLS.md`.
+- Clients do not check, at dial time, that a resolved address is loopback for `http://` URLs: the check is on the URL's host name. A follow-up could pin it in the dialer.
 - The session-ticket policy trades a few milliseconds per new connection for forward secrecy against memory disclosure.
 - Not verified here: the nginx and Caddy files were written against their documentation but not run in CI (no nginx/Caddy on the runner); run `nginx -t` / `caddy validate` before use.

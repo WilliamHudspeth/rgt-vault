@@ -94,5 +94,12 @@ func NewHTTPClient(o ClientOptions, timeout time.Duration) (*http.Client, error)
 	if err != nil {
 		return nil, err
 	}
-	return &http.Client{Timeout: timeout, Transport: tr}, nil
+	return &http.Client{Timeout: timeout, Transport: tr, CheckRedirect: NoRedirect}, nil
 }
+
+// NoRedirect is the CheckRedirect of every rgt-vault client. The vault API
+// never redirects, so a 3xx answer is returned as is (an error to the
+// caller) and never followed: following it would re-send the Authorization
+// header, even from https to a plain-http or other-host target (MED-1 of the
+// H6 security review).
+func NoRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }

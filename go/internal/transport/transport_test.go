@@ -995,3 +995,114 @@ func TestServerNameMustMatchSAN(t *testing.T) {
 		}
 	}
 }
+
+// A certificate that is not yet valid when it is installed becomes valid with
+// the clock: the poll must retry without a file change (and log once).
+func TestWatchRetriesNotYetValidCertificate(t *testing.T) {
+	ca := tlstest.NewCA(t)
+	var mu sync.Mutex
+	clock := time.Now()
+	now := func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
+	logs := &logSink{}
+	f := ca.Localhost(t, t.TempDir())
+	s, err := NewServerTLS(ServerOptions{CertFile: f.Cert, KeyFile: f.Key, Logf: logs.Logf, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := s.Info().Serial
+
+	// A certificate valid only from an hour from now replaces the files.
+	n := ca.Issue(t, t.TempDir(), tlstest.Leaf{DNSNames: []string{"localhost"},
+		NotBefore: clock.Add(time.Hour), NotAfter: clock.Add(48 * time.Hour)})
+	for src, dst := range map[string]string{n.Cert: f.Cert, n.Key: f.Key} {
+		b, _ := os.ReadFile(src)
+		if err := os.WriteFile(dst, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.Watch(ctx, nil, 10*time.Millisecond); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(logs.String(), "not valid before") && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(logs.String(), "not valid before") {
+		t.Fatalf("no not-yet-valid error:\n%s", logs)
+	}
+	time.Sleep(100 * time.Millisecond) // many polls: still logged once
+	if c := strings.Count(logs.String(), "not valid before"); c != 1 {
+		t.Errorf("error logged %d times:\n%s", c, logs)
+	}
+	if s.Info().Serial != old {
+		t.Fatal("a not-yet-valid certificate was installed")
+	}
+	mu.Lock()
+	clock = clock.Add(2 * time.Hour) // the window opens; the files do not change
+	mu.Unlock()
+	deadline = time.Now().Add(5 * time.Second)
+	for s.Info().Serial == old && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if s.Info().Serial != n.Leaf.SerialNumber.Text(16) {
+		t.Errorf("the certificate was not installed once valid:\n%s", logs)
+	}
+}
+
+func TestReadKeyFileChecksTheOpenedDescriptor(t *testing.T) {
+	ca := tlstest.NewCA(t)
+	f := ca.Localhost(t, t.TempDir())
+	b, err := ReadKeyFile(f.Key)
+	if err != nil || !strings.Contains(string(b), "PRIVATE KEY") {
+		t.Fatalf("ReadKeyFile: %v", err)
+	}
+	if _, err := ReadKeyFile(filepath.Join(t.TempDir(), "none")); err == nil {
+		t.Error("missing key read")
+	}
+	if _, err := ReadKeyFile(t.TempDir()); err == nil {
+		t.Error("directory read as a key")
+	}
+	if runtime.GOOS != "windows" {
+		_ = os.Chmod(f.Key, 0o644)
+		if b, err := ReadKeyFile(f.Key); err == nil || b != nil {
+			t.Errorf("group/other-readable key returned its contents: %v", err)
+		}
+	}
+}
+
+// The rules apply to the Fstat result: exercised for both platform branches
+// without needing a Windows host.
+func TestCheckKeyInfoPlatformBranches(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "k")
+	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Chmod(p, 0o644)
+	fi, _ := os.Stat(p)
+	if err := checkKeyInfo(p, fi, "windows"); err != nil {
+		t.Errorf("windows branch must not judge the mode bits: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		if err := checkKeyInfo(p, fi, "linux"); err == nil {
+			t.Error("0644 accepted on the unix branch")
+		}
+	}
+	di, _ := os.Stat(dir)
+	if err := checkKeyInfo(dir, di, "windows"); err == nil {
+		t.Error("directory accepted")
+	}
+}
+
+func TestKeyACLNotice(t *testing.T) {
+	if n := KeyACLNotice("windows"); !strings.Contains(n, "ACL") || !strings.Contains(n, "NOT checked") {
+		t.Errorf("windows notice %q", n)
+	}
+	for _, goos := range []string{"linux", "darwin", "freebsd"} {
+		if KeyACLNotice(goos) != "" {
+			t.Errorf("%s: unexpected notice", goos)
+		}
+	}
+}

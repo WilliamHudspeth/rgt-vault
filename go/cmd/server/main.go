@@ -13,12 +13,15 @@
 //	                 [--operator-token-file PATH] [--require-approval
 //	                 [--totp-secret-file PATH] [--approval-timeout 120s]]
 //	                 [--harness-key-file PATH] [--allow-private-network]
-//	                 [--allow-non-loopback]
+//	                 [--tls-cert FILE --tls-key FILE [--tls-client-ca FILE
+//	                 [--tls-client-auth require|verify-if-given]]]
+//	                 [--tls-reload-interval 1m] [--allow-insecure-non-loopback]
 //
 // See `go doc rgt-vault-server/internal/servecmd` for every flag and
 // environment variable. Differences from the pre-G10 binary: flags need two
-// dashes (--port, not -port), and a non-loopback --host needs
-// --allow-non-loopback (it used to be accepted with a warning).
+// dashes (--port, not -port), and a non-loopback --host needs TLS
+// (--tls-cert/--tls-key) or --allow-insecure-non-loopback (it used to be
+// accepted with a warning; --allow-non-loopback is a deprecated alias).
 package main
 
 import (

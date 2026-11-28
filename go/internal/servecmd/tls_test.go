@@ -459,3 +459,21 @@ func TestServeReloadsChangedCertificateFiles(t *testing.T) {
 		t.Errorf("no reload log:\n%s", r.logs)
 	}
 }
+
+func TestCheckLoopbackListener(t *testing.T) {
+	for _, ok := range []string{"127.0.0.1:1", "[::1]:1", "127.5.5.5:9"} {
+		a, _ := net.ResolveTCPAddr("tcp", ok)
+		if err := checkLoopbackListener(a); err != nil {
+			t.Errorf("%s: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"0.0.0.0:1", "10.1.2.3:1", "[::]:1", "[2001:db8::1]:1"} {
+		a, _ := net.ResolveTCPAddr("tcp", bad)
+		if err := checkLoopbackListener(a); err == nil || !strings.Contains(err.Error(), "not a loopback address") {
+			t.Errorf("%s accepted: %v", bad, err)
+		}
+	}
+	if err := checkLoopbackListener(&net.UnixAddr{Name: "/x", Net: "unix"}); err == nil {
+		t.Error("non-TCP listener accepted")
+	}
+}

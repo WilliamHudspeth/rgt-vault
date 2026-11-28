@@ -577,6 +577,17 @@ func loadAuth(cfg config, logger *log.Logger) (authSetup, string, error) {
 	return setup, fmt.Sprintf("LEGACY shared bearer token from %s (id %s)", path, tokenID), nil
 }
 
+// checkLoopbackListener refuses a plain-HTTP listener that is not bound to a
+// loopback address.
+func checkLoopbackListener(a net.Addr) error {
+	ta, ok := a.(*net.TCPAddr)
+	if !ok || !ta.IP.IsLoopback() {
+		return fmt.Errorf("refusing to serve plain HTTP: the listener is bound to %s, which is not a loopback address "+
+			"(use --tls-cert/--tls-key, or --allow-insecure-non-loopback)", a)
+	}
+	return nil
+}
+
 func clientAuthText(m transport.ClientAuthMode) string {
 	switch m {
 	case transport.ClientAuthRequire:
@@ -744,6 +755,14 @@ func Run(ctx context.Context, cfg config, env Env) error {
 		return fmt.Errorf("listen on %s: %w", net.JoinHostPort(cfg.host, cfg.port), err)
 	}
 	addr := ln.Addr().String()
+	if !tlsOn && !cfg.allowInsecure {
+		// CheckBind judged the NAME; judge the address actually bound (a
+		// host name such as "localhost" can resolve elsewhere).
+		if lerr := checkLoopbackListener(ln.Addr()); lerr != nil {
+			_ = ln.Close()
+			return lerr
+		}
+	}
 
 	fmt.Fprintln(stdout, "==============================================")
 	fmt.Fprintln(stdout, "  rgt-vault server")

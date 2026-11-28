@@ -40,16 +40,15 @@ func LoadCertificate(certFile, keyFile string, now time.Time) (*tls.Certificate,
 	if certFile == "" || keyFile == "" {
 		return nil, CertInfo{}, errors.New("both a certificate file and a private key file are required")
 	}
-	if err := CheckKeyFile(keyFile); err != nil {
+	// The key is opened, checked and read through one descriptor (no
+	// check-then-read race).
+	keyPEM, err := ReadKeyFile(keyFile)
+	if err != nil {
 		return nil, CertInfo{}, err
 	}
 	certPEM, err := os.ReadFile(certFile)
 	if err != nil {
 		return nil, CertInfo{}, fmt.Errorf("certificate: %w", err)
-	}
-	keyPEM, err := os.ReadFile(keyFile)
-	if err != nil {
-		return nil, CertInfo{}, fmt.Errorf("private key: %w", err)
 	}
 	pair, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
@@ -77,13 +76,19 @@ func LoadCertificate(certFile, keyFile string, now time.Time) (*tls.Certificate,
 	return &pair, info, nil
 }
 
+// timeWindowError is a validity-window failure: unlike a corrupt file it
+// fixes itself as the clock advances, so a reload that hit it is retried.
+type timeWindowError struct{ msg string }
+
+func (e *timeWindowError) Error() string { return e.msg }
+
 // checkLeaf applies the certificate policy to leaf at time now.
 func checkLeaf(leaf *x509.Certificate, now time.Time) (warnings []string, err error) {
 	if now.Before(leaf.NotBefore) {
-		return nil, fmt.Errorf("not valid before %s", leaf.NotBefore.UTC().Format(time.RFC3339))
+		return nil, &timeWindowError{fmt.Sprintf("not valid before %s", leaf.NotBefore.UTC().Format(time.RFC3339))}
 	}
 	if now.After(leaf.NotAfter) {
-		return nil, fmt.Errorf("expired on %s", leaf.NotAfter.UTC().Format(time.RFC3339))
+		return nil, &timeWindowError{fmt.Sprintf("expired on %s", leaf.NotAfter.UTC().Format(time.RFC3339))}
 	}
 	if left := leaf.NotAfter.Sub(now); left < ExpiryWarning {
 		warnings = append(warnings, fmt.Sprintf("expires in %s (%s): renew it and reload with SIGHUP",

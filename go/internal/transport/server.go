@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -86,6 +87,9 @@ func NewServerTLS(opts ServerOptions) (*ServerTLS, error) {
 		opts.ClientAuth = ClientAuthRequire
 	}
 	s := &ServerTLS{opts: opts}
+	if n := KeyACLNotice(runtime.GOOS); n != "" {
+		opts.Logf("WARNING: %s", n)
+	}
 	if err := s.load(); err != nil {
 		return nil, err
 	}
@@ -120,12 +124,18 @@ func NewServerTLS(opts ServerOptions) (*ServerTLS, error) {
 // previously installed material stays in place.
 func (s *ServerTLS) load() error {
 	// Fingerprint BEFORE reading: a file replaced during the read is seen as
-	// changed on the next poll. Taken even if loading fails, so a broken
+	// changed on the next poll. It is kept even if loading fails, so a broken
 	// file is reported once, not on every tick (fix it, which changes its
-	// mtime, or send SIGHUP).
+	// mtime, or send SIGHUP) - except for a validity-window failure (not yet
+	// valid / expired), which fixes itself with the clock and is retried.
+	prev := s.lastSeen
 	s.lastSeen = s.stamps()
 	pair, info, err := LoadCertificate(s.opts.CertFile, s.opts.KeyFile, s.opts.Now())
 	if err != nil {
+		var tw *timeWindowError
+		if errors.As(err, &tw) {
+			s.lastSeen = prev
+		}
 		return err
 	}
 	var pool *x509.CertPool
@@ -193,26 +203,33 @@ func (s *ServerTLS) Watch(ctx context.Context, trigger <-chan struct{}, interval
 		defer t.Stop()
 		tick = t.C
 	}
+	var lastErr string // the poll logs a repeated failure once, not every tick
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-trigger:
-			s.reloadLogged()
+			lastErr = ""
+			s.reloadLogged(&lastErr)
 		case <-tick:
 			s.mu.Lock()
 			changed := s.stamps() != s.lastSeen
 			s.mu.Unlock()
 			if changed {
-				s.reloadLogged()
+				s.reloadLogged(&lastErr)
 			}
 			s.checkExpiry()
 		}
 	}
 }
 
-func (s *ServerTLS) reloadLogged() {
-	if err := s.Reload(); err != nil {
+func (s *ServerTLS) reloadLogged(lastErr *string) {
+	err := s.Reload()
+	switch {
+	case err == nil:
+		*lastErr = ""
+	case err.Error() != *lastErr:
+		*lastErr = err.Error()
 		s.opts.Logf("ERROR: %v", err)
 	}
 }

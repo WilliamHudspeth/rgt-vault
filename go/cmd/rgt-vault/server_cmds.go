@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"rgt-vault-server/internal/mcp"
+	"rgt-vault-server/internal/transport"
 	"rgt-vault-server/internal/tui"
 )
 
@@ -35,7 +36,7 @@ func runTUI(host string, rt http.RoundTripper, token, namespace string) error {
 }
 
 func runStatus(host string, rt http.RoundTripper, out io.Writer) error {
-	client := &http.Client{Timeout: 5 * time.Second, Transport: rt}
+	client := &http.Client{Timeout: 5 * time.Second, Transport: rt, CheckRedirect: transport.NoRedirect}
 	resp, err := client.Get(host + "/healthz")
 	if err != nil {
 		fmt.Fprintf(out, "Server unreachable: %s\n", host)
