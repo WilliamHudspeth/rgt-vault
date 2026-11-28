@@ -1,0 +1,46 @@
+# /etc/logrotate.d/rgt-vault
+#
+# Reference log rotation policy for optional file-based rgt-vault logs
+# (ASVS V7 / Refs RGT-430, RGT-512).
+#
+# IMPORTANT DEPLOYMENT NOTES:
+#   1. Default mode: file logging is NOT active. deploy/rgt-vault-go.service
+#      writes only to stdout/stderr under systemd-journald (see
+#      deploy/journald.conf.d/rgt-vault.conf) and has ProtectSystem=strict with
+#      ReadWritePaths=/var/lib/rgt-vault, so it cannot write /var/log/rgt-vault.
+#      go/internal/logging (including its FileWriter) is not yet wired into
+#      `rgt-vault serve`; that wiring is follow-up work (RGT-512). Until then
+#      this file is a reference policy that matches nothing on a default install.
+#   2. Never send SIGHUP from postrotate. The daemon's only SIGHUP handling is
+#      TLS certificate reload (ignored without --tls-cert); it does not reopen
+#      log files. Rotation uses copytruncate (the writer opens with O_APPEND, so
+#      truncation is safe and no reopen is needed) until SIGHUP ->
+#      FileWriter.Reopen() is wired.
+#   3. If you do redirect output to a file you must (a) add /var/log/rgt-vault to
+#      ReadWritePaths in a drop-in and (b) make the directory writable by the
+#      rgtvault user (it creates the active file), for example with
+#      systemd-tmpfiles: `d /var/log/rgt-vault 0750 rgtvault adm -`.
+#   4. Because rgtvault owns that directory, logrotate must NOT run as root in it:
+#      a root-run rotation or a root postrotate `chown`/`chmod` on a glob there
+#      follows symlinks the daemon user can plant (arbitrary-file chown/chmod).
+#      This policy therefore uses `su rgtvault adm` and has no postrotate.
+#   5. What this does NOT give you: tamper-evidence against rgtvault. It can
+#      modify or delete its own archives. Use journald (default), off-host
+#      shipping, or a root-owned archive directory fed by a root-run copy job
+#      if rgtvault must not be able to alter history.
+
+/var/log/rgt-vault/*.log {
+    su rgtvault adm
+    daily
+    rotate 90
+    maxage 90
+    compress
+    delaycompress
+    copytruncate
+    missingok
+    notifempty
+    # Ignored by copytruncate (the active file keeps its inode and the 0600
+    # mode FileWriter gives it); kept so a later switch to the create-and-HUP
+    # method (RGT-512) gets a never-world-readable file.
+    create 0640 rgtvault adm
+}

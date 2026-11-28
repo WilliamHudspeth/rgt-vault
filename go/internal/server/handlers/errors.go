@@ -16,6 +16,7 @@ import (
 	"rgt-vault-server/internal/approval"
 	"rgt-vault-server/internal/audit"
 	"rgt-vault-server/internal/capabilities"
+	"rgt-vault-server/internal/logging"
 	"rgt-vault-server/internal/vault"
 )
 
@@ -172,7 +173,8 @@ const maxLogField = 256
 
 // LogSafe encodes a request-derived string for a single log line: CR, LF
 // and TAB become \r, \n, \t (internal/audit.Sanitize), every other control
-// character (C0, DEL, C1) and invalid UTF-8 becomes \xNN, and the result is
+// character (C0, DEL, C1) and invalid UTF-8 becomes \xNN, U+2028/2029, BiDi,
+// zero-width and private-use code points become \uXXXX, and the result is
 // capped at maxLogField bytes (marked with "..."). A client can therefore
 // never forge or split log entries.
 func LogSafe(s string) string {
@@ -189,6 +191,10 @@ func LogSafe(s string) string {
 			for _, c := range []byte(s[i : i+size]) {
 				fmt.Fprintf(&b, `\x%02x`, c)
 			}
+		case logging.IsUnsafeRune(r):
+			// U+2028/2029, BiDi marks/overrides, zero-width and private-use
+			// characters: the same set logging.SanitizeText encodes.
+			b.WriteString(logging.EncodeRune(r))
 		default:
 			b.WriteString(s[i : i+size])
 		}

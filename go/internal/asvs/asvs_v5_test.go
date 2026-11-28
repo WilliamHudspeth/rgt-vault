@@ -437,6 +437,7 @@ func TestASVS_V5_SourceScanNoShellExecAndAllowlistedImports(t *testing.T) {
 		"internal/captoken/token.go":           true,
 		"internal/vault/capability.go":         true,
 		"internal/server/handlers/handlers.go": true,
+		"internal/logging/redact.go":           true, // Redactor walks arbitrary slog values (structs, maps, slices) by reflection (RGT-428)
 	}
 	// Forbidden imports across all first-party go/ files. Strings are split so a
 	// plain grep over go/ does not match this test file itself.

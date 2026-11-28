@@ -1,11 +1,14 @@
 package gateway
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"rgt-vault-server/internal/auth"
 	"strings"
 	"testing"
 )
@@ -364,5 +367,123 @@ func TestGoPercent_ClampOnSet(t *testing.T) {
 	gw.SetGoPercent(-50)
 	if gw.GoPercent() != 0 {
 		t.Errorf("SetGoPercent(-50): want 0, got %d", gw.GoPercent())
+	}
+}
+
+// TestAdminLogInjectionNeutralized reproduces percent-encoded LF/CRLF/ANSI/line-separator
+// log-forging probes against /__cutover* (both unauthenticated and with a valid
+// operator token) and asserts zero forged log lines (RGT-415).
+func TestAdminLogInjectionNeutralized(t *testing.T) {
+	py := newBackend(t, "PY")
+	defer py.Close()
+	goB := newBackend(t, "GO")
+	defer goB.Close()
+
+	gw := makeGateway(t, py.URL, goB.URL, 0)
+
+	var buf bytes.Buffer
+	origOut := log.Writer()
+	origFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	defer func() {
+		log.SetOutput(origOut)
+		log.SetFlags(origFlags)
+	}()
+
+	target := "/__cutover/x%0aFORGED%20LINE%20gateway:%20admin%20GET%20/ok%20by%20token%20deadbeef%1b%5b31m%e2%80%a8SEP"
+
+	// 1. Unauthenticated probe with LF in path and CRLF in RemoteAddr -> 401.
+	reqUnauth := httptest.NewRequest(http.MethodGet, target, nil)
+	reqUnauth.RemoteAddr = "127.0.0.1:4321\r\nFORGED_REMOTE_LINE"
+	rrUnauth := httptest.NewRecorder()
+	gw.ServeHTTP(rrUnauth, reqUnauth)
+	if rrUnauth.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated probe status = %d, want 401", rrUnauth.Code)
+	}
+
+	// 2. Operator-authenticated probe on the exact reviewer repro path -> 404.
+	reqAuth := httptest.NewRequest(http.MethodGet, target, nil)
+	reqAuth.Header.Set("Authorization", "Bearer "+testOperatorToken)
+	rrAuth := httptest.NewRecorder()
+	gw.ServeHTTP(rrAuth, reqAuth)
+	if rrAuth.Code != http.StatusNotFound {
+		t.Fatalf("authenticated probe status = %d, want 404", rrAuth.Code)
+	}
+
+	// 3. Method containing raw LF on authenticated admin path.
+	reqMethod := httptest.NewRequest(http.MethodGet, "/__cutover/stats", nil)
+	reqMethod.Method = "GET\nFORGED_METHOD_LINE"
+	reqMethod.Header.Set("Authorization", "Bearer "+testOperatorToken)
+	rrMethod := httptest.NewRecorder()
+	gw.ServeHTTP(rrMethod, reqMethod)
+
+	rawLogs := strings.TrimSuffix(buf.String(), "\n")
+	lines := strings.Split(rawLogs, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("expected exactly 3 single-line log entries (no forged lines), got %d:\n%s", len(lines), buf.String())
+	}
+	for i, ln := range lines {
+		if !strings.HasPrefix(ln, "gateway: admin ") {
+			t.Errorf("line %d was forged (missing gateway prefix): %q", i, ln)
+		}
+		if strings.ContainsAny(ln, "\r\x1b") || strings.ContainsRune(ln, '\u2028') {
+			t.Errorf("line %d contains raw control/separator character: %+q", i, ln)
+		}
+	}
+	if !strings.Contains(rawLogs, `\nFORGED LINE gateway: admin GET /ok by token deadbeef\x1b[31m\u2028SEP`) {
+		t.Errorf("expected visibly encoded payload in gateway logs, got:\n%s", rawLogs)
+	}
+}
+
+type failingTransport struct{ err error }
+
+func (f failingTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, f.err }
+
+// The backend ErrorHandler logs the transport error; an error text carrying
+// CR/LF (for example an upstream-controlled message) must not forge a log line
+// (PR #58 review; fails if logging.SanitizeText(err.Error()) is dropped).
+func TestBackendFailureLogLineCannotBeForged(t *testing.T) {
+	py := newBackend(t, "PY")
+	defer py.Close()
+	gw := makeGateway(t, py.URL, "http://127.0.0.1:1", 100)
+	gw.goProxy.Transport = failingTransport{err: fmt.Errorf("dial failed\ngateway: admin GET /ok by token deadbeef\r\x1b[31m")}
+
+	var buf bytes.Buffer
+	origOut, origFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	defer func() { log.SetOutput(origOut); log.SetFlags(origFlags) }()
+
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/secrets", nil))
+	if body(rr) != "PY" {
+		t.Fatalf("fallback body = %q, want PY", body(rr))
+	}
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 1 || !strings.Contains(lines[0], `dial failed\ngateway: admin GET /ok by token deadbeef\r\x1b[31m`) {
+		t.Errorf("backend failure log not a single encoded line: %q", buf.String())
+	}
+}
+
+// The token id printed for an authorised admin call is the 8-hex TokenID, never
+// the token itself. (SanitizeText(id) there is defence in depth: TokenID is
+// hex, so dropping it is an equivalent mutant and cannot be tested.)
+func TestAdminLogShowsTokenIDNotToken(t *testing.T) {
+	py := newBackend(t, "PY")
+	defer py.Close()
+	gw := makeGateway(t, py.URL, py.URL, 0)
+
+	var buf bytes.Buffer
+	origOut, origFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	defer func() { log.SetOutput(origOut); log.SetFlags(origFlags) }()
+
+	req := httptest.NewRequest(http.MethodGet, "/__cutover/stats", nil)
+	req.Header.Set("Authorization", "Bearer "+testOperatorToken)
+	gw.ServeHTTP(httptest.NewRecorder(), req)
+	if strings.Contains(buf.String(), testOperatorToken) || !strings.Contains(buf.String(), "by token "+auth.TokenID(testOperatorToken)) {
+		t.Errorf("admin log = %q", buf.String())
 	}
 }
