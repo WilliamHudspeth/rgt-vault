@@ -39,6 +39,8 @@ sealed.bin
 
 # Go build artifacts
 go/rgt-vault
+go/cmd/rgt-vault/rgt-vault
+go/cmd/rgt-vault/rgt-vault.exe
 go/gateway
 go/server
 *.test
