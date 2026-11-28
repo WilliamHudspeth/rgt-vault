@@ -105,19 +105,54 @@ func classify(err error) (*AppError, bool) {
 	return nil, false
 }
 
-func newIncidentID() string {
-	b := make([]byte, 6)
+// NewIncidentID returns a fresh random incident id: 64 bits from
+// crypto/rand, hex encoded. It is the support reference shown to the client
+// and written to the server log line of the same failure (ASVS 7.4.1).
+func NewIncidentID() string {
+	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
 		return strconv.FormatInt(time.Now().UnixNano(), 16)
 	}
 	return hex.EncodeToString(b)
 }
 
+// ErrorBody is the one JSON envelope of every error response of the server:
+// {"error": Type, "detail": Message, "incident_id": id}. Middleware and
+// handlers share it (RGT-418/419), so a client can always quote the id and
+// the operator can find the log line.
+type ErrorBody struct {
+	Error      string `json:"error"`
+	Detail     string `json:"detail"`
+	IncidentID string `json:"incident_id"`
+}
+
+// WriteErrorWithID writes the standard error envelope with a caller-chosen
+// incident id and logs nothing (the caller has logged id already, as the
+// panic recovery does).
+func WriteErrorWithID(w http.ResponseWriter, id string, status int, typ, detail string) {
+	writeJSON(w, status, ErrorBody{Error: typ, Detail: detail, IncidentID: id})
+}
+
+// WriteAppError writes {"error","detail","incident_id"} with a fresh
+// incident id and logs one line carrying the same id (method, path, status,
+// error type; never the detail, which may be request-derived). It returns
+// the id. Middleware uses it for 400/401/403/404/405/413/429 answers.
+func WriteAppError(w http.ResponseWriter, r *http.Request, status int, typ, detail string) string {
+	id := NewIncidentID()
+	method, path := "", ""
+	if r != nil {
+		method, path = LogSafe(r.Method), LogSafe(r.URL.Path)
+	}
+	log.Printf("WARNING incident=%s status=%d error=%s method=%s path=%s", id, status, typ, method, path)
+	WriteErrorWithID(w, id, status, typ, detail)
+	return id
+}
+
 // writeError writes err as a JSON error with an incident id. The status,
 // class and path are logged with the id; the error text is logged only for
 // unexpected (500) errors, never echoed to the client for those.
 func writeError(w http.ResponseWriter, r *http.Request, err error) {
-	id := newIncidentID()
+	id := NewIncidentID()
 	path := ""
 	if r != nil {
 		path = LogSafe(r.URL.Path)
@@ -129,11 +164,7 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	} else {
 		log.Printf("WARNING incident=%s status=%d error=%s path=%s", id, ae.Code, ae.Type, path)
 	}
-	writeJSON(w, ae.Code, map[string]string{
-		"error":       ae.Type,
-		"detail":      ae.Message,
-		"incident_id": id,
-	})
+	WriteErrorWithID(w, id, ae.Code, ae.Type, ae.Message)
 }
 
 // maxLogField caps a request-derived value in a log line.

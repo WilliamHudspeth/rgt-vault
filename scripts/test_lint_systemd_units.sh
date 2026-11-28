@@ -40,5 +40,21 @@ expect_fail "deny-list address families" "allow-list" 's/^RestrictAddressFamilie
 expect_fail "ExecStart privilege prefix" "privilege prefix" 's#^ExecStart=#ExecStart=+#'
 expect_fail "no WantedBy" "WantedBy" '/^WantedBy=/d'
 expect_fail "no Install section" "[Install]" '/^\[Install\]/d'
+
+# The Go unit must run in production mode (RGT-427).
+gounit="$here/../deploy/rgt-vault-go.service"
+"$lint" "$gounit" >/dev/null || { echo "FAIL: pristine Go unit rejected" >&2; bad=$((bad + 1)); }
+for expr in '/^Environment=APP_ENV=production/d' 's/^Environment=APP_ENV=production/Environment=APP_ENV=development/' 's/^Environment=APP_ENV=production/Environment=APP_ENV=production\nEnvironment=/'; do
+    sed -E "$expr" "$gounit" > "$tmp/g.service"
+    if err="$("$lint" "$tmp/g.service" 2>&1 >/dev/null)"; then
+        echo "FAIL: Go unit mutation '$expr' was accepted" >&2
+        bad=$((bad + 1))
+    elif [[ "$err" != *"APP_ENV=production"* ]]; then
+        echo "FAIL: Go unit mutation '$expr' rejected for the wrong reason: $err" >&2
+        bad=$((bad + 1))
+    else
+        echo "ok: Go unit mutation rejected"
+    fi
+done
 [ "$bad" -eq 0 ] && echo "all lint tests passed"
 exit "$bad"

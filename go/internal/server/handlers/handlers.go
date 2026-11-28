@@ -55,6 +55,9 @@ type Handlers struct {
 	// Broker serves /v1/requests*. Nil means no live approval: those
 	// endpoints answer 409, as in Python.
 	Broker *approval.Broker
+	// AuditScanLimit overrides MaxAuditScan, the number of newest audit rows
+	// a filtered GET /v1/audit examines (tests). Zero means MaxAuditScan.
+	AuditScanLimit int
 	// Notifier receives approval security events (bad and replayed TOTP
 	// codes, lockouts, separation-of-duties refusals). Nil logs a warning.
 	Notifier approval.Notifier
@@ -227,6 +230,66 @@ func queryInt(r *http.Request, name string, def int) (int, *AppError) {
 	return n, nil
 }
 
+// Bounds on list endpoints and free-text request fields (H4: RGT-376,
+// RGT-353, RGT-357). A client may not make the server walk or hold an
+// arbitrarily large window, nor feed unbounded text to the policy engine,
+// the audit log or the operator's screen.
+const (
+	// MaxListLimit is the largest page of GET /v1/secrets and /v1/audit.
+	MaxListLimit = 1000
+	// MaxListOffset is the largest offset of GET /v1/secrets. A deeper
+	// window is refused (400) rather than scanned.
+	MaxListOffset = 1_000_000
+	// MaxAuditScan bounds how many of the NEWEST audit rows GET /v1/audit
+	// examines when it filters (?capability=): the filter never reads the
+	// whole log into memory.
+	MaxAuditScan = 10_000
+	// maxTextField is the cap of a free-text request field (purpose,
+	// reason): the vault's purpose length.
+	maxTextField = vault.MaxPurposeChars
+	// maxTOTPCodeLen caps the totp_code of an approval (real codes have 6-8
+	// digits). A longer value is refused before it reaches the verifier.
+	maxTOTPCodeLen = 32
+)
+
+// queryPage parses limit and offset (FastAPI-style 422 for a non-integer, an
+// integer too large for int included) and enforces the bounds above.
+func queryPage(r *http.Request, defLimit int) (limit, offset int, e *AppError) {
+	if limit, e = queryInt(r, "limit", defLimit); e != nil {
+		return 0, 0, e
+	}
+	if offset, e = queryInt(r, "offset", 0); e != nil {
+		return 0, 0, e
+	}
+	switch {
+	case limit < 1 || limit > MaxListLimit:
+		return 0, 0, badRequest("'limit' must be between 1 and " + strconv.Itoa(MaxListLimit) + ".")
+	case offset < 0:
+		return 0, 0, badRequest("'offset' must be >= 0.")
+	case offset > MaxListOffset:
+		return 0, 0, badRequest("'offset' must be <= " + strconv.Itoa(MaxListOffset) + ".")
+	}
+	return limit, offset, nil
+}
+
+// freeText validates a request-supplied free-text field (purpose, reason,
+// filter): valid UTF-8, at most maxTextField characters, then the same
+// allow-list as the vault's own purpose check (NFC, no control or format
+// characters). The length is checked first so an oversized value is never
+// normalised. The error never quotes the value.
+func freeText(field, value string) *AppError {
+	if !utf8.ValidString(value) {
+		return badRequest("'" + field + "' must be valid UTF-8.")
+	}
+	if utf8.RuneCountInString(value) > maxTextField {
+		return badRequest("'" + field + "' exceeds the maximum allowed length of " + strconv.Itoa(maxTextField) + " characters.")
+	}
+	if _, err := validation.ValidateFreeText(value, maxTextField); err != nil {
+		return badRequest("'" + field + "' contains characters that are not allowed.")
+	}
+	return nil
+}
+
 func queryDefault(r *http.Request, name, def string) string {
 	if v, ok := r.URL.Query()[name]; ok && len(v) > 0 {
 		return v[0]
@@ -373,33 +436,23 @@ func (h *Handlers) ListSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit, e := queryInt(r, "limit", vault.DefaultListSize)
-	if e == nil {
-		var offset int
-		if offset, e = queryInt(r, "offset", 0); e == nil {
-			switch {
-			case limit < 1 || limit > 1000:
-				e = badRequest("'limit' must be between 1 and 1000.")
-			case offset < 0:
-				e = badRequest("'offset' must be >= 0.")
-			default:
-				items, err := h.Vault.ListSecrets(r.Context(), vault.ListRequest{
-					Namespace: namespace, Agent: agent, Purpose: q.Get("purpose"),
-					Limit: limit, Offset: offset,
-				})
-				if err != nil {
-					writeError(w, r, err)
-					return
-				}
-				if items == nil {
-					items = []store.SecretInfo{}
-				}
-				writeJSON(w, http.StatusOK, map[string]any{"namespace": namespace, "secrets": items})
-				return
-			}
-		}
+	limit, offset, e := queryPage(r, vault.DefaultListSize)
+	if e != nil {
+		writeError(w, r, e)
+		return
 	}
-	writeError(w, r, e)
+	items, err := h.Vault.ListSecrets(r.Context(), vault.ListRequest{
+		Namespace: namespace, Agent: agent, Purpose: q.Get("purpose"),
+		Limit: limit, Offset: offset,
+	})
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	if items == nil {
+		items = []store.SecretInfo{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"namespace": namespace, "secrets": items})
 }
 
 // ---------------------------------------------------------------------------
@@ -521,6 +574,10 @@ func (h *Handlers) GetSecret(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		purpose := r.URL.Query().Get("purpose")
+		if e := freeText("purpose", purpose); e != nil {
+			writeError(w, r, e)
+			return
+		}
 		if d := h.Vault.Policy().Evaluate(p.Agent, namespace, purpose, "read"); !d.Allowed {
 			h.AuditDenied(r, p, "policy denies fingerprint of "+namespace+"/"+name)
 			writeError(w, r, errSecretNotFound)
@@ -735,15 +792,16 @@ func rowCapability(r store.AuditRow) (string, bool) {
 
 // Audit handles GET /v1/audit?limit=50[&capability=NAME], newest first
 // (python audit). capability= (RGT-166) keeps only the capability rows
-// that name that capability; limit then counts matching rows.
+// that name that capability; limit then counts matching rows among the
+// newest MaxAuditScan rows.
 func (h *Handlers) Audit(w http.ResponseWriter, r *http.Request) {
 	limit, e := queryInt(r, "limit", 50)
 	switch {
 	case e != nil:
 	case limit < 1:
 		e = badRequest("'limit' must be >= 1.")
-	case limit > 1000:
-		e = badRequest("'limit' must be <= 1000. Use /v1/audit/verify and a tail query tool to walk larger histories.")
+	case limit > MaxListLimit:
+		e = badRequest("'limit' must be <= " + strconv.Itoa(MaxListLimit) + ". Use /v1/audit/verify and a tail query tool to walk larger histories.")
 	}
 	if e != nil {
 		writeError(w, r, e)
@@ -752,7 +810,16 @@ func (h *Handlers) Audit(w http.ResponseWriter, r *http.Request) {
 	capFilter, filtered := r.URL.Query()["capability"]
 	fetch := limit
 	if filtered {
-		fetch = -1 // filter over the whole log
+		if e := freeText("capability", capFilter[0]); e != nil {
+			writeError(w, r, e)
+			return
+		}
+		// Filter over the newest MaxAuditScan rows, never the whole log:
+		// the read is bounded however long the history is.
+		fetch = MaxAuditScan
+		if h.AuditScanLimit > 0 {
+			fetch = h.AuditScanLimit
+		}
 	}
 	rows, err := h.Vault.AuditLog(r.Context(), fetch)
 	if err != nil {
@@ -889,6 +956,22 @@ func decodeOptionalJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	return decodeJSON(w, r, dst)
 }
 
+// validateOperatorFields validates the operator name and the denial reason
+// of an approval decision. Both are stored in the decision, shown to the
+// requester and used in log lines, so they get the same allow-list as an
+// agent id and a purpose (RGT-353, RGT-357). Nil fields are absent.
+func validateOperatorFields(operator, reason *string) *AppError {
+	if operator != nil {
+		if _, err := validation.ValidateAgent(*operator); err != nil {
+			return badRequest("'operator' is not a valid operator name.")
+		}
+	}
+	if reason != nil {
+		return freeText("reason", *reason)
+	}
+	return nil
+}
+
 // Approve handles POST /v1/requests/{id}/approve. A request flagged
 // require_2fa needs a valid, unused TOTP code (the broker's verifier).
 func (h *Handlers) Approve(w http.ResponseWriter, r *http.Request) {
@@ -897,6 +980,14 @@ func (h *Handlers) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 	var req ApproveRequest
 	if !decodeOptionalJSON(w, r, &req) {
+		return
+	}
+	if e := validateOperatorFields(req.Operator, nil); e != nil {
+		writeError(w, r, e)
+		return
+	}
+	if code := deref(req.TOTPCode, ""); len(code) > maxTOTPCodeLen {
+		writeError(w, r, badRequest("'totp_code' is too long."))
 		return
 	}
 	operator, ok := h.subject(w, r, req.Operator, "operator", false)
@@ -922,6 +1013,10 @@ func (h *Handlers) Deny(w http.ResponseWriter, r *http.Request) {
 	}
 	var req DenyRequest
 	if !decodeOptionalJSON(w, r, &req) {
+		return
+	}
+	if e := validateOperatorFields(req.Operator, req.Reason); e != nil {
+		writeError(w, r, e)
 		return
 	}
 	operator, ok := h.subject(w, r, req.Operator, "operator", false)
@@ -1072,6 +1167,20 @@ func (h *Handlers) ListAuthorizedCapabilities(w http.ResponseWriter, r *http.Req
 	}
 	namespace := queryDefault(r, "namespace", "*")
 	purpose := queryDefault(r, "purpose", "*")
+	// "*" (the default) asks "for any namespace / purpose"; anything else
+	// is validated like the same field of a secret request.
+	if namespace != "*" {
+		if _, err := validation.ValidateNamespace(namespace); err != nil {
+			writeError(w, r, err)
+			return
+		}
+	}
+	if purpose != "*" {
+		if e := freeText("purpose", purpose); e != nil {
+			writeError(w, r, e)
+			return
+		}
+	}
 	engine := h.Vault.Policy()
 	out := []capabilityView{}
 	for _, s := range h.capabilityList() {

@@ -62,12 +62,12 @@ func NewRouter(h *handlers.Handlers, mw *Middleware) chi.Router {
 	r.Use(h.AuditHTTP)
 	r.Use(mw.BodyLimitMiddleware)
 
-	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
-		WriteJSONError(w, http.StatusNotFound, "NotFound", "not found")
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		WriteJSONError(w, r, http.StatusNotFound, "NotFound", "not found")
 	})
-	r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
+	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", allowHeaderValue)
-		WriteJSONError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+		WriteJSONError(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	})
 
 	r.Get("/healthz", h.HealthCheck)
