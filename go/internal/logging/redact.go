@@ -27,6 +27,8 @@ const (
 const (
 	maxScrubDepth = 16
 	maxScrubNodes = 10_000
+	// maxScrubStringBytes caps how much of one string ScrubString inspects.
+	maxScrubStringBytes = 64 << 10
 )
 
 type scrubState struct {
@@ -71,6 +73,8 @@ var safeExactKeys = map[string]bool{
 // defaultSensitiveExact matches camelCase-split, snake_case-normalized keys.
 var defaultSensitiveExact = map[string]bool{
 	"value":               true,
+	"pin":                 true,
+	"pw":                  true,
 	"secret":              true,
 	"secret_value":        true,
 	"pass":                true,
@@ -201,7 +205,7 @@ var (
 	// Authorization, Cookie, Set-Cookie, and X-Api-Key header lines (entire header value to EOL).
 	reAuthHeader = regexp.MustCompile(`(?i)\b((?:proxy-)?authorization|cookie|set-cookie|x-api-key)\s*:\s*([^\r\n]+)`)
 	// Bearer and Basic auth schemes, including Unicode whitespace (NBSP U+00A0, etc.).
-	reBearerScheme = regexp.MustCompile(`(?i)\b(bearer)([\s\p{Z}]+)([^\s\p{Z},;)"'\]]+)`)
+	reBearerScheme = regexp.MustCompile(`(?i)\b(bearer)((?:[\s\p{Z}]|%20)+)([^\s\p{Z},;)"'\]]+)`)
 	reBasicScheme  = regexp.MustCompile(`(?i)\b(basic)([\s\p{Z}]+)([A-Za-z0-9+/=_-]{4,})`)
 	// "token <val>" in prose/errors such as fmt.Errorf("bad token %s", tok).
 	reTokenProse = regexp.MustCompile(`(?i)\b(token)([\s\p{Z}]+)([A-Za-z0-9._~+/=-]{12,})`)
@@ -214,7 +218,7 @@ var (
 	// Inline key=value, ?key=value, or "key":"value" assignments in free text
 	// (excludes short safe metadata IDs like token_id, secret_name, secret_id, dek_version).
 	reInlineKV = regexp.MustCompile(
-		`(?i)([?&"']?\b(?:password|passwd|passphrase|pass|pwd|secret|secret[_-]?value|` +
+		`(?i)([?&"']?\b(?:password|passwd|passphrase|pass|pwd|pw|auth|bearer|secret|secret[_-]?value|` +
 			`(?:[a-z0-9]+[_-])?token|authorization|proxy[_-]authorization|cookie|set[_-]cookie|` +
 			`api[_-]?key|x[_-]api[_-]key|access[_-]?key|secret[_-]?key|private[_-]?key|privkey|` +
 			`signing[_-]?key|harness[_-]?key|hmac[_-]?key|master[_-]?key|master[_-]?secret|` +
@@ -793,6 +797,17 @@ func (r *Redactor) ScrubString(s string) string {
 	if s == "" {
 		return ""
 	}
+	if len(s) > maxScrubStringBytes {
+		// Bound the work per string (the regex passes are far from linear on
+		// adversarial 50 MB inputs). Only the scrubbed prefix is kept, so a
+		// credential cut by the limit can never leave a partial copy behind.
+		cut := maxScrubStringBytes
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		omitted := len(s) - cut
+		return SanitizeText(scrubInlineCredentials(s[:cut])) + fmt.Sprintf("[TRUNCATED %d bytes]", omitted)
+	}
 	return SanitizeText(scrubInlineCredentials(s))
 }
 
@@ -884,6 +899,7 @@ func scrubInlineCredentials(s string) string {
 	})
 
 	s = reKnownTokens.ReplaceAllString(s, RedactedPlaceholder)
+	s = scrubAssignedBareTokens(s)
 	s = scrubBareVaultTokens(s)
 	return s
 }
@@ -964,6 +980,24 @@ func scrubBareVaultTokens(s string) string {
 	return b.String()
 }
 
+// reAssignedBareToken finds `<anything>=<43/44-char token>` or `: <token>`, the
+// shape `token_id=<raw token>` takes: the key is not in the credential key
+// list (token_id is normally a short public id) but the value is a full token.
+var reAssignedBareToken = regexp.MustCompile(`([=:]\s*["']?)([A-Za-z0-9_-]{43}=?)`)
+
+func scrubAssignedBareTokens(s string) string {
+	if len(s) < 44 {
+		return s
+	}
+	return reAssignedBareToken.ReplaceAllStringFunc(s, func(m string) string {
+		parts := reAssignedBareToken.FindStringSubmatch(m)
+		if len(parts) != 3 || !looksLikeBareVaultToken(parts[2]) {
+			return m
+		}
+		return parts[1] + RedactedPlaceholder
+	})
+}
+
 func looksLikeBareVaultToken(cand string) bool {
 	if len(cand) == 44 {
 		// 32-byte standard or URL-safe base64 always has a single trailing '='.
@@ -1034,7 +1068,8 @@ func shannonEntropyASCII(s string, freq *[128]int) float64 {
 // controls (U+0080..U+009F), Unicode line/paragraph separators (U+2028/U+2029),
 // and BiDi mark/override/isolate code points (including U+200E/U+200F LRM/RLM,
 // U+061C ALM, U+202A..U+202E, U+2066..U+2069, zero-width U+200B..U+200D, and
-// U+FEFF) into visible escape sequences (RGT-415).
+// U+FEFF), soft hyphen, word joiner, annotation anchors, U+180E, tag characters
+// and private-use code points into visible escape sequences (RGT-415).
 func SanitizeText(s string) string {
 	if isCleanASCII(s) {
 		return s
@@ -1085,11 +1120,21 @@ func isCleanASCII(s string) bool {
 	return true
 }
 
+// IsUnsafeRune reports whether r is a non-ASCII code point that SanitizeText
+// encodes as \uXXXX: C1 controls, invisible/format characters and BiDi
+// controls that can reorder or hide text in a terminal or log viewer. It is
+// exported so other log sanitizers (handlers.LogSafe) encode the same set.
+func IsUnsafeRune(r rune) bool { return isUnsafeUnicodeControl(r) }
+
 func isUnsafeUnicodeControl(r rune) bool {
 	switch {
 	case r >= 0x0080 && r <= 0x009f: // C1 controls (including CSI U+009B)
 		return true
+	case r == 0x00ad: // soft hyphen
+		return true
 	case r == 0x061c: // Arabic Letter Mark
+		return true
+	case r == 0x180e: // Mongolian vowel separator
 		return true
 	case r >= 0x200b && r <= 0x200f: // ZWSP, ZWNJ, ZWJ, LRM (U+200E), RLM (U+200F)
 		return true
@@ -1097,9 +1142,17 @@ func isUnsafeUnicodeControl(r rune) bool {
 		return true
 	case r >= 0x202a && r <= 0x202e: // BiDi embedding / override
 		return true
+	case r == 0x2060: // word joiner
+		return true
 	case r >= 0x2066 && r <= 0x2069: // BiDi isolate controls
 		return true
 	case r == 0xfeff: // ZWNBSP / BOM
+		return true
+	case r >= 0xfff9 && r <= 0xfffb: // interlinear annotation anchors
+		return true
+	case r >= 0xe0000 && r <= 0xe007f: // tag characters
+		return true
+	case unicode.Is(unicode.Co, r): // private use areas
 		return true
 	default:
 		return false

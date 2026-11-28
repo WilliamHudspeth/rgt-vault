@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"rgt-vault-server/internal/auth"
 	"strings"
 	"testing"
 )
@@ -432,5 +433,57 @@ func TestAdminLogInjectionNeutralized(t *testing.T) {
 	}
 	if !strings.Contains(rawLogs, `\nFORGED LINE gateway: admin GET /ok by token deadbeef\x1b[31m\u2028SEP`) {
 		t.Errorf("expected visibly encoded payload in gateway logs, got:\n%s", rawLogs)
+	}
+}
+
+type failingTransport struct{ err error }
+
+func (f failingTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, f.err }
+
+// The backend ErrorHandler logs the transport error; an error text carrying
+// CR/LF (for example an upstream-controlled message) must not forge a log line
+// (PR #58 review; fails if logging.SanitizeText(err.Error()) is dropped).
+func TestBackendFailureLogLineCannotBeForged(t *testing.T) {
+	py := newBackend(t, "PY")
+	defer py.Close()
+	gw := makeGateway(t, py.URL, "http://127.0.0.1:1", 100)
+	gw.goProxy.Transport = failingTransport{err: fmt.Errorf("dial failed\ngateway: admin GET /ok by token deadbeef\r\x1b[31m")}
+
+	var buf bytes.Buffer
+	origOut, origFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	defer func() { log.SetOutput(origOut); log.SetFlags(origFlags) }()
+
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/secrets", nil))
+	if body(rr) != "PY" {
+		t.Fatalf("fallback body = %q, want PY", body(rr))
+	}
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 1 || !strings.Contains(lines[0], `dial failed\ngateway: admin GET /ok by token deadbeef\r\x1b[31m`) {
+		t.Errorf("backend failure log not a single encoded line: %q", buf.String())
+	}
+}
+
+// The token id printed for an authorised admin call is the 8-hex TokenID, never
+// the token itself. (SanitizeText(id) there is defence in depth: TokenID is
+// hex, so dropping it is an equivalent mutant and cannot be tested.)
+func TestAdminLogShowsTokenIDNotToken(t *testing.T) {
+	py := newBackend(t, "PY")
+	defer py.Close()
+	gw := makeGateway(t, py.URL, py.URL, 0)
+
+	var buf bytes.Buffer
+	origOut, origFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	defer func() { log.SetOutput(origOut); log.SetFlags(origFlags) }()
+
+	req := httptest.NewRequest(http.MethodGet, "/__cutover/stats", nil)
+	req.Header.Set("Authorization", "Bearer "+testOperatorToken)
+	gw.ServeHTTP(httptest.NewRecorder(), req)
+	if strings.Contains(buf.String(), testOperatorToken) || !strings.Contains(buf.String(), "by token "+auth.TokenID(testOperatorToken)) {
+		t.Errorf("admin log = %q", buf.String())
 	}
 }

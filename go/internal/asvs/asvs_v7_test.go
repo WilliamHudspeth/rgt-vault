@@ -991,8 +991,8 @@ func TestDeployLogRotationAndJournaldConfigs(t *testing.T) {
 	if !reflect.DeepEqual(directives["maxage"], []string{"90"}) {
 		t.Errorf("logrotate maxage = %v, want [90]", directives["maxage"])
 	}
-	if !reflect.DeepEqual(directives["su"], []string{"root adm"}) {
-		t.Errorf("logrotate su = %v, want [root adm]", directives["su"])
+	if !reflect.DeepEqual(directives["su"], []string{"rgtvault adm"}) {
+		t.Errorf("logrotate su = %v, want [rgtvault adm] (never root in a daemon-owned directory)", directives["su"])
 	}
 
 	createVals := directives["create"]
@@ -1008,30 +1008,10 @@ func TestDeployLogRotationAndJournaldConfigs(t *testing.T) {
 		t.Errorf("logrotate create mode = %q (%04o, err=%v), want 0640 (no group-write or world bits)", createFields[0], createMode, err)
 	}
 
-	postLines := scripts["postrotate"]
-	if len(postLines) == 0 {
-		t.Fatal("logrotate missing postrotate script")
-	}
-	var sawChown, sawChmod bool
-	for _, ln := range postLines {
-		fields := strings.Fields(ln)
-		if len(fields) >= 2 && fields[0] == "chown" && fields[1] == "root:adm" {
-			sawChown = true
-		}
-		if len(fields) >= 2 && fields[0] == "chmod" {
-			m, merr := strconv.ParseUint(fields[1], 8, 32)
-			if merr != nil || m != 0o440 || m&0o227 != 0 {
-				t.Errorf("postrotate chmod mode = %q (%04o, err=%v), want 0440 read-only", fields[1], m, merr)
-			}
-			sawChmod = true
-		}
-		upper := strings.ToUpper(ln)
-		if strings.Contains(upper, "HUP") || strings.Contains(strings.ToLower(ln), "systemctl kill") {
-			t.Errorf("logrotate postrotate must not signal SIGHUP before RGT-512 lands: %q", ln)
-		}
-	}
-	if !sawChown || !sawChmod {
-		t.Errorf("postrotate script missing chown root:adm (%v) or chmod 0440 (%v): %v", sawChown, sawChmod, postLines)
+	// The directory is writable by rgtvault, so no root-run script may touch it
+	// (symlink planting) and nothing may signal the daemon (RGT-512).
+	if len(scripts["postrotate"]) != 0 || len(scripts["prerotate"]) != 0 || len(scripts["firstaction"]) != 0 || len(scripts["lastaction"]) != 0 {
+		t.Errorf("logrotate must define no root-run scripts: %v", scripts)
 	}
 }
 

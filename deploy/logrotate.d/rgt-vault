@@ -11,23 +11,26 @@
 #      go/internal/logging (including its FileWriter) is not yet wired into
 #      `rgt-vault serve`; that wiring is follow-up work (RGT-512). Until then
 #      this file is a reference policy that matches nothing on a default install.
-#   2. Never send SIGHUP from postrotate. The daemon's only SIGHUP handler
-#      reloads the TLS certificate (a no-op without --tls-cert); it does not
-#      reopen log files, so a SIGHUP here would be misleading at best. Rotation
-#      uses copytruncate (the writer opens with O_APPEND, so truncation is safe
-#      and no reopen is needed) until SIGHUP -> FileWriter.Reopen() is wired.
-#   3. If you do redirect output to a file, you must (a) add /var/log/rgt-vault
-#      to ReadWritePaths in a drop-in and (b) provision the directory so the
-#      unprivileged rgtvault user cannot delete rotated archives, for example
-#      with systemd-tmpfiles: `d /var/log/rgt-vault 0750 rgtvault adm -`. The
-#      directory stays writable by rgtvault (it must create the active file), so
-#      rgtvault CAN remove archives there; the root:adm 0440 chown/chmod below
-#      stops edits to an archive's content but NOT deletion. Tamper-evidence
-#      against rgtvault needs root-owned archives in a root-owned directory
-#      (ship logs off-host or keep the journal), which this file does not set up.
+#   2. Never send SIGHUP from postrotate. The daemon's only SIGHUP handling is
+#      TLS certificate reload (ignored without --tls-cert); it does not reopen
+#      log files. Rotation uses copytruncate (the writer opens with O_APPEND, so
+#      truncation is safe and no reopen is needed) until SIGHUP ->
+#      FileWriter.Reopen() is wired.
+#   3. If you do redirect output to a file you must (a) add /var/log/rgt-vault to
+#      ReadWritePaths in a drop-in and (b) make the directory writable by the
+#      rgtvault user (it creates the active file), for example with
+#      systemd-tmpfiles: `d /var/log/rgt-vault 0750 rgtvault adm -`.
+#   4. Because rgtvault owns that directory, logrotate must NOT run as root in it:
+#      a root-run rotation or a root postrotate `chown`/`chmod` on a glob there
+#      follows symlinks the daemon user can plant (arbitrary-file chown/chmod).
+#      This policy therefore uses `su rgtvault adm` and has no postrotate.
+#   5. What this does NOT give you: tamper-evidence against rgtvault. It can
+#      modify or delete its own archives. Use journald (default), off-host
+#      shipping, or a root-owned archive directory fed by a root-run copy job
+#      if rgtvault must not be able to alter history.
 
 /var/log/rgt-vault/*.log {
-    su root adm
+    su rgtvault adm
     daily
     rotate 90
     maxage 90
@@ -40,10 +43,4 @@
     # mode FileWriter gives it); kept so a later switch to the create-and-HUP
     # method (RGT-512) gets a never-world-readable file.
     create 0640 rgtvault adm
-    sharedscripts
-    postrotate
-        # Ensure rotated segments belong to root:adm mode 0440 (read-only).
-        chown root:adm /var/log/rgt-vault/*.log.[0-9]* /var/log/rgt-vault/*.gz 2>/dev/null || true
-        chmod 0440 /var/log/rgt-vault/*.log.[0-9]* /var/log/rgt-vault/*.gz 2>/dev/null || true
-    endscript
 }

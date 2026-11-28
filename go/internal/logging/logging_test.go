@@ -275,7 +275,7 @@ func TestRedactionAcrossTypesAndNesting(t *testing.T) {
 	}
 
 	child := logger.
-		With(slog.String("operator_token", rawBearer), slog.Int("code", 200), slog.Int("pin", 7), slog.String("code", rawTOTP)).
+		With(slog.String("operator_token", rawBearer), slog.Int("code", 200), slog.Int("pin_num", 7), slog.String("code", rawTOTP)).
 		WithGroup("").
 		WithGroup("req_ctx")
 
@@ -326,7 +326,7 @@ func TestRedactionAcrossTypesAndNesting(t *testing.T) {
 	// Positive assertions including mutant checks (#14):
 	//   - non-sensitive struct field PublicLabel stays intact while mk, client_secret,
 	//     PrivateKey, and WrappedDEK are redacted;
-	//   - integer code=200 and pin=7 stay intact;
+	//   - integer code=200 and pin_num=7 stay intact;
 	//   - case error: produces the scrubbed error string (not an empty struct {}).
 	for _, expected := range []string{
 		"agent-alpha",
@@ -335,7 +335,7 @@ func TestRedactionAcrossTypesAndNesting(t *testing.T) {
 		"us-east-1",
 		"bot-1",
 		`"code":200`,
-		`"pin":7`,
+		`"pin_num":7`,
 		`"mk":"[REDACTED]"`,
 		`"client_secret":"[REDACTED]"`,
 		`"PrivateKey":"[REDACTED]"`,
@@ -762,8 +762,8 @@ func TestFileWriterLifecyclePermissionsSymlinkAndReopen(t *testing.T) {
 		}
 		_ = fwLoose.Close()
 
-		if dInfo, err := os.Stat(looseDir); err != nil || dInfo.Mode().Perm() != 0o700 {
-			t.Errorf("tightened dir mode = %04o (err=%v), want 0700", dInfo.Mode().Perm(), err)
+		if dInfo, err := os.Stat(looseDir); err != nil || dInfo.Mode().Perm() != 0o755 {
+			t.Errorf("pre-existing dir mode = %04o (err=%v), want it left at 0755", dInfo.Mode().Perm(), err)
 		}
 		if fInfo, err := os.Stat(looseFile); err != nil || fInfo.Mode().Perm() != 0o600 {
 			t.Errorf("tightened file mode = %04o (err=%v), want 0600", fInfo.Mode().Perm(), err)

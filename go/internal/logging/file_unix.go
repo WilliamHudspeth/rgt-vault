@@ -12,6 +12,12 @@ import (
 
 func openLogFileOS(path string) (*os.File, error) {
 	dir := filepath.Dir(path)
+	// Only a directory this call creates is forced to 0700. A pre-existing
+	// directory (/var/log, a home directory, a shared /tmp) is never chmodded:
+	// its mode is the operator's decision, and a root-run daemon must not be
+	// able to lock a system directory down by pointing the log path into it.
+	_, statErr := os.Lstat(dir)
+	created := errors.Is(statErr, os.ErrNotExist)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("logging: create log directory: %w", err)
 	}
@@ -25,15 +31,20 @@ func openLogFileOS(path string) (*os.File, error) {
 	if !dirInfo.IsDir() {
 		return nil, errors.New("logging: log parent path is not a directory")
 	}
-	if dirInfo.Mode().Perm()&0o077 != 0 && ownedByCurrentUser(dirInfo) && dirInfo.Mode()&os.ModeSticky == 0 {
-		// Tighten an existing group/other-accessible log directory, but only
-		// when this process owns it and it is not a sticky shared directory
-		// such as /tmp: never chmod a system directory, even when running as root.
-		// A failure here is not fatal (the file itself is still created 0600).
-		_ = os.Chmod(dir, 0o700)
+	if created && dirInfo.Mode().Perm() != 0o700 {
+		// umask cannot loosen 0700, but be explicit for the final directory.
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return nil, fmt.Errorf("logging: restrict new log directory to 0700: %w", err)
+		}
 	}
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
+	// Refuse anything but a regular file BEFORE opening: opening a FIFO for
+	// write blocks forever without a reader, and a device node is never a log.
+	if li, err := os.Lstat(path); err == nil && !li.Mode().IsRegular() {
+		return nil, errors.New("logging: log path must be a regular file")
+	}
+
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("logging: open log file: %w", err)
 	}
@@ -53,10 +64,4 @@ func openLogFileOS(path string) (*os.File, error) {
 		}
 	}
 	return f, nil
-}
-
-// ownedByCurrentUser reports whether info's owner is the effective user.
-func ownedByCurrentUser(info os.FileInfo) bool {
-	st, ok := info.Sys().(*syscall.Stat_t)
-	return ok && int(st.Uid) == os.Geteuid()
 }

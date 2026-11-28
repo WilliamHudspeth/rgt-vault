@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -117,80 +114,6 @@ func TestStructSensitiveFieldNameWinsOverBenignJSONTag(t *testing.T) {
 	}
 }
 
-func TestFileWriterDirectoryAndFileModes(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX permission bits")
-	}
-
-	// Existing owned directory that is group/other accessible is tightened to 0700
-	// and a pre-existing 0640 file is tightened to 0600.
-	base := t.TempDir()
-	dir := filepath.Join(base, "logs")
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(dir, "a.log")
-	if err := os.WriteFile(path, []byte("old\n"), 0o640); err != nil {
-		t.Fatal(err)
-	}
-	fw, err := OpenFileWriter(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = fw.Close()
-	assertMode(t, dir, 0o700)
-	assertMode(t, path, 0o600)
-
-	// A sticky shared directory (like /tmp) is never chmodded.
-	shared := filepath.Join(base, "shared")
-	if err := os.Mkdir(shared, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(shared, os.ModeSticky|0o777); err != nil {
-		t.Fatal(err)
-	}
-	fw, err = OpenFileWriter(filepath.Join(shared, "b.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = fw.Close()
-	st, err := os.Stat(shared)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Mode()&os.ModeSticky == 0 || st.Mode().Perm() != 0o777 {
-		t.Errorf("sticky shared dir was modified: %v", st.Mode())
-	}
-
-	// A symlinked log FILE is refused (O_NOFOLLOW).
-	target := filepath.Join(base, "target.log")
-	if err := os.WriteFile(target, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	link := filepath.Join(dir, "link.log")
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatal(err)
-	}
-	if fw, err := OpenFileWriter(link); err == nil {
-		_ = fw.Close()
-		t.Error("OpenFileWriter followed a symlinked log file")
-	}
-}
-
-func assertMode(t *testing.T, path string, want os.FileMode) {
-	t.Helper()
-	st, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := st.Mode().Perm(); got != want {
-		t.Errorf("%s mode = %04o, want %04o", path, got, want)
-	}
-}
-
 // A short (non-43-char) credential after the word "token" in prose or error
 // text is caught by the prose rule alone (bare-token heuristic cannot match).
 func TestTokenProseRuleCatchesShortCredentialInErrorText(t *testing.T) {
@@ -208,3 +131,64 @@ func TestTokenProseRuleCatchesShortCredentialInErrorText(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+func TestRedactorClosesReviewGaps(t *testing.T) {
+	r := NewRedactor()
+	for _, in := range []string{
+		"auth=SECRETX1", "pw=SECRETX1", "pin=123456",
+		"token_id=" + testTok43, "bearer=" + testTok43, "Bearer%20" + testTok43,
+		"cfg {token_id: " + testTok43 + "}",
+	} {
+		got := r.ScrubString(in)
+		if strings.Contains(got, "SECRETX1") || strings.Contains(got, "123456") || strings.Contains(got, testTok43) {
+			t.Errorf("ScrubString(%q) = %q leaked", in, got)
+		}
+	}
+	// A short, public token_id is still allowed through as an assignment.
+	if got := r.ScrubString("token_id=a1b2c3d4"); got != "token_id=a1b2c3d4" {
+		t.Errorf("short token id over-redacted: %q", got)
+	}
+
+	// Integer and struct-field PIN / pw values, which a string-only rule misses.
+	out := logLine(t, nil, "m", "pin", 123456, "pw", "SECRETX1",
+		"s", struct {
+			Pin int
+			PW  string
+		}{123456, "SECRETX1"})
+	if strings.Contains(out, "123456") || strings.Contains(out, "SECRETX1") {
+		t.Errorf("pin/pw leaked: %s", out)
+	}
+}
+
+func TestScrubStringIsBoundedOnHugeInput(t *testing.T) {
+	big := strings.Repeat("a b ", 5_000_000) // 20 MB
+	start := time.Now()
+	got := NewRedactor().ScrubString(big + " token=" + testTok43)
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("ScrubString on 20 MB took %v", d)
+	}
+	if !strings.Contains(got, "[TRUNCATED ") || len(got) > 70<<10 {
+		t.Errorf("huge string not truncated (len %d, tail %q)", len(got), got[len(got)-40:])
+	}
+	if strings.Contains(got, testTok43) {
+		t.Error("token beyond the cap must not appear")
+	}
+	// A credential straddling the cap is never partially emitted.
+	edge := strings.Repeat("x ", (maxScrubStringBytes-10)/2) + "token=" + testTok43 + " tail"
+	if out := NewRedactor().ScrubString(edge); strings.Contains(out, testTok43[:12]) {
+		t.Errorf("credential cut by the cap leaked a prefix: %q", out[len(out)-60:])
+	}
+}
+
+func TestSanitizeTextEncodesInvisibleAndPrivateUseCodePoints(t *testing.T) {
+	for _, r := range []rune{0x00ad, 0x180e, 0x2060, 0xfff9, 0xfffa, 0xfffb, 0xe000, 0xf8ff, 0xe0041, 0xf0000, 0x2028, 0x200e} {
+		in := "a" + string(r) + "b"
+		got := SanitizeText(in)
+		if strings.ContainsRune(got, r) || !strings.Contains(got, `\u`) {
+			t.Errorf("SanitizeText(U+%04X) = %q, want encoded", r, got)
+		}
+	}
+	if got := SanitizeText("café 世界 \U0001F600"); got != "café 世界 \U0001F600" {
+		t.Errorf("ordinary non-ASCII altered: %q", got)
+	}
+}
