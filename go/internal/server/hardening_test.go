@@ -260,7 +260,7 @@ func TestAuthErrorDoesNotLeakTokenPath(t *testing.T) {
 
 func TestWriteJSONErrorEscapes(t *testing.T) {
 	rec := httptest.NewRecorder()
-	WriteJSONError(rec, 400, "E", `a"b\n</x>`+"\n")
+	WriteJSONError(rec, httptest.NewRequest("GET", "/x", nil), 400, "E", `a"b\n</x>`+"\n")
 	var m map[string]string
 	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
 		t.Fatalf("invalid JSON: %v", err)

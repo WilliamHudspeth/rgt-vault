@@ -172,11 +172,14 @@ func (v *Vault) ExecuteCapability(ctx context.Context, req CapabilityRequest) (a
 	// guess. Same boundary as Python (`count(agent) >= max_requests`): with
 	// AuthFailureLimit = 100, 100 failed verifications are allowed in the
 	// window and the 101st attempt is refused without verifying.
-	// Count-then-Record is not atomic (see python/vault.py): the cap can
-	// overshoot by the concurrency level, then self-corrects.
-	if v.authFailureLimiter.Count(agent) >= v.authFailureLimiter.max {
+	// Python's count-then-record lets N concurrent guesses all pass the
+	// check; here check and record are one atomic Reserve (RGT-256/257), and
+	// the slot is committed only when verification fails.
+	failSlot, admitted := v.authFailureLimiter.Reserve(agent)
+	if !admitted {
 		return nil, deny(deniedErr("agent '%s' locked out: too many failed credential attempts", agent), "too many failed credential verifications")
 	}
+	defer failSlot.Release() // panic guard: a no-op once the verification outcome is known
 
 	// 4. Signature, envelope and expiry.
 	// A verifier that can split "authentic" from "consumed" (the replay
@@ -190,12 +193,19 @@ func (v *Vault) ExecuteCapability(ctx context.Context, req CapabilityRequest) (a
 	} else {
 		tok, verr = v.tokenVerifier.Verify(token)
 	}
+	// The slot is held only while the token is verified: a failed
+	// verification keeps it recorded, anything else gives it back at once,
+	// so the rest of the capability run never counts against the cap.
+	if verr != nil {
+		failSlot.Commit()
+	} else {
+		failSlot.Release()
+	}
 	if verr == nil && tok == nil {
 		return nil, deny(newErr([]error{ErrTokenVerifier, ErrPolicyDenied}, nil,
 			"capability token rejected: token verifier returned no token"), "token: TokenVerifierError")
 	}
 	if verr != nil {
-		v.authFailureLimiter.Record(agent)
 		class := "TokenError"
 		if errors.Is(verr, captoken.ErrToken) {
 			class = pyfmt.TokenErrorClass(verr)

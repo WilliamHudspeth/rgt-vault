@@ -125,6 +125,14 @@ static_check() {
         done <<<"$execs"
     fi
 
+    # The Go daemon runs in production mode (RGT-427): a unit that starts
+    # `rgt-vault serve` must set APP_ENV=production.
+    if grep -qE '(^|[/[:space:]])rgt-vault[[:space:]]+serve([[:space:]]|$)' <<<"$execs"; then
+        if ! values Service Environment "$f" | grep -qE '(^|[[:space:]"])APP_ENV=production("|[[:space:]]|$)'; then
+            fail "$f" "[Service] a unit running 'rgt-vault serve' must set Environment=APP_ENV=production"
+        fi
+    fi
+
     [ -n "$(value Install WantedBy "$f")" ] || fail "$f" "[Install] WantedBy is missing"
 
     # RestrictAddressFamilies is cumulative: check every assignment. Require an

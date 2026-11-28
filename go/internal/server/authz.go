@@ -188,7 +188,7 @@ func (l *failureLimiter) prune(now time.Time) {
 }
 
 // writeAuthError answers 401 with the generic message.
-func writeUnauthorized(w http.ResponseWriter, msg string) {
+func writeUnauthorized(w http.ResponseWriter, r *http.Request, msg string) {
 	w.Header().Set("WWW-Authenticate", `Bearer realm="rgt-vault"`)
-	WriteJSONError(w, http.StatusUnauthorized, "ServerAuthError", msg)
+	WriteJSONError(w, r, http.StatusUnauthorized, "ServerAuthError", msg)
 }

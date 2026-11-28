@@ -20,9 +20,6 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -168,17 +165,13 @@ func (mw *Middleware) matchOrigin(origin string) string {
 	return ""
 }
 
-// WriteJSONError writes {"error": errType, "detail": detail} using encoding/json.
-func WriteJSONError(w http.ResponseWriter, status int, errType, detail string) {
-	writeJSONErrorBody(w, status, map[string]string{"error": errType, "detail": detail})
-}
-
-func writeJSONErrorBody(w http.ResponseWriter, status int, body map[string]string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(body); err != nil {
-		log.Printf("ERROR: failed to write JSON error response: %v", err)
-	}
+// WriteJSONError writes the standard error envelope {"error", "detail",
+// "incident_id"} (handlers.ErrorBody) with a fresh incident id and logs one
+// line with the same id. Every error the middleware answers (400, 401, 403,
+// 404, 405, 413, 429, 500) goes through it, so no error response lacks an id
+// (RGT-418/419). It returns the id.
+func WriteJSONError(w http.ResponseWriter, r *http.Request, status int, errType, detail string) string {
+	return handlers.WriteAppError(w, r, status, errType, detail)
 }
 
 // RecoverMiddleware converts a handler panic into a generic 500 carrying an
@@ -194,7 +187,7 @@ func (mw *Middleware) RecoverMiddleware(next http.Handler) http.Handler {
 			if rec == http.ErrAbortHandler {
 				panic(rec)
 			}
-			id := newIncidentID()
+			id := handlers.NewIncidentID()
 			committed := false
 			if rw, ok := w.(*responseWriter); ok {
 				committed = rw.wrote
@@ -208,22 +201,10 @@ func (mw *Middleware) RecoverMiddleware(next http.Handler) http.Handler {
 				// the response. Abort the connection instead.
 				panic(http.ErrAbortHandler)
 			}
-			writeJSONErrorBody(w, http.StatusInternalServerError, map[string]string{
-				"error":       "InternalError",
-				"detail":      "internal server error",
-				"incident_id": id,
-			})
+			handlers.WriteErrorWithID(w, id, http.StatusInternalServerError, "InternalError", "internal server error")
 		}()
 		next.ServeHTTP(w, r)
 	})
-}
-
-func newIncidentID() string {
-	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		return strconv.FormatInt(time.Now().UnixNano(), 16)
-	}
-	return hex.EncodeToString(b)
 }
 
 // MethodMiddleware returns 405 for every verb outside the allow-list, before
@@ -232,7 +213,7 @@ func (mw *Middleware) MethodMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !allowedMethods[r.Method] {
 			w.Header().Set("Allow", allowHeaderValue)
-			WriteJSONError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+			WriteJSONError(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -261,7 +242,7 @@ func (mw *Middleware) CORSMiddleware(next http.Handler) http.Handler {
 				if !allowedMethods[reqMethod] || reqMethod == http.MethodOptions {
 					// Allowed origin, but asking for a verb we do not serve.
 					w.Header().Set("Allow", allowHeaderValue)
-					WriteJSONError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+					WriteJSONError(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 					return
 				}
 				h := w.Header()
@@ -322,7 +303,7 @@ func (mw *Middleware) BodyLimitMiddleware(next http.Handler) http.Handler {
 		limit := mw.maxBody()
 		if r.ContentLength > limit {
 			w.Header().Set("Connection", "close")
-			WriteJSONError(w, http.StatusRequestEntityTooLarge, "RequestTooLarge", "request body too large")
+			WriteJSONError(w, r, http.StatusRequestEntityTooLarge, "RequestTooLarge", "request body too large")
 			return
 		}
 		if r.Body != nil && r.Body != http.NoBody {
@@ -348,8 +329,8 @@ func authFailure(err error) (status int, msg, reason string) {
 	case errors.Is(err, auth.ErrInvalidToken):
 		return http.StatusUnauthorized, "invalid credentials", "invalid"
 	default:
-		// Token store unreadable: a server-side fault, not a client one.
-		log.Printf("ERROR: token verification unavailable: %v", err)
+		// Token store unreadable: a server-side fault, not a client one. The
+		// caller logs the error under the response's incident id.
 		return http.StatusInternalServerError, "authentication unavailable", ""
 	}
 }
@@ -407,7 +388,11 @@ func (mw *Middleware) AuthMiddleware(next http.Handler) http.Handler {
 		if err != nil {
 			status, msg, reason := authFailure(err)
 			if status != http.StatusUnauthorized {
-				WriteJSONError(w, status, "ServerAuthError", msg)
+				// The cause (a token-store path or parse error) is logged
+				// under the incident id and never sent to the client.
+				id := handlers.NewIncidentID()
+				log.Printf("ERROR incident=%s status=%d token verification unavailable: %s", id, status, handlers.LogSafe(err.Error()))
+				handlers.WriteErrorWithID(w, id, status, "ServerAuthError", msg)
 				return
 			}
 			limited, report, full := mw.limiter().failure(handlers.ClientIP(r))
@@ -433,17 +418,17 @@ func (mw *Middleware) AuthMiddleware(next http.Handler) http.Handler {
 			}
 			if limited {
 				w.Header().Set("Retry-After", strconv.Itoa(int(mw.limiter().window/time.Second)))
-				WriteJSONError(w, http.StatusTooManyRequests, "ServerAuthError", "too many failed authentication attempts")
+				WriteJSONError(w, r, http.StatusTooManyRequests, "ServerAuthError", "too many failed authentication attempts")
 				return
 			}
-			writeUnauthorized(w, msg)
+			writeUnauthorized(w, r, msg)
 			return
 		}
 		if p.Legacy && !mw.LegacyPrivilegedRoutes && legacyPrivileged(r) {
 			if mw.Auditor != nil {
 				mw.Auditor.AuditDenied(r, p, "route disabled in legacy shared-token mode")
 			}
-			WriteJSONError(w, http.StatusForbidden, "AuthorizationError",
+			WriteJSONError(w, r, http.StatusForbidden, "AuthorizationError",
 				"this route is disabled in legacy shared-token mode: use a per-agent token (or the offline command)")
 			return
 		}
@@ -452,7 +437,7 @@ func (mw *Middleware) AuthMiddleware(next http.Handler) http.Handler {
 				if mw.Auditor != nil {
 					mw.Auditor.AuditDenied(r, p, "missing scope "+need.name)
 				}
-				WriteJSONError(w, http.StatusForbidden, "AuthorizationError", "insufficient scope for this route")
+				WriteJSONError(w, r, http.StatusForbidden, "AuthorizationError", "insufficient scope for this route")
 				return
 			}
 		}
@@ -472,7 +457,7 @@ func (mw *Middleware) PathMiddleware(next http.Handler) http.Handler {
 		}
 		for _, p := range []string{r.URL.Path, raw} {
 			if badPath(p) {
-				WriteJSONError(w, http.StatusBadRequest, "BadRequest", "Invalid URI path")
+				WriteJSONError(w, r, http.StatusBadRequest, "BadRequest", "Invalid URI path")
 				return
 			}
 		}
