@@ -110,6 +110,7 @@ func capDetails(agent, capability string, version int, rest ...pyKV) string {
 // the v0.3 enforcement point. The checks run in exactly Python's order and
 // every failure writes Python's audit row:
 //
+//  0. honey capability               -> HONEY_CAPABILITY_TRIGGERED (then carries on)
 //  1. freeze check                      -> CAPABILITY_DENIED "vault frozen"
 //  2. token verifier configured         -> CAPABILITY_DENIED "no token verifier configured"
 //  3. failed-credential cap (RGT-277)   -> CAPABILITY_DENIED "too many failed credential verifications"
@@ -145,6 +146,10 @@ func (v *Vault) ExecuteCapability(ctx context.Context, req CapabilityRequest) (a
 	if err := v.withR(func() error { return nil }); err != nil {
 		return nil, err
 	}
+	// 0. Honey capability (RGT-30): record and alert, then answer exactly as
+	// for any unregistered name. A honey name is never run (step 8).
+	honey := v.honeyProbe(ctx, HoneyProbe{Agent: agent, Capability: name, Version: version,
+		Source: "capability.execute", TokenPresented: token != "", PayloadKeys: len(payload)})
 	// deny writes the CAPABILITY_DENIED row and returns result (or the
 	// audit write's error: an unrecorded denial is still a denial).
 	deny := func(result error, reason string, rest ...pyKV) error {
@@ -267,6 +272,12 @@ func (v *Vault) ExecuteCapability(ctx context.Context, req CapabilityRequest) (a
 		return nil, newErr([]error{ErrCapabilityNotFound}, nil, "unknown capability %s. Registered: []", pyRepr(name))
 	}
 	spec, err := v.capabilities.Lookup(name)
+	if honey && err == nil {
+		// Open refuses a registry holding a honey name; if one was
+		// registered later, still never run it. (An unregistered honey
+		// name keeps the registry's own not-found error, byte for byte.)
+		spec = nil
+	}
 	if err == nil && spec == nil {
 		err = newErr([]error{ErrCapabilityNotFound}, nil, "unknown capability %s", pyRepr(name))
 	}

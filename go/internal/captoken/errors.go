@@ -18,6 +18,7 @@ const (
 	kindNotImplemented
 	kindValidation
 	kindReplay
+	kindNoSigningKey
 )
 
 // Error is the error type returned by this package. Use errors.Is with
@@ -73,6 +74,8 @@ func (k Kind) String() string {
 		return "invalid argument"
 	case kindReplay:
 		return "token replay"
+	case kindNoSigningKey:
+		return "no signing key"
 	}
 	return "token error"
 }
@@ -100,7 +103,7 @@ var (
 	// single-use) or the replay cache cannot take another one (it fails
 	// closed). Go-only (batch H2).
 	ErrReplay = &Error{kind: kindReplay}
-	// ErrNotImplemented: the Ed25519 placeholder (RGT-35 / RGT-46).
+	// ErrNotImplemented: an unconfigured (zero-value) Ed25519Verifier.
 	ErrNotImplemented = &Error{kind: kindNotImplemented}
 	// ErrValidation: invalid caller input to Sign / constructors
 	// (Python ValidationError).

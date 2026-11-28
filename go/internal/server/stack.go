@@ -16,6 +16,7 @@ import (
 	"rgt-vault-server/internal/approval"
 	"rgt-vault-server/internal/capabilities"
 	"rgt-vault-server/internal/captoken"
+	"rgt-vault-server/internal/honeycap"
 	"rgt-vault-server/internal/kdf"
 	"rgt-vault-server/internal/providers"
 	"rgt-vault-server/internal/server/handlers"
@@ -239,6 +240,11 @@ func OpenStack(ctx context.Context, o StackOptions) (*Stack, error) {
 		return nil, err
 	}
 	caps := capabilities.NewDefault(handlers.ActionBridge{Registry: acts})
+	// RGT-30: decoy capabilities (defaults + the policy's honey_capabilities).
+	honey, err := honeycap.FromPolicyYAML(policyYAML, honeycap.WithNotifier(o.Notifier))
+	if err != nil {
+		return nil, err
+	}
 
 	cfg := vault.Config{
 		DBPath:        dbPath,
@@ -247,8 +253,10 @@ func OpenStack(ctx context.Context, o StackOptions) (*Stack, error) {
 		Capabilities:  caps,
 		TokenVerifier: verifier,
 		KDFParams:     o.KDFParams,
-		RateLimit:     o.RateLimit,
-		RateWindow:    o.RateWindow,
+		// RGT-30 honey capabilities.
+		HoneyCapabilities: honey,
+		RateLimit:         o.RateLimit,
+		RateWindow:        o.RateWindow,
 	}
 	if broker != nil && o.RequireApproval {
 		cfg.Approval = broker // reads; --require-approval-for alone gates only the listed operations

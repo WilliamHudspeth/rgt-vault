@@ -105,6 +105,8 @@ type Registry struct {
 	mu    sync.RWMutex
 	specs map[string]*Spec
 	order []string
+	// reserved, when set, refuses names (honey capabilities, RGT-30).
+	reserved func(name string) bool
 }
 
 var _ vault.CapabilityRegistry = (*Registry)(nil)
@@ -152,12 +154,38 @@ func (r *Registry) Register(spec Spec) error {
 	s.Versions = uniq
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.reserved != nil && r.reserved(s.Name) {
+		return newError("ValueError", nil, []error{ErrRegistration}, "capability %s is a reserved (honey) capability name", pyfmt.Repr(s.Name))
+	}
 	if _, dup := r.specs[s.Name]; dup {
 		return newError("ValueError", nil, []error{ErrRegistration}, "capability %s is already registered", pyfmt.Repr(s.Name))
 	}
 	r.specs[s.Name] = &s
 	r.order = append(r.order, s.Name)
 	return nil
+}
+
+// ReserveNames makes Register refuse every name for which reserved returns
+// true. It fails, reserving nothing, if a registered name already matches;
+// the check and the reservation are atomic. vault.Open calls it with the
+// honey-capability matcher (vault.ReservingRegistry).
+func (r *Registry) ReserveNames(reserved func(name string) bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, n := range r.order {
+		if reserved(n) {
+			return fmt.Errorf("registered capability %s matches a honey capability name; rename one of them", pyfmt.Repr(n))
+		}
+	}
+	r.reserved = reserved
+	return nil
+}
+
+// Names returns the registered names in registration order.
+func (r *Registry) Names() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return append([]string(nil), r.order...)
 }
 
 // Unregister removes a capability (tests; not exposed over HTTP).
