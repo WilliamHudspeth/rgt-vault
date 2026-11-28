@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -372,7 +373,8 @@ func TestAuthzAuthenticationFailures(t *testing.T) {
 		if code != 401 || hdr.Get("WWW-Authenticate") == "" {
 			t.Errorf("%s: %d %s", name, code, body)
 		}
-		bodies[name] = strings.TrimSpace(body)
+		// The per-response incident id (RGT-418) is random by design.
+		bodies[name] = incidentRE.ReplaceAllString(strings.TrimSpace(body), "")
 	}
 	// Unknown, expired and revoked are indistinguishable to the client.
 	if bodies["unknown"] != bodies["expired"] || bodies["unknown"] != bodies["revoked"] {
@@ -740,3 +742,7 @@ func TestAuthzLeaseRouteClassification(t *testing.T) {
 		}
 	}
 }
+
+// incidentRE strips the random incident id from an error body so two answers
+// can be compared for equality.
+var incidentRE = regexp.MustCompile(`,"incident_id":"[0-9a-f]+"`)

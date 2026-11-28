@@ -103,8 +103,13 @@ func TestOperatorHandlersRequireOperatorScope(t *testing.T) {
 	for _, ctx := range []context.Context{context.Background(), WithPrincipal(context.Background(), auth.Principal{TokenID: "id", Agent: "a", Scopes: []auth.Scope{auth.ScopeAgent, auth.ScopeAudit}})} {
 		rec := httptest.NewRecorder()
 		h.ListRequests(rec, httptest.NewRequest("GET", "/v1/requests", nil).WithContext(ctx))
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("scope %v: %d", ctx, rec.Code)
+		// No principal at all is 401, a principal without the scope 403.
+		want := http.StatusForbidden
+		if _, ok := PrincipalFromContext(ctx); !ok {
+			want = http.StatusUnauthorized
+		}
+		if rec.Code != want {
+			t.Errorf("scope %v: %d, want %d", ctx, rec.Code, want)
 		}
 	}
 	rec := httptest.NewRecorder()
@@ -117,7 +122,8 @@ func TestOperatorHandlersRequireOperatorScope(t *testing.T) {
 func TestNoActionsRegistry(t *testing.T) {
 	h := &Handlers{}
 	rec := httptest.NewRecorder()
-	h.ListActions(rec, httptest.NewRequest("GET", "/v1/actions", nil))
+	ctx := WithPrincipal(context.Background(), auth.Principal{TokenID: "id", Agent: "a", Scopes: []auth.Scope{auth.ScopeAgent}})
+	h.ListActions(rec, httptest.NewRequest("GET", "/v1/actions", nil).WithContext(ctx))
 	if !strings.Contains(rec.Body.String(), `"actions":[]`) {
 		t.Errorf("actions = %s", rec.Body.String())
 	}
