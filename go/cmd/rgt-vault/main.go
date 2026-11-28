@@ -172,6 +172,7 @@ func runContext(ctx context.Context, args []string, stdin io.Reader, stdout, std
 
 func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 	var host, token string
+	var tf clientTLSFlags
 
 	rootCmd := &cobra.Command{
 		Use:     "rgt-vault",
@@ -184,8 +185,9 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 		SilenceErrors: true,
 	}
 
-	rootCmd.PersistentFlags().StringVar(&host, "host", defaultHost, "server base URL (client subcommands)")
+	rootCmd.PersistentFlags().StringVar(&host, "host", defaultHost, "server base URL (client subcommands): https://..., or http:// to a loopback host")
 	rootCmd.PersistentFlags().StringVar(&token, "token", "", "bearer token (overrides env RGT_VAULT_TOKEN and $RGT_VAULT_TOKEN_FILE; operator commands then fall back to ~/.config/rgt-vault/operator.token, all but mcp to the legacy server.token)")
+	tf.register(rootCmd)
 	var asOperator bool
 	rootCmd.PersistentFlags().BoolVar(&asOperator, "as-operator", false, "let an agent command (set, get, list, revoke, simulate, fingerprint) fall back to ~/.config/rgt-vault/operator.token")
 
@@ -210,7 +212,11 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 	// that error, before anything is sent.
 	mkCLI := func(src tokenSources) *cli {
 		t, err := tokenFor(src)
-		return &cli{err: err, host: strings.TrimSuffix(host, "/"), token: t, stdin: stdin, stdout: stdout, client: newHTTPClient()}
+		base, tr, terr := tf.prepare(host)
+		if err == nil {
+			err = terr // the token is never sent over an unsafe channel
+		}
+		return &cli{err: err, host: base, token: t, stdin: stdin, stdout: stdout, client: newHTTPClient(tr)}
 	}
 	newCLI := func() *cli { return mkCLI(agentCmd) }
 	newOperatorCLI := func() *cli { return mkCLI(operatorCmd) }
@@ -375,7 +381,11 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 			if statusOffline || cmd.Flags().Changed("db") {
 				return runStatusOffline(cmd.Context(), &vf, stdout)
 			}
-			return runStatus(strings.TrimSuffix(host, "/"), stdout)
+			base, tr, err := tf.prepare(host)
+			if err != nil {
+				return err
+			}
+			return runStatus(base, tr, stdout)
 		},
 	}
 	statusCmd.Flags().BoolVar(&statusOffline, "offline", false, "summarise the database file directly (read-only)")
@@ -395,7 +405,11 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 			if t == "" {
 				return errNoToken(explicitOnly)
 			}
-			return runMCP(strings.TrimSuffix(host, "/"), t, mcpAgentLabel(mcpAgent), stdin, stdout, cmd.ErrOrStderr())
+			base, tr, err := tf.prepare(host)
+			if err != nil {
+				return err
+			}
+			return runMCP(base, tr, t, mcpAgentLabel(mcpAgent), stdin, stdout, cmd.ErrOrStderr())
 		},
 	}
 
@@ -413,7 +427,11 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runTUI(strings.TrimSuffix(host, "/"), t, tuiNamespace)
+			base, tr, err := tf.prepare(host)
+			if err != nil {
+				return err
+			}
+			return runTUI(base, tr, t, tuiNamespace)
 		},
 	}
 	tuiCmd.Flags().StringVar(&tuiNamespace, "namespace", "default", "namespace to display")

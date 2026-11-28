@@ -75,6 +75,15 @@ func NewHTTPClient(baseURL, token string) *HTTPClient {
 	}
 }
 
+// SetTransport replaces the HTTP transport (the TLS policy of
+// internal/transport: TLS 1.2+, AEAD suites, --cacert). A nil transport keeps
+// the default.
+func (c *HTTPClient) SetTransport(rt http.RoundTripper) {
+	if rt != nil {
+		c.hc.Transport = rt
+	}
+}
+
 // SetOperatorToken sets the token used for the approval endpoints. A server
 // started with a separate operator token file accepts only that token there
 // (and refuses it everywhere else).

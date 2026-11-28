@@ -97,6 +97,15 @@ func NewServer(backendURL, token string) *Server {
 	}
 }
 
+// SetTransport replaces the HTTP transport used to reach the backend (the
+// TLS policy of internal/transport: TLS 1.2+, AEAD suites, --cacert). A nil
+// transport keeps the default.
+func (s *Server) SetTransport(rt http.RoundTripper) {
+	if rt != nil {
+		s.httpClient.Transport = rt
+	}
+}
+
 type flusher interface {
 	Flush() error
 }

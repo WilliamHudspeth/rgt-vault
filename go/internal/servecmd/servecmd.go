@@ -12,7 +12,20 @@
 //	--provider / RGT_VAULT_PROVIDER       keyring (default) or platform
 //	--host / RGT_VAULT_HOST               listen address, default 127.0.0.1
 //	--port / RGT_VAULT_PORT               listen port, default 8765
-//	--allow-non-loopback                  permit a non-loopback --host
+//	--tls-cert / RGT_VAULT_TLS_CERT       PEM certificate (chain) to serve HTTPS with
+//	--tls-key / RGT_VAULT_TLS_KEY         its PEM private key; refused if group/other can
+//	                                      read it (Unix). Both or neither
+//	--tls-client-ca / RGT_VAULT_TLS_CLIENT_CA
+//	                                      PEM CA bundle: turns on mutual TLS
+//	--tls-client-auth / RGT_VAULT_TLS_CLIENT_AUTH
+//	                                      require (default with a client CA) or
+//	                                      verify-if-given
+//	--tls-reload-interval                 poll the TLS files for changes (default 1m,
+//	                                      0 = off); SIGHUP always reloads
+//	--allow-insecure-non-loopback         permit a non-loopback --host WITHOUT TLS
+//	                                      (loud warning + audit row). Without TLS a
+//	                                      non-loopback bind is refused. The old name
+//	                                      --allow-non-loopback is a deprecated alias.
 //	--token-store / RGT_VAULT_TOKEN_STORE per-agent token store (hashes only), default
 //	                                      ~/.config/rgt-vault/tokens.json (batch H1;
 //	                                      manage it with `rgt-vault token`)
@@ -33,6 +46,10 @@
 //	CORS_ALLOWED_ORIGINS                  comma-separated exact origins; unset = no CORS
 //	RGT_VAULT_MAX_BODY_BYTES              request body limit, default 1 MiB
 //
+// TLS policy (internal/transport): TLS 1.2 minimum with ECDHE + AES-GCM /
+// ChaCha20-Poly1305 only (TLS 1.3 preferred), HTTP/2 allowed, session tickets
+// off, no renegotiation, HSTS on every response. See docs/guides/tls.md.
+//
 // The bearer tokens are NEVER printed or logged. Only the token file paths
 // and short token ids (a hash prefix) appear in output.
 package servecmd
@@ -41,18 +58,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -64,6 +80,7 @@ import (
 	"rgt-vault-server/internal/kdf"
 	"rgt-vault-server/internal/server"
 	"rgt-vault-server/internal/server/handlers"
+	"rgt-vault-server/internal/transport"
 	"rgt-vault-server/internal/vault"
 )
 
@@ -194,9 +211,16 @@ func (v *VaultFlags) Resolve(getenv func(string) string) (Resolved, error) {
 
 // Flags holds the raw `serve` flag values.
 type Flags struct {
-	Host                string
-	Port                string
+	Host                     string
+	Port                     string
+	AllowInsecureNonLoopback bool
+	// AllowNonLoopback is the deprecated spelling of AllowInsecureNonLoopback.
 	AllowNonLoopback    bool
+	TLSCert             string
+	TLSKey              string
+	TLSClientCA         string
+	TLSClientAuth       string
+	TLSReloadInterval   time.Duration
 	TokenStore          string
 	LegacySharedToken   bool
 	LegacyPrivileged    bool
@@ -220,10 +244,12 @@ type Flags struct {
 
 // config is the resolved server configuration.
 type config struct {
-	host      string
-	port      string
-	allowNonL bool
-	tokenFile string
+	host string
+	port string
+	// allowInsecure permits a non-loopback bind without TLS.
+	allowInsecure bool
+	tls           server.TLSSettings
+	tokenFile     string
 	// tokenStore is the per-agent store; legacy selects the shared token
 	// files (tokenFile / operatorTokenFile) instead.
 	tokenStore string
@@ -270,11 +296,18 @@ func parseConfig(f Flags, vf *VaultFlags, getenv func(string) string) (config, e
 		return config{}, err
 	}
 	cfg := config{
-		host:      firstNonEmpty(f.Host, getenv("RGT_VAULT_HOST"), DefaultHost),
-		port:      firstNonEmpty(f.Port, getenv("RGT_VAULT_PORT"), DefaultPort),
-		allowNonL: f.AllowNonLoopback,
-		maxBody:   server.DefaultMaxBodyBytes,
-		legacy:    f.LegacySharedToken,
+		host:          firstNonEmpty(f.Host, getenv("RGT_VAULT_HOST"), DefaultHost),
+		port:          firstNonEmpty(f.Port, getenv("RGT_VAULT_PORT"), DefaultPort),
+		allowInsecure: f.AllowInsecureNonLoopback || f.AllowNonLoopback,
+		tls: server.TLSSettings{
+			CertFile:       firstNonEmpty(f.TLSCert, getenv("RGT_VAULT_TLS_CERT")),
+			KeyFile:        firstNonEmpty(f.TLSKey, getenv("RGT_VAULT_TLS_KEY")),
+			ClientCAFile:   firstNonEmpty(f.TLSClientCA, getenv("RGT_VAULT_TLS_CLIENT_CA")),
+			ClientAuth:     firstNonEmpty(f.TLSClientAuth, getenv("RGT_VAULT_TLS_CLIENT_AUTH")),
+			ReloadInterval: f.TLSReloadInterval,
+		},
+		maxBody: server.DefaultMaxBodyBytes,
+		legacy:  f.LegacySharedToken,
 
 		legacyPrivileged: f.LegacyPrivileged,
 
@@ -294,6 +327,12 @@ func parseConfig(f Flags, vf *VaultFlags, getenv func(string) string) (config, e
 	cfg.securityWebhookRem = f.SecurityWebhookAllowRemote
 	if cfg.securityWebhookRem && cfg.securityWebhook == "" {
 		return config{}, errors.New("--security-webhook-allow-remote needs --security-webhook-url")
+	}
+	if err := cfg.tls.Validate(); err != nil {
+		return config{}, err
+	}
+	if f.TLSReloadInterval < 0 {
+		return config{}, fmt.Errorf("invalid --tls-reload-interval %s", f.TLSReloadInterval)
 	}
 	if cfg.legacyPrivileged && !cfg.legacy {
 		return config{}, errors.New("--legacy-allow-privileged-routes needs --legacy-shared-token")
@@ -366,13 +405,7 @@ func tokensEqual(a, b string) bool {
 }
 
 // IsLoopbackHost reports whether host is "localhost" or a loopback address.
-func IsLoopbackHost(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip, err := netip.ParseAddr(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"))
-	return err == nil && ip.IsLoopback()
-}
+func IsLoopbackHost(host string) bool { return transport.IsLoopbackHost(host) }
 
 // NewCommand returns the `serve` command. vf are the shared vault flags
 // (already registered by the caller on a parent); nil registers --db,
@@ -381,11 +414,13 @@ func NewCommand(env Env, vf *VaultFlags) *cobra.Command {
 	var f Flags
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Run the HTTP server on the real vault (loopback only by default)",
+		Short: "Run the HTTP(S) server on the real vault (loopback, plain HTTP by default)",
 		Long: "Open the vault at --db (creating it on first use), serve the HTTP API on --host:--port and\n" +
 			"keep every secret on disk, so data persists across restarts.\n\n" +
 			"Without --policy every request is denied (default deny). Without --harness-key-file\n" +
-			"/v1/capabilities/execute fails closed.",
+			"/v1/capabilities/execute fails closed.\n\n" +
+			"Without --tls-cert/--tls-key the server speaks plain HTTP and only a loopback --host is\n" +
+			"accepted. With them it serves TLS 1.2+ (AEAD suites only); --tls-client-ca adds mutual TLS.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := parseConfig(f, vf, env.getenv)
@@ -402,7 +437,14 @@ func NewCommand(env Env, vf *VaultFlags) *cobra.Command {
 	fs := cmd.Flags()
 	fs.StringVar(&f.Host, "host", "", "listen address (env RGT_VAULT_HOST, default "+DefaultHost+")")
 	fs.StringVar(&f.Port, "port", "", "listen port (env RGT_VAULT_PORT, default "+DefaultPort+")")
-	fs.BoolVar(&f.AllowNonLoopback, "allow-non-loopback", false, "permit a non-loopback --host (plain HTTP: put a TLS reverse proxy in front)")
+	fs.StringVar(&f.TLSCert, "tls-cert", "", "PEM certificate (chain) to serve HTTPS with (env RGT_VAULT_TLS_CERT); needs --tls-key")
+	fs.StringVar(&f.TLSKey, "tls-key", "", "PEM private key for --tls-cert (env RGT_VAULT_TLS_KEY); refused if group/other can read it")
+	fs.StringVar(&f.TLSClientCA, "tls-client-ca", "", "PEM CA bundle that signs client certificates: enables mutual TLS (env RGT_VAULT_TLS_CLIENT_CA); the bearer token is still required")
+	fs.StringVar(&f.TLSClientAuth, "tls-client-auth", "", "mutual TLS mode: require (default with --tls-client-ca) or verify-if-given (env RGT_VAULT_TLS_CLIENT_AUTH)")
+	fs.DurationVar(&f.TLSReloadInterval, "tls-reload-interval", server.DefaultTLSReloadInterval, "how often the TLS files are checked for a change and reloaded without dropping connections (0 = only on SIGHUP)")
+	fs.BoolVar(&f.AllowInsecureNonLoopback, "allow-insecure-non-loopback", false, "permit a non-loopback --host WITHOUT TLS (plain HTTP: tokens and secrets cross the network unencrypted; logged and audited)")
+	fs.BoolVar(&f.AllowNonLoopback, "allow-non-loopback", false, "")
+	_ = fs.MarkDeprecated("allow-non-loopback", "use --tls-cert/--tls-key, or --allow-insecure-non-loopback for plain HTTP")
 	fs.StringVar(&f.TokenStore, "token-store", "", "per-agent token store (env RGT_VAULT_TOKEN_STORE, default ~/.config/rgt-vault/tokens.json; see `rgt-vault token`)")
 	fs.BoolVar(&f.LegacySharedToken, "legacy-shared-token", false, "DEPRECATED: authenticate with one shared token file and the self-asserted agent field (pre-H1 behaviour); the lease route, /v1/rotate and the audit log are then refused")
 	fs.BoolVar(&f.LegacyPrivileged, "legacy-allow-privileged-routes", false, "with --legacy-shared-token: let the shared token also reach the plaintext lease route, /v1/rotate and the audit log (full pre-H1 exposure)")
@@ -535,6 +577,57 @@ func loadAuth(cfg config, logger *log.Logger) (authSetup, string, error) {
 	return setup, fmt.Sprintf("LEGACY shared bearer token from %s (id %s)", path, tokenID), nil
 }
 
+func clientAuthText(m transport.ClientAuthMode) string {
+	switch m {
+	case transport.ClientAuthRequire:
+		return "required (mTLS)"
+	case transport.ClientAuthVerifyIfGiven:
+		return "verified if presented (mTLS)"
+	}
+	return "not requested"
+}
+
+// watchSIGHUP reloads the TLS material on SIGHUP and (interval > 0) when the
+// files change. The returned function stops it.
+func watchSIGHUP(ctx context.Context, t *transport.ServerTLS, interval time.Duration) func() {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGHUP)
+	trigger := make(chan struct{}, 1)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-sig:
+				select {
+				case trigger <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+	go t.Watch(ctx, trigger, interval)
+	return func() { signal.Stop(sig) }
+}
+
+// ignoreSIGHUP swallows SIGHUP (logging it) while the server has no TLS
+// material to reload.
+func ignoreSIGHUP(ctx context.Context, logger *log.Logger) func() {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGHUP)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-sig:
+				logger.Printf("SIGHUP ignored: TLS is not enabled, nothing to reload")
+			}
+		}
+	}()
+	return func() { signal.Stop(sig) }
+}
+
 // Run opens the vault described by cfg and serves until ctx is cancelled.
 func Run(ctx context.Context, cfg config, env Env) error {
 	if ctx == nil {
@@ -543,8 +636,25 @@ func Run(ctx context.Context, cfg config, env Env) error {
 	logger := env.logger()
 	stdout := env.stdout()
 
-	if !IsLoopbackHost(cfg.host) && !cfg.allowNonL {
-		return fmt.Errorf("refusing to bind %s: not a loopback address (pass --allow-non-loopback to override)", cfg.host)
+	tlsOn := cfg.tls.Enabled()
+	insecureWarning, err := server.CheckBind(cfg.host, tlsOn, cfg.allowInsecure)
+	if err != nil {
+		return err
+	}
+	// The certificate is loaded (and refused if it is expired, mismatched or
+	// its key is world-readable) before anything else is touched.
+	var tlsSrv *transport.ServerTLS
+	if tlsOn {
+		if tlsSrv, err = server.NewTLS(cfg.tls, logger.Printf); err != nil {
+			return fmt.Errorf("TLS: %w", err)
+		}
+		if herr := tlsSrv.CoversHost(cfg.host); herr != nil {
+			logger.Printf("WARNING: the TLS certificate does not cover --host %s (%v): clients that connect "+
+				"by that name will reject it; reissue it with that name in the SAN", handlers.LogSafe(cfg.host), handlers.LogSafe(herr.Error()))
+		}
+		if cfg.allowInsecure && !IsLoopbackHost(cfg.host) {
+			logger.Printf("NOTE: --allow-insecure-non-loopback has no effect: TLS is enabled")
+		}
 	}
 
 	for _, bad := range cfg.rejected {
@@ -553,6 +663,9 @@ func Run(ctx context.Context, cfg config, env Env) error {
 	authn, authLine, err := loadAuth(cfg, logger)
 	if err != nil {
 		return err
+	}
+	if insecureWarning != "" {
+		logger.Print("WARNING: " + insecureWarning)
 	}
 	if cfg.allowPrivateNetwork {
 		logger.Printf("WARNING: --allow-private-network enables the built-in HTTP actions to call " +
@@ -594,6 +707,13 @@ func Run(ctx context.Context, cfg config, env Env) error {
 			logger.Printf("closing vault: %v", handlers.LogSafe(cerr.Error()))
 		}
 	}()
+	if insecureWarning != "" {
+		// Leave a trace in the tamper-evident log, not only in the journal.
+		details := fmt.Sprintf("plain HTTP on non-loopback host %s port %s (--allow-insecure-non-loopback)", cfg.host, cfg.port)
+		if aerr := stack.Vault.Audit(ctx, "server_insecure_bind", sql.NullString{}, details, sql.NullString{}); aerr != nil {
+			logger.Printf("WARNING: could not audit the insecure bind: %v", handlers.LogSafe(aerr.Error()))
+		}
+	}
 	if cfg.vault.Policy == "" {
 		logger.Printf("WARNING: no --policy given: every secret request is denied (default deny)")
 	}
@@ -625,21 +745,27 @@ func Run(ctx context.Context, cfg config, env Env) error {
 	}
 	addr := ln.Addr().String()
 
-	if !IsLoopbackHost(cfg.host) {
-		logger.Printf("WARNING: listening on non-loopback address %s over plain HTTP; "+
-			"put a TLS reverse proxy in front and firewall the port", addr)
-	}
-
 	fmt.Fprintln(stdout, "==============================================")
 	fmt.Fprintln(stdout, "  rgt-vault server")
 	fmt.Fprintf(stdout, "  Listening on %s\n", addr)
 	fmt.Fprintf(stdout, "  Vault: %s (id %s, epoch %d)\n", stack.DBPath, stack.Vault.VaultID(), stack.Vault.KeyEpoch())
-	fmt.Fprintf(stdout, "  Health check: http://%s/healthz\n", addr)
+	scheme := "http"
+	if tlsOn {
+		scheme = "https"
+		info := tlsSrv.Info()
+		fmt.Fprintf(stdout, "  TLS: %s+ (AEAD only), certificate %s valid until %s, client certificates: %s\n",
+			"1.2", handlers.LogSafe(info.Subject), info.NotAfter.UTC().Format("2006-01-02"), clientAuthText(tlsSrv.ClientAuth()))
+	}
+	fmt.Fprintf(stdout, "  Health check: %s://%s/healthz\n", scheme, addr)
 	fmt.Fprintf(stdout, "  Auth: %s\n", authLine)
 	fmt.Fprintln(stdout, "==============================================")
 
+	var handler http.Handler = router
+	if tlsOn {
+		handler = server.HSTSHandler(router)
+	}
 	srv := &http.Server{
-		Handler:           router,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      writeTimeout(cfg),
@@ -648,8 +774,21 @@ func Run(ctx context.Context, cfg config, env Env) error {
 	}
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- srv.Serve(ln) }()
-	logger.Printf("Starting HTTP server on %s", addr)
+	if tlsOn {
+		watchCtx, stopWatch := context.WithCancel(ctx)
+		defer stopWatch()
+		stopSig := watchSIGHUP(watchCtx, tlsSrv, cfg.tls.ReloadInterval)
+		defer stopSig()
+		go func() { errCh <- server.Serve(srv, ln, tlsSrv) }()
+		logger.Printf("Starting HTTPS server on %s", addr)
+	} else {
+		// `systemctl reload` sends SIGHUP: with nothing to reload it must
+		// not take the default action (terminate the process).
+		stopIgnore := ignoreSIGHUP(ctx, logger)
+		defer stopIgnore()
+		go func() { errCh <- srv.Serve(ln) }()
+		logger.Printf("Starting HTTP server on %s", addr)
+	}
 	if env.Ready != nil {
 		env.Ready(addr)
 	}

@@ -44,7 +44,11 @@ type cli struct {
 	client *http.Client
 }
 
-func newHTTPClient() *http.Client { return &http.Client{Timeout: 30 * time.Second} }
+// newHTTPClient is the client of the HTTP subcommands; rt is the TLS-policy
+// transport from clientTLSFlags.prepare.
+func newHTTPClient(rt http.RoundTripper) *http.Client {
+	return &http.Client{Timeout: 30 * time.Second, Transport: rt}
+}
 
 // secretURL builds /v1/secrets/{ns}/{name}[/suffix] with path escaping.
 func (c *cli) secretURL(namespace, name, suffix string) string {
