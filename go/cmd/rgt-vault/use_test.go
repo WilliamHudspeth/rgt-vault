@@ -67,8 +67,10 @@ func startRealStack(t *testing.T, o stackOpts) *realStack {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = stack.Close() })
-	// The built-in actions, allowed to reach the loopback test servers.
-	reg, err := actions.NewBuiltinRegistry(actions.Config{AllowPrivateNetwork: true, AllowInsecureHTTP: true})
+	// The built-in actions, allowed to reach the loopback test servers. These
+	// CLI tests are not about the destination allow-list (RGT-523, tested in
+	// internal/actions and internal/server), so they opt out explicitly.
+	reg, err := actions.NewBuiltinRegistry(actions.Config{AllowPrivateNetwork: true, AllowInsecureHTTP: true, UnrestrictedDestinations: true})
 	if err != nil {
 		t.Fatal(err)
 	}
