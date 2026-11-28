@@ -464,6 +464,10 @@ func TestDestinationLoadErrors(t *testing.T) {
 		{`github/*: ["*.gov.uk"]`, "public suffix"},
 		{`github/*: ["*.local"]`, "public suffix"},
 		{`github/*: ["*.vercel.app"]`, "shared-hosting"},
+		{`github/*: ["*.cloudfront.net"]`, "shared-hosting"},
+		{`github/*: ["*.cloudfunctions.net"]`, "shared-hosting"},
+		{`github/*: ["*.blogspot.com"]`, "shared-hosting"},
+		{`github/*: ["*.r2.dev"]`, "shared-hosting"},
 		{`github/*: ["*.execute-api.eu-west-1.amazonaws.com"]`, "shared-hosting"},
 		{`github/*: ["*.lambda-url.us-east-1.on.aws"]`, "shared-hosting"},
 		{`github/*: ["*.10.0.0"]`, "numeric"},
@@ -527,10 +531,22 @@ func TestDestinationLoadErrors(t *testing.T) {
 	// Accepted forms.
 	for _, ok := range []string{"api.github.com", "API.GitHub.com.", "https://api.github.com", "https://api.github.com/",
 		"api.github.com:8443", "*.ci.example.com", "[2001:db8::1]:443", "192.0.2.1", "myco.vercel.app",
-		"*.github.io", "xn--bcher-kva.example", "*.example.co.uk"} {
+		"*.github.io", "*.gitlab.io", "xn--bcher-kva.example", "*.example.co.uk"} {
 		if _, err := ParseDestination(ok); err != nil {
 			t.Fatalf("%s: %v", ok, err)
 		}
+	}
+}
+
+// *.github.io and *.gitlab.io load, with a warning.
+func TestDestinationHostingWarnings(t *testing.T) {
+	for _, e := range []string{"*.github.io", "*.gitlab.io", "*.s3.amazonaws.com"} {
+		if _, w, err := parseDestination(e); err != nil || !strings.Contains(w, "anyone can get a name") {
+			t.Fatalf("%s: warning %q, err %v", e, w, err)
+		}
+	}
+	if _, w, _ := parseDestination("pages.gitlab.io"); w != "" {
+		t.Fatalf("exact name warned: %q", w)
 	}
 }
 
@@ -608,7 +624,7 @@ func TestDestinationStartupWarnings(t *testing.T) {
 		{"github", "GITHUB_TOKEN"}, {"openai", "OPENAI_KEY"}, {"openai", "SECOND_KEY"},
 	}), "\n")
 	for _, want := range []string{"WARN mode", `namespace "openai" has 2 secret(s) with no destinations entry`,
-		`namespace "github" has 1 destinations entry naming no stored secret`, "github.io"} {
+		`namespace "github" has 1 destinations entry that no stored secret matches yet`, "github.io"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in:\n%s", want, got)
 		}
@@ -617,6 +633,11 @@ func TestDestinationStartupWarnings(t *testing.T) {
 		if strings.Contains(got, secretName) {
 			t.Fatalf("warning names secret %q:\n%s", secretName, got)
 		}
+	}
+	// Before the first secret is stored (the documented order: serve, then
+	// set), unmatched entries are not reported.
+	if w := strings.Join(p.StartupWarnings(nil), "\n"); strings.Contains(w, "no stored secret matches") {
+		t.Fatalf("unmatched-entry line on an empty vault:\n%s", w)
 	}
 	// No section, and a bare-list policy.
 	p, _ = NewDestinationPolicy(DestinationOptions{PolicyYAML: allowAllRules})
@@ -675,8 +696,114 @@ func TestAlertLimiterBounded(t *testing.T) {
 		t.Fatalf("limiter grew to %d keys", len(l.m))
 	}
 	now = now.Add(2 * time.Minute)
-	if send, _ := l.admit("fresh"); !send {
+	if send, _, _ := l.admit("fresh"); !send {
 		t.Fatal("expired keys not pruned")
+	}
+}
+
+// LOW-5: expired windows that still carry a suppressed count are evicted
+// too (their count reported once with the next alert), so 4096 stale keys
+// cannot push new keys into the shared overflow key.
+func TestAlertLimiterEvictsSuppressedWindows(t *testing.T) {
+	now := time.Unix(0, 0)
+	l := newAlertLimiter(0, func() time.Time { return now })
+	for i := 0; i < alertMaxKeys; i++ {
+		l.admit(fmt.Sprint(i))
+		l.admit(fmt.Sprint(i)) // one suppressed alert per key
+	}
+	now = now.Add(2 * time.Minute)
+	send, sup, ev := l.admit("fresh")
+	if !send || sup != 0 || ev != alertMaxKeys {
+		t.Fatalf("fresh key: send=%v suppressed=%d evicted=%d", send, sup, ev)
+	}
+	if _, ok := l.m["\x00overflow"]; ok {
+		t.Fatal("a new key fell into the overflow bucket although every window had expired")
+	}
+	if _, _, ev := l.admit("other"); ev != 0 {
+		t.Fatalf("evicted count reported twice: %d", ev)
+	}
+}
+
+// MED-2: an exact ns/name entry replaces the ns/* entry for that secret;
+// other secrets of the namespace keep the namespace entry.
+func TestDestinationExactEntryReplacesNamespace(t *testing.T) {
+	e := newDestEnv(t)
+	r := e.registry(allowAllRules+`destinations:
+  github/*: ["b.test:PORTB"]
+  github/GITHUB_TOKEN: ["a.test:PORTA"]
+`, DestinationsEnforce)
+	_, err := e.get(r, &githubUse, e.bURL("/"))
+	wantRefused(t, err, ReasonHostNotListed)
+	if e.bConns.Load() != 0 {
+		t.Fatal("the token reached B through the namespace entry")
+	}
+	if _, err := e.get(r, &githubUse, e.aURL("/ok")); err != nil {
+		t.Fatalf("token to its own entry: %v", err)
+	}
+	other := SecretUse{Agent: "coder", Namespace: "github", Name: "DEPLOY_KEY", Purpose: "ci"}
+	if _, err := e.get(r, &other, e.bURL("/")); err != nil {
+		t.Fatalf("another github secret to the namespace entry: %v", err)
+	}
+	if _, err := e.get(r, &other, e.aURL("/ok")); !errors.Is(err, ErrDestinationRefused) {
+		t.Fatalf("another github secret reached the exact entry's host: %v", err)
+	}
+}
+
+// LOW-1: rows and alerts say whether the request went out.
+func TestDestinationOutcome(t *testing.T) {
+	e := newDestEnv(t)
+	r := e.registry(githubOnA, DestinationsWarn)
+	other := SecretUse{Agent: "coder", Namespace: "misc", Name: "OTHER", Purpose: "x"}
+	if _, err := e.get(r, &other, e.aURL("/ok")); err != nil {
+		t.Fatal(err)
+	}
+	sent := e.lastAudit()
+	_, _ = e.get(r, &githubUse, "https://a.test:"+e.bPort+"/")
+	refused := e.lastAudit()
+	if !strings.HasSuffix(sent.AuditDetails(), "reason=NO_LIST mode=warn outcome=sent") ||
+		!strings.HasSuffix(refused.AuditDetails(), "reason=PORT_MISMATCH mode=warn outcome=refused") {
+		t.Fatalf("details:\n%s\n%s", sent.AuditDetails(), refused.AuditDetails())
+	}
+	e.mu.Lock()
+	alerts := append([]string(nil), e.alerts...)
+	e.mu.Unlock()
+	if len(alerts) != 2 || !strings.Contains(alerts[0], "outcome=sent") || !strings.Contains(alerts[1], "outcome=refused") {
+		t.Fatalf("alerts = %q", alerts)
+	}
+	// A warn-mode request whose audit row failed was not sent: the alert
+	// must not claim it was.
+	e.mu.Lock()
+	e.auditErr = errors.New("disk full")
+	e.mu.Unlock()
+	third := SecretUse{Agent: "coder", Namespace: "misc", Name: "THIRD", Purpose: "x"}
+	_, _ = e.get(r, &third, e.aURL("/ok"))
+	e.mu.Lock()
+	last := e.alerts[len(e.alerts)-1]
+	e.mu.Unlock()
+	if !strings.Contains(last, "secret=misc/THIRD") || !strings.Contains(last, "outcome=refused") {
+		t.Fatalf("alert after a failed audit = %q", last)
+	}
+}
+
+// LOW-2: the warn-mode "no audit row, no send" check on its own, with no
+// dial-time backstop involved: authorize itself must refuse.
+func TestDestinationWarnAuditFailureRefusesBeforeSend(t *testing.T) {
+	p, err := NewDestinationPolicy(DestinationOptions{
+		PolicyYAML: allowAllRules, Mode: DestinationsWarn,
+		Audit: func(context.Context, DestinationRefusal) error { return errors.New("disk full") },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse("https://anywhere.example/")
+	ctx := WithSecretUse(context.Background(), githubUse)
+	if _, err := p.authorize(ctx, "http_get_with_auth", u); err == nil || !strings.Contains(err.Error(), "not sent") {
+		t.Fatalf("authorize = %v, want a refusal", err)
+	}
+	// With a working audit the same request is allowed out.
+	p.audit = func(context.Context, DestinationRefusal) error { return nil }
+	if _, err := p.authorize(ctx, "http_get_with_auth", u); err != nil {
+		t.Fatalf("authorize = %v", err)
 	}
 }
 

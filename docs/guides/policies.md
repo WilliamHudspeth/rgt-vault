@@ -66,8 +66,10 @@ The default port is 443 and ports match exactly. Only https is ever sent.
   `a.b.example.com`.
 - Wildcards are refused over public suffixes (`*.com`, `*.co.uk`,
   `*.com.au`) and over shared-hosting domains where anyone can get a name
-  (`*.vercel.app`, `*.herokuapp.com`, `*.workers.dev`, …). List the exact
-  host instead (`myco.vercel.app` is fine). `*.github.io` loads with a warning.
+  (`*.vercel.app`, `*.herokuapp.com`, `*.workers.dev`, `*.cloudfront.net`,
+  `*.cloudfunctions.net`, `*.blogspot.com`, …). List the exact host instead
+  (`myco.vercel.app` is fine). `*.github.io`, `*.gitlab.io` and
+  `*.s3.amazonaws.com` load with a warning.
 - IP addresses match only when listed exactly (`192.0.2.10`,
   `[2001:db8::1]:443`). IPv4-mapped IPv6 literals are refused.
 - Userinfo, paths, queries, `http://`, port 0, duplicate keys, YAML aliases
@@ -77,9 +79,11 @@ The default port is 443 and ports match exactly. Only https is ever sent.
 **Rules narrow.** When the allow rules that match the lease
 (`agent`, `namespace`, `purpose`, action `read`) carry `allowed_hosts`, a
 destination must be on the secret's list **and** on every one of those rule
-lists. A rule list never adds a host. The agent chooses `purpose`, so
-narrowing only binds through rules the agent cannot avoid matching (keyed on
-`agent`/`namespace`, or with `purpose: "*"`).
+lists. A rule list never adds a host. The agent chooses `purpose` on every
+request, so a rule that names a specific purpose narrows only requests that
+send that purpose: the agent can avoid it by sending another one. A rule
+narrows reliably only when it matches whatever purpose is sent (no `purpose`
+key, or `purpose: "*"`).
 
 **Default: refused.** A secret with no entry (neither `ns/name` nor `ns/*`)
 cannot be used with an HTTP action:
@@ -96,7 +100,8 @@ checked.
 
 **Audit and alerts.** Each refusal writes one `DESTINATION_REFUSED` audit row
 (agent, secret name, `namespace=… action=… destination=host:port reason=…
-mode=…`) and raises a `DESTINATION_REFUSED` security event through the
+mode=… outcome=sent|refused`; `sent` only for a secret without an entry in
+warn mode) and raises a `DESTINATION_REFUSED` security event through the
 server's notifier (log line, security webhook). Alerts are de-duplicated per
 agent, secret, destination and reason per minute. Reasons: `NO_LIST`,
 `HOST_NOT_LISTED`, `PORT_MISMATCH`, `IP_LITERAL`, `REDIRECT_OFF_LIST`,
@@ -113,9 +118,11 @@ send). A secret that **has** an entry is enforced in both modes. The switch is
 temporary and will be removed in the release after v0.4.0.
 
 **Start-up lines.** `serve` logs the mode, then one `WARNING: destinations:`
-line per namespace with secrets that have no entry, and per namespace with
-`ns/name` entries that name no stored secret (a typo would leave the real
-secret on the namespace entry). The lines name namespaces only.
+line per namespace with secrets that have no entry. Once the vault holds
+secrets, it also notes namespaces with `ns/name` entries that no stored
+secret matches yet: harmless if you add the secret later, but a typo would
+leave the real secret on the namespace entry (or none). The lines name
+namespaces only.
 
 **Policy files that are a bare list of rules** have nowhere to put
 `destinations:`. Convert them to a mapping with `rules:` and `destinations:`.

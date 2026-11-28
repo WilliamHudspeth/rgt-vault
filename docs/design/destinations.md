@@ -69,10 +69,10 @@ destinations:
   reports the *last* matching allow rule), and it means a rule can only
   narrow, never widen. A rule list without a `destinations:` entry for the
   secret grants nothing (`NO_LIST`).
-  The agent chooses `purpose`. Narrowing therefore only binds through rules
-  the agent cannot avoid matching (rules on `agent`/`namespace`, or with
-  `purpose: "*"`). A rule keyed on a specific purpose narrows only requests
-  that name that purpose.
+  The agent chooses `purpose` on every request, so a rule that names a
+  specific purpose narrows only requests that send that purpose; the agent
+  can avoid it by sending another one. A rule narrows reliably only when it
+  matches whatever purpose is sent (no `purpose` key, or `purpose: "*"`).
 - **One source:** `OpenStack` builds the destination policy from the same
   policy text it hands to the vault (no second read from disk), so the two
   cannot disagree.
@@ -103,9 +103,12 @@ one host normaliser:
    - shared-hosting bases where anyone can get a subdomain: `vercel.app`,
      `netlify.app`, `workers.dev`, `pages.dev`, `herokuapp.com`,
      `azurewebsites.net`, `ngrok-free.app`, `ngrok.io`, `trycloudflare.com`,
-     `firebaseapp.com`, `web.app`, `appspot.com`,
+     `firebaseapp.com`, `web.app`, `appspot.com`, `cloudfront.net`, `fly.dev`,
+     `onrender.com`, `ngrok.app`, `ngrok.dev`, `r2.dev`, `deno.dev`,
+     `glitch.me`, `surge.sh`, `loca.lt`, `amplifyapp.com`, `github.dev`,
+     `blogspot.com`, `azure-api.net`, `cloudfunctions.net`,
      `execute-api.<region>.amazonaws.com`, `lambda-url.<region>.on.aws`.
-   `*.github.io` and `*.s3.amazonaws.com` load with a warning. An exact tenant
+   `*.github.io`, `*.gitlab.io` and `*.s3.amazonaws.com` load with a warning. An exact tenant
    name (`myco.vercel.app`) is always fine. No PSL dependency; this is a guard
    against obvious mistakes, not a full PSL.
    `*.example.com` matches exactly **one** extra label: `api.example.com`,
@@ -164,9 +167,10 @@ one host normaliser:
   removed in the release after v0.4.0.
 - **Start-up warnings** (namespaces only, never secret names):
   - one per namespace with active secrets that have no entry, with the count;
-  - one per namespace where an exact `ns/name` entry matches no stored secret
-    (a typo such as `github/GITHUB_TOKN` next to `github/*` would otherwise
-    leave the real token on the wider list unnoticed).
+  - once the vault holds secrets, one per namespace where an exact `ns/name`
+    entry matches no stored secret yet (informational: a typo such as
+    `github/GITHUB_TOKN` next to `github/*` would otherwise leave the real
+    token on the wider list unnoticed).
 
 ### 5. Audit and security event
 
@@ -175,7 +179,11 @@ audit row, action `DESTINATION_REFUSED` (`vault.DestinationRefusedEvent`):
 agent in `agent_id`, the secret **name** in `secret_name` (so existing name
 filters keep working), and details
 
-`namespace=github action=http_get_with_auth destination=evil.example:443 reason=HOST_NOT_LISTED mode=enforce`
+`namespace=github action=http_get_with_auth destination=evil.example:443 reason=HOST_NOT_LISTED mode=enforce outcome=refused`
+
+(`outcome=sent` only for a relaxed `NO_LIST` request in warn mode; if that
+row cannot be written the request is not sent and the alert says
+`outcome=refused`.)
 
 Reason codes: `NO_LIST`, `HOST_NOT_LISTED`, `PORT_MISMATCH` (host listed with
 another port), `IP_LITERAL`, `REDIRECT_OFF_LIST`, `REDIRECT_CROSS_ORIGIN`
@@ -186,7 +194,9 @@ the body.
 It also raises a security event (`DESTINATION_REFUSED`, not Critical) through
 the server's notifier. Alerts are de-duplicated per
 `(agent, ns/name, host:port, reason)` per minute; the next alert after a quiet
-spell carries the number suppressed. Audit rows are not de-duplicated (they
+spell carries the number suppressed. Under memory pressure (4096 keys)
+expired windows are evicted and their suppressed counts are reported with
+the next alert (`evicted_suppressed=N`). Audit rows are not de-duplicated (they
 are bounded by the per-agent lease limiter). The audit hash input, existing
 actions and existing row text are unchanged.
 

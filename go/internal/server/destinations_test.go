@@ -220,7 +220,7 @@ func TestStackDestinationsUseEndpoint(t *testing.T) {
 	row := d.lastRow(vault.DestinationRefusedEvent)
 	details, _ := row["details"].(string)
 	if row["secret_name"] != "GITHUB_TOKEN" || row["agent_id"] != "coder" ||
-		details != "namespace=github action=http_get_with_auth destination=b.test:"+d.bPort+" reason=HOST_NOT_LISTED mode=enforce" {
+		details != "namespace=github action=http_get_with_auth destination=b.test:"+d.bPort+" reason=HOST_NOT_LISTED mode=enforce outcome=refused" {
 		t.Fatalf("row = %v", row)
 	}
 	if n := d.events.count(vault.DestinationRefusedEvent); n != 1 {

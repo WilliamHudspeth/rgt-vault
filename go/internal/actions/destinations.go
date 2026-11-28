@@ -124,8 +124,11 @@ var (
 		"gob", "mil", "ltd", "plc", "sch", "nhs")
 	sharedHosting = setOf("vercel.app", "netlify.app", "workers.dev", "pages.dev",
 		"herokuapp.com", "azurewebsites.net", "ngrok-free.app", "ngrok.io",
-		"trycloudflare.com", "firebaseapp.com", "web.app", "appspot.com")
-	warnHosting = setOf("github.io", "s3.amazonaws.com")
+		"trycloudflare.com", "firebaseapp.com", "web.app", "appspot.com",
+		"cloudfront.net", "fly.dev", "onrender.com", "ngrok.app", "ngrok.dev", "r2.dev",
+		"deno.dev", "glitch.me", "surge.sh", "loca.lt", "amplifyapp.com", "github.dev",
+		"blogspot.com", "azure-api.net", "cloudfunctions.net")
+	warnHosting = setOf("github.io", "gitlab.io", "s3.amazonaws.com")
 )
 
 func setOf(xs ...string) map[string]bool {
@@ -426,12 +429,27 @@ type DestinationRefusal struct {
 	Destination string // host:port
 	Reason      string
 	Mode        DestinationMode
+	// Sent is true only for a warn-mode NO_LIST request that is allowed
+	// out (outcome=sent); every other row is outcome=refused.
+	Sent bool
+	// EvictedSuppressed counts suppressed alerts of OTHER keys whose
+	// de-duplication window expired and was evicted under memory pressure;
+	// they are reported with the next alert so the count is never lost.
+	EvictedSuppressed int
+}
+
+// Outcome is "sent" or "refused".
+func (r DestinationRefusal) Outcome() string {
+	if r.Sent {
+		return "sent"
+	}
+	return "refused"
 }
 
 // AuditDetails is the details text of the DESTINATION_REFUSED row.
 func (r DestinationRefusal) AuditDetails() string {
-	return fmt.Sprintf("namespace=%s action=%s destination=%s reason=%s mode=%s",
-		r.Use.Namespace, r.Action, r.Destination, r.Reason, r.Mode)
+	return fmt.Sprintf("namespace=%s action=%s destination=%s reason=%s mode=%s outcome=%s",
+		r.Use.Namespace, r.Action, r.Destination, r.Reason, r.Mode, r.Outcome())
 }
 
 // AlertDetail is the security-event text; suppressed is how many identical
@@ -440,6 +458,9 @@ func (r DestinationRefusal) AlertDetail(suppressed int) string {
 	s := fmt.Sprintf("secret=%s/%s %s", r.Use.Namespace, r.Use.Name, r.AuditDetails())
 	if suppressed > 0 {
 		s += fmt.Sprintf(" suppressed=%d", suppressed)
+	}
+	if r.EvictedSuppressed > 0 {
+		s += fmt.Sprintf(" evicted_suppressed=%d", r.EvictedSuppressed)
 	}
 	return s
 }
@@ -604,9 +625,13 @@ func (p *DestinationPolicy) record(ctx context.Context, r DestinationRefusal) er
 	if p.audit != nil {
 		err = p.audit(ctx, r)
 	}
+	if err != nil && r.Sent {
+		r.Sent = false // warn mode: no audit row, no send (the alert must say so)
+	}
 	if p.alert != nil {
 		key := r.Use.Agent + "\x00" + r.Use.Namespace + "/" + r.Use.Name + "\x00" + r.Destination + "\x00" + r.Reason
-		if send, suppressed := p.limiter.admit(key); send {
+		if send, suppressed, evicted := p.limiter.admit(key); send {
+			r.EvictedSuppressed = evicted
 			p.alert(ctx, r, suppressed)
 		}
 	}
@@ -639,7 +664,8 @@ func (p *DestinationPolicy) authorize(ctx context.Context, action string, u *url
 	t := targetOf(u)
 	eff, has := p.decide(use)
 	if !has {
-		r := DestinationRefusal{Use: use, Action: action, Destination: t.String(), Reason: ReasonNoList, Mode: p.mode}
+		r := DestinationRefusal{Use: use, Action: action, Destination: t.String(), Reason: ReasonNoList, Mode: p.mode,
+			Sent: p.mode == DestinationsWarn}
 		aerr := p.record(ctx, r)
 		if p.mode == DestinationsWarn {
 			if aerr != nil {
@@ -728,15 +754,18 @@ func (p *DestinationPolicy) StartupWarnings(stored []SecretRef) []string {
 	for _, ns := range sortedKeys(missing) {
 		out = append(out, fmt.Sprintf("destinations: namespace %q has %d secret(s) with no destinations entry; %s", ns, missing[ns], consequence))
 	}
+	// Entries that match no stored secret: informational, and only once the
+	// vault holds secrets (serving before the first set is the documented
+	// order, and then every entry matches nothing yet).
 	unknown := map[string]int{}
 	for key := range p.secrets {
-		if !have[key] {
+		if len(stored) > 0 && !have[key] {
 			ns, _, _ := strings.Cut(key, "/")
 			unknown[ns]++
 		}
 	}
 	for _, ns := range sortedKeys(unknown) {
-		out = append(out, fmt.Sprintf("destinations: namespace %q has %d destinations entr%s naming no stored secret (a typo leaves the real secret on the namespace entry or none)", ns, unknown[ns], plural(unknown[ns], "y", "ies")))
+		out = append(out, fmt.Sprintf("destinations: namespace %q has %d destinations entr%s that no stored secret matches yet (if it is a typo, the real secret falls back to the namespace entry or to none)", ns, unknown[ns], plural(unknown[ns], "y", "ies")))
 	}
 	return out
 }
@@ -775,6 +804,8 @@ type alertLimiter struct {
 	window time.Duration
 	now    func() time.Time
 	m      map[string]*alertWindow
+	// evicted is the suppressed count of evicted windows not yet reported.
+	evicted int
 }
 
 func newAlertLimiter(window time.Duration, now func() time.Time) *alertLimiter {
@@ -787,14 +818,20 @@ func newAlertLimiter(window time.Duration, now func() time.Time) *alertLimiter {
 	return &alertLimiter{window: window, now: now, m: map[string]*alertWindow{}}
 }
 
-func (l *alertLimiter) admit(key string) (bool, int) {
+// admit reports whether to send an alert for key, how many alerts for key
+// were suppressed since the last one, and how many suppressed alerts of
+// evicted keys are still unreported (handed out once, with the next alert).
+func (l *alertLimiter) admit(key string) (bool, int, int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
 	w := l.m[key]
 	if w == nil && len(l.m) >= alertMaxKeys {
+		// Evict every expired window, carrying its suppressed count, so
+		// stale keys cannot push new keys into the shared overflow key.
 		for k, old := range l.m {
-			if now.Sub(old.start) >= l.window && old.suppressed == 0 {
+			if now.Sub(old.start) >= l.window {
+				l.evicted += old.suppressed
 				delete(l.m, k)
 			}
 		}
@@ -809,8 +846,10 @@ func (l *alertLimiter) admit(key string) (bool, int) {
 			sup = w.suppressed
 		}
 		l.m[key] = &alertWindow{start: now}
-		return true, sup
+		ev := l.evicted
+		l.evicted = 0
+		return true, sup, ev
 	}
 	w.suppressed++
-	return false, 0
+	return false, 0, 0
 }
