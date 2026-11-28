@@ -1,134 +1,118 @@
-// Package buildinfo provides build-time metadata for the rgt-vault binary.
+// Package buildinfo is the single source of the rgt-vault version.
 //
-// The package exposes version, commit, date, and dirty status information
-// that is injected at build time via -ldflags. When ldflags are not set
-// (e.g., during development with `go build` or `go test`), it falls back
-// to reading build info from runtime/debug.ReadBuildInfo().
+// Release builds (GoReleaser) inject the values with -ldflags -X:
 //
-// The ldflags variables are:
-//   -X github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo.version
-//   -X github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo.commit
-//   -X github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo.date
-//   -X github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo.dirty
+//	-X github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo.version=...
+//	-X github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo.commit=...
+//	-X github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo.date=...
+//	-X github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo.dirty=true|false
+//
+// A variable that is empty (the default) is not set: the value then comes
+// from runtime/debug.ReadBuildInfo, so `go install ...@v0.4.0` reports v0.4.0
+// and a plain `go build` in a git checkout reports the VCS revision, time and
+// modified flag that the Go toolchain stamps in.
 package buildinfo
 
 import (
 	"runtime/debug"
-	"strings"
+	"strconv"
 )
 
-// Build metadata, injected at release time via -ldflags by GoReleaser.
-// These variables are set by the linker when building with ldflags.
+// Set by -ldflags -X at release time. The empty string means "not set".
 var (
 	version = ""
 	commit  = ""
 	date    = ""
-	dirty   = "false"
+	dirty   = ""
 )
 
-// debugBuildInfo is a variable that can be replaced by tests to mock
-// runtime/debug.ReadBuildInfo() return value.
-var debugBuildInfo = func() *debug.BuildInfo {
-	info, _ := debug.ReadBuildInfo()
+// readBuildInfo is the seam tests replace; it returns nil when the binary
+// carries no build information.
+var readBuildInfo = func() *debug.BuildInfo {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return nil
+	}
 	return info
 }
 
-// Version returns the version string.
-// If the ldflags variable is set, it returns that value.
-// Otherwise, it reads from debug.ReadBuildInfo() and returns Main.Version
-// (which is "v0.4.0" for `go install ...@v0.4.0`, else "(devel)").
+const (
+	unknownVersion = "(devel)"
+	unknownCommit  = "none"
+	unknownDate    = "unknown"
+)
+
+// vcsSetting returns the value of a build setting (vcs.revision, vcs.time,
+// vcs.modified) and whether it is present and non-empty.
+func vcsSetting(key string) (string, bool) {
+	info := readBuildInfo()
+	if info == nil {
+		return "", false
+	}
+	for _, s := range info.Settings {
+		if s.Key == key && s.Value != "" {
+			return s.Value, true
+		}
+	}
+	return "", false
+}
+
+// Version returns the ldflags version when set, else the module version from
+// the build info ("v0.4.0" for a `go install ...@v0.4.0`), else "(devel)".
 func Version() string {
 	if version != "" {
 		return version
 	}
-	info := debugBuildInfo()
-	if info == nil || info.Main.Path == "" {
-		return "(devel)"
+	if info := readBuildInfo(); info != nil && info.Main.Version != "" {
+		return info.Main.Version
 	}
-	v := info.Main.Version
-	if v == "" || v == "(devel)" {
-		return "(devel)"
-	}
-	return v
+	return unknownVersion
 }
 
-// Commit returns the commit hash.
-// If the ldflags variable is set, it returns that value.
-// Otherwise, it reads from debug.ReadBuildInfo() and returns vcs.revision.
+// Commit returns the ldflags commit when set, else vcs.revision, else "none".
 func Commit() string {
 	if commit != "" {
 		return commit
 	}
-	info := debugBuildInfo()
-	if info == nil {
-		return "none"
+	if v, ok := vcsSetting("vcs.revision"); ok {
+		return v
 	}
-	// Try to get revision from VCS settings
-	for _, setting := range info.Settings {
-		if setting.Key == "vcs.revision" {
-			return setting.Value
-		}
-	}
-	return "none"
+	return unknownCommit
 }
 
-// Date returns the build date.
-// If the ldflags variable is set, it returns that value.
-// Otherwise, it reads from debug.ReadBuildInfo() and returns vcs.time.
+// Date returns the ldflags build date when set, else vcs.time, else "unknown".
 func Date() string {
 	if date != "" {
 		return date
 	}
-	info := debugBuildInfo()
-	if info == nil {
-		return "unknown"
+	if v, ok := vcsSetting("vcs.time"); ok {
+		return v
 	}
-	// Try to get time from VCS settings
-	for _, setting := range info.Settings {
-		if setting.Key == "vcs.time" {
-			return setting.Value
-		}
-	}
-	return "unknown"
+	return unknownDate
 }
 
-// Dirty returns whether the working directory was dirty at build time.
-// If the ldflags variable is set, it returns that value.
-// Otherwise, it reads from debug.ReadBuildInfo() and returns vcs.modified.
+// Dirty reports whether the source tree had uncommitted changes at build
+// time: the ldflags value when it is set to a boolean, else vcs.modified.
 func Dirty() bool {
 	if dirty != "" {
-		return strings.ToLower(dirty) == "true"
-	}
-	info := debugBuildInfo()
-	if info == nil {
-		return false
-	}
-	// Try to get modified from VCS settings
-	for _, setting := range info.Settings {
-		if setting.Key == "vcs.modified" {
-			return strings.ToLower(setting.Value) == "true"
+		if b, err := strconv.ParseBool(dirty); err == nil {
+			return b
 		}
+	}
+	if v, ok := vcsSetting("vcs.modified"); ok {
+		b, _ := strconv.ParseBool(v)
+		return b
 	}
 	return false
 }
 
-// String returns a human-readable version string in the format:
-// "version (commit, built date)" with " (dirty)" appended if the build was dirty.
-// This matches the format used by cobra's Version field.
+// String is the one-line description printed by `rgt-vault --version` and
+// `rgt-vault version`: "<version> (commit <c>, built <d>)", with ", dirty"
+// appended inside the parentheses for a build from a modified tree.
 func String() string {
-	v := Version()
-	c := Commit()
-	d := Date()
-	
-	result := v
-	if c != "" && c != "none" {
-		result += " (commit " + c + ")"
-	}
-	if d != "" && d != "unknown" {
-		result += ", built " + d
-	}
+	s := Version() + " (commit " + Commit() + ", built " + Date()
 	if Dirty() {
-		result += ", dirty"
+		s += ", dirty"
 	}
-	return result
+	return s + ")"
 }

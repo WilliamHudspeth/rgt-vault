@@ -58,7 +58,7 @@ Requires Go 1.26+ (see `go.mod`). The default port is **8765**, like the Python 
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| GET  | `/healthz` | none | liveness check |
+| GET  | `/healthz` | optional | liveness check: `{"status":"ok"}` without a token; with an `audit`/`operator` token also the vault id, key epoch, actions and build version |
 | POST | `/v1/secrets` | bearer | set a secret |
 | GET  | `/v1/secrets` | bearer | list secrets by namespace (never values) |
 | GET  | `/v1/secrets/{namespace}/{name}` | bearer | ciphertext fingerprint |

@@ -1,68 +1,76 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"strings"
 	"testing"
+
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo"
 )
 
-func TestVersionCommand(t *testing.T) {
-	// Test that version subcommand output matches --version output
-	// Note: This test doesn't actually run the CLI but verifies the implementation
-	// by checking that both use the same buildinfo.String() source.
-	
-	// The version subcommand uses: fmt.Printf("rgt-vault version %s\n", buildinfo.String())
-	// The --version flag uses: Version: buildinfo.String()
-	// Cobra formats the Version field as: "{CommandName} version {Version}"
-	// So both should produce the same output.
-	
-	t.Log("Version command and --version flag both use buildinfo.String()")
-	t.Log("This ensures they print the same line (with 'rgt-vault version' prefix)")
+// runRoot executes the real root command with args and returns its stdout.
+func runRoot(t *testing.T, args ...string) string {
+	t.Helper()
+	root := newRootCmd(strings.NewReader(""), io.Discard)
+	var out, errb bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errb)
+	root.SetArgs(args)
+	if err := root.Execute(); err != nil {
+		t.Fatalf("rgt-vault %v: %v (stderr %q)", args, err, errb.String())
+	}
+	return out.String()
 }
 
-func TestVersionJSON(t *testing.T) {
-	// Test that we can marshal the output
-	// The version command creates a versionOutput struct and marshals it
-	// We can verify that the JSON structure is correct
-	
-	type versionOutput struct {
-		Version string `json:"version"`
-		Commit  string `json:"commit"`
-		Date    string `json:"date"`
-		Dirty   bool   `json:"dirty"`
+func TestVersionAndDashDashVersionAreIdentical(t *testing.T) {
+	sub := runRoot(t, "version")
+	flag := runRoot(t, "--version")
+	if sub != flag {
+		t.Fatalf("`version` = %q, `--version` = %q; they must be identical", sub, flag)
 	}
-	
-	// Test that we can marshal the output
-	output := versionOutput{
-		Version: "1.2.3",
-		Commit:  "abc123",
-		Date:    "2024-01-15T10:30:00Z",
-		Dirty:   true,
+	want := "rgt-vault version " + buildinfo.String() + "\n"
+	if sub != want {
+		t.Fatalf("version output = %q, want %q", sub, want)
 	}
-	
-	data, err := json.MarshalIndent(output, "", "  ")
-	if err != nil {
-		t.Fatalf("Failed to marshal version output: %v", err)
+	if !strings.Contains(sub, buildinfo.Version()) {
+		t.Errorf("output %q lacks buildinfo.Version() %q", sub, buildinfo.Version())
 	}
-	
-	// Verify it's valid JSON
-	var parsed versionOutput
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("Failed to unmarshal version output: %v", err)
+}
+
+func TestVersionJSONIsValidAndMatchesBuildinfo(t *testing.T) {
+	raw := runRoot(t, "version", "--json")
+	if !json.Valid([]byte(raw)) {
+		t.Fatalf("--json output is not valid JSON: %q", raw)
 	}
-	
-	// Verify the fields match
-	if parsed.Version != output.Version {
-		t.Errorf("Version mismatch: got %q, want %q", parsed.Version, output.Version)
+	var got map[string]any
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&got); err != nil {
+		t.Fatal(err)
 	}
-	if parsed.Commit != output.Commit {
-		t.Errorf("Commit mismatch: got %q, want %q", parsed.Commit, output.Commit)
+	if len(got) != 4 {
+		t.Errorf("want exactly version, commit, date, dirty; got %v", got)
 	}
-	if parsed.Date != output.Date {
-		t.Errorf("Date mismatch: got %q, want %q", parsed.Date, output.Date)
+	for k, want := range map[string]any{
+		"version": buildinfo.Version(),
+		"commit":  buildinfo.Commit(),
+		"date":    buildinfo.Date(),
+		"dirty":   buildinfo.Dirty(),
+	} {
+		if got[k] != want {
+			t.Errorf("json %q = %v, want %v", k, got[k], want)
+		}
 	}
-	if parsed.Dirty != output.Dirty {
-		t.Errorf("Dirty mismatch: got %v, want %v", parsed.Dirty, output.Dirty)
+}
+
+func TestVersionRejectsArguments(t *testing.T) {
+	root := newRootCmd(strings.NewReader(""), io.Discard)
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"version", "extra"})
+	if err := root.Execute(); err == nil {
+		t.Fatal("version with a stray argument must fail")
 	}
-	
-	t.Log("Version --json output is valid JSON with correct structure")
 }

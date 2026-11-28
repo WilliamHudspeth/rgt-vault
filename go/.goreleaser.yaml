@@ -26,6 +26,7 @@ builds:
       - -X github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo.version={{.Version}}
       - -X github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo.commit={{.Commit}}
       - -X github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo.date={{.Date}}
+      - -X github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo.dirty={{.IsGitDirty}}
 
 archives:
   - name_template: >-

@@ -5,330 +5,177 @@ import (
 	"testing"
 )
 
-// mockBuildInfo is a mock *debug.BuildInfo for testing.
-type mockBuildInfo struct {
-	main    *debug.Module
-	settings []debug.BuildSetting
+// setLdflags installs ldflags-style values and a fake build-info reader for
+// one test and restores everything afterwards.
+func setLdflags(t *testing.T, v, c, d, dirtyVal string) {
+	t.Helper()
+	ov, oc, od, odirty := version, commit, date, dirty
+	version, commit, date, dirty = v, c, d, dirtyVal
+	t.Cleanup(func() { version, commit, date, dirty = ov, oc, od, odirty })
 }
 
-func (m *mockBuildInfo) Main() *debug.Module { return m.main }
-func (m *mockBuildInfo) Settings() []debug.BuildSetting { return m.settings }
+func setBuildInfo(t *testing.T, info *debug.BuildInfo) {
+	t.Helper()
+	orig := readBuildInfo
+	readBuildInfo = func() *debug.BuildInfo { return info }
+	t.Cleanup(func() { readBuildInfo = orig })
+}
 
-func TestVersionWithLdflags(t *testing.T) {
-	// Save original values
-	origVersion := version
-	origDebugBuildInfo := debugBuildInfo
-	
-	// Defer restore
-	defer func() {
-		version = origVersion
-		debugBuildInfo = origDebugBuildInfo
-	}()
+func vcs(kv ...string) []debug.BuildSetting {
+	var out []debug.BuildSetting
+	for i := 0; i+1 < len(kv); i += 2 {
+		out = append(out, debug.BuildSetting{Key: kv[i], Value: kv[i+1]})
+	}
+	return out
+}
 
-	// Test with ldflags value set
-	version = "1.2.3"
+func TestLdflagsWinOverBuildInfo(t *testing.T) {
+	setLdflags(t, "1.2.3", "abc123", "2024-01-15T10:30:00Z", "true")
+	setBuildInfo(t, &debug.BuildInfo{
+		Main:     debug.Module{Version: "v9.9.9"},
+		Settings: vcs("vcs.revision", "ffffff", "vcs.time", "1999-01-01T00:00:00Z", "vcs.modified", "false"),
+	})
 	if got := Version(); got != "1.2.3" {
-		t.Errorf("Version() with ldflags = %q, want %q", got, "1.2.3")
+		t.Errorf("Version = %q", got)
 	}
-}
-
-func TestVersionFromBuildInfo(t *testing.T) {
-	// Save original values
-	origVersion := version
-	origDebugBuildInfo := debugBuildInfo
-	
-	// Defer restore
-	defer func() {
-		version = origVersion
-		debugBuildInfo = origDebugBuildInfo
-	}()
-
-	// Test with ldflags empty, using build info
-	version = ""
-	debugBuildInfo = func() *debug.BuildInfo {
-		// We can't easily create a real *debug.BuildInfo, so we test the fallback path
-		// by checking that when version is empty, we get (devel)
-		return nil
+	if got := Commit(); got != "abc123" {
+		t.Errorf("Commit = %q", got)
 	}
-	
-	if got := Version(); got != "(devel)" {
-		t.Errorf("Version() with nil build info = %q, want %q", got, "(devel)")
-	}
-}
-
-func TestCommitWithLdflags(t *testing.T) {
-	// Save original values
-	origCommit := commit
-	origDebugBuildInfo := debugBuildInfo
-	
-	// Defer restore
-	defer func() {
-		commit = origCommit
-		debugBuildInfo = origDebugBuildInfo
-	}()
-
-	// Test with ldflags value set
-	commit = "abc123def456"
-	if got := Commit(); got != "abc123def456" {
-		t.Errorf("Commit() with ldflags = %q, want %q", got, "abc123def456")
-	}
-}
-
-func TestCommitFromBuildInfo(t *testing.T) {
-	// Save original values
-	origCommit := commit
-	origDebugBuildInfo := debugBuildInfo
-	
-	// Defer restore
-	defer func() {
-		commit = origCommit
-		debugBuildInfo = origDebugBuildInfo
-	}()
-
-	// Test with ldflags empty
-	commit = ""
-	// We can't easily set a custom function that returns a specific BuildInfo
-	// because debug.ReadBuildInfo is a function, not a variable we can replace easily.
-	// But we can test the fallback by setting debugBuildInfo to return nil
-	debugBuildInfo = func() *debug.BuildInfo {
-		return nil
-	}
-	
-	if got := Commit(); got != "none" {
-		t.Errorf("Commit() with nil build info = %q, want %q", got, "none")
-	}
-}
-
-func TestDateWithLdflags(t *testing.T) {
-	// Save original values
-	origDate := date
-	origDebugBuildInfo := debugBuildInfo
-	
-	// Defer restore
-	defer func() {
-		date = origDate
-		debugBuildInfo = origDebugBuildInfo
-	}()
-
-	// Test with ldflags value set
-	date = "2024-01-15T10:30:00Z"
 	if got := Date(); got != "2024-01-15T10:30:00Z" {
-		t.Errorf("Date() with ldflags = %q, want %q", got, "2024-01-15T10:30:00Z")
-	}
-}
-
-func TestDateFromBuildInfo(t *testing.T) {
-	// Save original values
-	origDate := date
-	origDebugBuildInfo := debugBuildInfo
-	
-	// Defer restore
-	defer func() {
-		date = origDate
-		debugBuildInfo = origDebugBuildInfo
-	}()
-
-	// Test with ldflags empty
-	date = ""
-	
-	// Mock build info with vcs.time
-	debugBuildInfo = func() *debug.BuildInfo {
-		return nil
-	}
-	
-	if got := Date(); got != "unknown" {
-		t.Errorf("Date() with nil build info = %q, want %q", got, "unknown")
-	}
-}
-
-func TestDirtyWithLdflags(t *testing.T) {
-	// Save original values
-	origDirty := dirty
-	origDebugBuildInfo := debugBuildInfo
-	
-	// Defer restore
-	defer func() {
-		dirty = origDirty
-		debugBuildInfo = origDebugBuildInfo
-	}()
-
-	// Test with ldflags value set to true
-	dirty = "true"
-	if got := Dirty(); got != true {
-		t.Errorf("Dirty() with ldflags=true = %v, want true", got)
-	}
-
-	// Test with ldflags value set to false
-	dirty = "false"
-	if got := Dirty(); got != false {
-		t.Errorf("Dirty() with ldflags=false = %v, want false", got)
-	}
-
-	// Test with ldflags value set to True (case insensitive)
-	dirty = "True"
-	if got := Dirty(); got != true {
-		t.Errorf("Dirty() with ldflags=True = %v, want true", got)
-	}
-}
-
-func TestDirtyFromBuildInfo(t *testing.T) {
-	// Save original values
-	origDirty := dirty
-	origDebugBuildInfo := debugBuildInfo
-	
-	// Defer restore
-	defer func() {
-		dirty = origDirty
-		debugBuildInfo = origDebugBuildInfo
-	}()
-
-	// Test with ldflags empty
-	dirty = ""
-	
-	// Mock build info with vcs.modified
-	debugBuildInfo = func() *debug.BuildInfo {
-		return nil
-	}
-	
-	if got := Dirty(); got != false {
-		t.Errorf("Dirty() with nil build info = %v, want false", got)
-	}
-}
-
-func TestStringWithAllInfo(t *testing.T) {
-	// Save original values
-	origVersion := version
-	origCommit := commit
-	origDate := date
-	origDirty := dirty
-	origDebugBuildInfo := debugBuildInfo
-	
-	// Defer restore
-	defer func() {
-		version = origVersion
-		commit = origCommit
-		date = origDate
-		dirty = origDirty
-		debugBuildInfo = origDebugBuildInfo
-	}()
-
-	// Set all ldflags values
-	version = "1.2.3"
-	commit = "abc123"
-	date = "2024-01-15T10:30:00Z"
-	dirty = "false"
-	
-	got := String()
-	want := "1.2.3 (commit abc123), built 2024-01-15T10:30:00Z"
-	if got != want {
-		t.Errorf("String() = %q, want %q", got, want)
-	}
-}
-
-func TestStringWithDirty(t *testing.T) {
-	// Save original values
-	origVersion := version
-	origCommit := commit
-	origDate := date
-	origDirty := dirty
-	origDebugBuildInfo := debugBuildInfo
-	
-	// Defer restore
-	defer func() {
-		version = origVersion
-		commit = origCommit
-		date = origDate
-		dirty = origDirty
-		debugBuildInfo = origDebugBuildInfo
-	}()
-
-	// Set ldflags values with dirty
-	version = "1.2.3"
-	commit = "abc123"
-	date = "2024-01-15T10:30:00Z"
-	dirty = "true"
-	
-	got := String()
-	want := "1.2.3 (commit abc123), built 2024-01-15T10:30:00Z, dirty"
-	if got != want {
-		t.Errorf("String() with dirty = %q, want %q", got, want)
-	}
-}
-
-func TestStringWithDevValues(t *testing.T) {
-	// Save original values
-	origVersion := version
-	origCommit := commit
-	origDate := date
-	origDirty := dirty
-	origDebugBuildInfo := debugBuildInfo
-	
-	// Defer restore
-	defer func() {
-		version = origVersion
-		commit = origCommit
-		date = origDate
-		dirty = origDirty
-		debugBuildInfo = origDebugBuildInfo
-	}()
-
-	// Set dev values (empty ldflags)
-	version = ""
-	commit = ""
-	date = ""
-	dirty = ""
-	
-	debugBuildInfo = func() *debug.BuildInfo {
-		return nil
-	}
-	
-	got := String()
-	want := "(devel)"
-	if got != want {
-		t.Errorf("String() with dev values = %q, want %q", got, want)
-	}
-}
-
-func TestLdflagsWinsOverBuildInfo(t *testing.T) {
-	// This test verifies that ldflags values take precedence over build info.
-	// We can't easily mock the build info to return specific values in the same
-	// test as ldflags, but we can verify the precedence by checking the code logic.
-	// The implementation checks ldflags first, so if ldflags is non-empty, it returns that.
-	
-	// Save original values
-	origVersion := version
-	origCommit := commit
-	origDate := date
-	origDirty := dirty
-	origDebugBuildInfo := debugBuildInfo
-	
-	// Defer restore
-	defer func() {
-		version = origVersion
-		commit = origCommit
-		date = origDate
-		dirty = origDirty
-		debugBuildInfo = origDebugBuildInfo
-	}()
-
-	// Set ldflags values (non-empty)
-	version = "1.2.3"
-	commit = "abc123"
-	date = "2024-01-15T10:30:00Z"
-	dirty = "true"
-	
-	// Even if build info would return something else, ldflags should win
-	// We verify this by checking that the values are what we set in ldflags
-	if Version() != "1.2.3" {
-		t.Error("Version() should return ldflags value")
-	}
-	if Commit() != "abc123" {
-		t.Error("Commit() should return ldflags value")
-	}
-	if Date() != "2024-01-15T10:30:00Z" {
-		t.Error("Date() should return ldflags value")
+		t.Errorf("Date = %q", got)
 	}
 	if !Dirty() {
-		t.Error("Dirty() should return ldflags value")
+		t.Error("Dirty = false, want ldflags true to win over vcs.modified=false")
+	}
+	if got, want := String(), "1.2.3 (commit abc123, built 2024-01-15T10:30:00Z, dirty)"; got != want {
+		t.Errorf("String = %q, want %q", got, want)
+	}
+}
+
+func TestBuildInfoFallbackWhenLdflagsEmpty(t *testing.T) {
+	setLdflags(t, "", "", "", "")
+	setBuildInfo(t, &debug.BuildInfo{
+		Main:     debug.Module{Version: "v0.4.0"},
+		Settings: vcs("vcs.revision", "deadbeef", "vcs.time", "2026-11-28T00:00:00Z", "vcs.modified", "true"),
+	})
+	if got := Version(); got != "v0.4.0" {
+		t.Errorf("Version = %q", got)
+	}
+	if got := Commit(); got != "deadbeef" {
+		t.Errorf("Commit = %q", got)
+	}
+	if got := Date(); got != "2026-11-28T00:00:00Z" {
+		t.Errorf("Date = %q", got)
+	}
+	if !Dirty() {
+		t.Error("Dirty = false, want true from vcs.modified")
+	}
+	if got, want := String(), "v0.4.0 (commit deadbeef, built 2026-11-28T00:00:00Z, dirty)"; got != want {
+		t.Errorf("String = %q, want %q", got, want)
+	}
+}
+
+// The default of the dirty variable must be "unset", so that vcs.modified is
+// read. (It used to default to "false", which made Dirty() ignore build info.)
+func TestDirtyDefaultsToUnsetAndReadsVCSModified(t *testing.T) {
+	if dirty != "" {
+		t.Fatalf("package default dirty = %q, want \"\" (unset)", dirty)
+	}
+	for _, c := range []struct {
+		name string
+		info *debug.BuildInfo
+		want bool
+	}{
+		{"modified true", &debug.BuildInfo{Settings: vcs("vcs.modified", "true")}, true},
+		{"modified false", &debug.BuildInfo{Settings: vcs("vcs.modified", "false")}, false},
+		{"modified absent", &debug.BuildInfo{Settings: vcs("vcs.revision", "x")}, false},
+		{"modified garbage", &debug.BuildInfo{Settings: vcs("vcs.modified", "maybe")}, false},
+		{"no build info", nil, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			setLdflags(t, "", "", "", "")
+			setBuildInfo(t, c.info)
+			if got := Dirty(); got != c.want {
+				t.Errorf("Dirty = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestDirtyLdflagsValues(t *testing.T) {
+	for _, c := range []struct {
+		flag     string
+		modified string
+		want     bool
+	}{
+		{"true", "false", true},
+		{"True", "false", true},
+		{"false", "true", false},
+		{"FALSE", "true", false},
+		// Not a boolean: ignored, build info decides.
+		{"garbage", "true", true},
+		{"garbage", "false", false},
+	} {
+		setLdflags(t, "", "", "", c.flag)
+		setBuildInfo(t, &debug.BuildInfo{Settings: vcs("vcs.modified", c.modified)})
+		if got := Dirty(); got != c.want {
+			t.Errorf("dirty=%q vcs.modified=%q: Dirty = %v, want %v", c.flag, c.modified, got, c.want)
+		}
+	}
+}
+
+func TestDefaultsWithoutAnyBuildInfo(t *testing.T) {
+	setLdflags(t, "", "", "", "")
+	setBuildInfo(t, nil)
+	if Version() != "(devel)" || Commit() != "none" || Date() != "unknown" || Dirty() {
+		t.Errorf("defaults = %q %q %q %v", Version(), Commit(), Date(), Dirty())
+	}
+	if got, want := String(), "(devel) (commit none, built unknown)"; got != want {
+		t.Errorf("String = %q, want %q", got, want)
+	}
+}
+
+func TestEmptyBuildInfoValuesFallBackToDefaults(t *testing.T) {
+	setLdflags(t, "", "", "", "")
+	// A plain `go build` outside a module cache: Main.Version is "" and the
+	// vcs settings exist with empty values.
+	setBuildInfo(t, &debug.BuildInfo{Settings: vcs("vcs.revision", "", "vcs.time", "")})
+	if Version() != "(devel)" || Commit() != "none" || Date() != "unknown" {
+		t.Errorf("got %q %q %q", Version(), Commit(), Date())
+	}
+}
+
+func TestDevelMainVersionIsReportedAsIs(t *testing.T) {
+	setLdflags(t, "", "", "", "")
+	setBuildInfo(t, &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}})
+	if got := Version(); got != "(devel)" {
+		t.Errorf("Version = %q", got)
+	}
+}
+
+func TestEachLdflagIsIndependent(t *testing.T) {
+	setLdflags(t, "2.0.0", "", "", "")
+	setBuildInfo(t, &debug.BuildInfo{
+		Main:     debug.Module{Version: "v1.0.0"},
+		Settings: vcs("vcs.revision", "cafe", "vcs.time", "t"),
+	})
+	if Version() != "2.0.0" || Commit() != "cafe" || Date() != "t" {
+		t.Errorf("got %q %q %q", Version(), Commit(), Date())
+	}
+}
+
+// The real seam (no fake) must not panic and must return something printable.
+func TestRealReadBuildInfoSmoke(t *testing.T) {
+	setLdflags(t, "", "", "", "")
+	if Version() == "" || Commit() == "" || Date() == "" || String() == "" {
+		t.Errorf("empty value: %q %q %q %q", Version(), Commit(), Date(), String())
+	}
+}
+
+func TestReadBuildInfoReturnsNilWhenUnavailable(t *testing.T) {
+	// The default reader maps ok=false to nil; under `go test` ok is true, so
+	// only assert it never returns a non-nil info with an unusable shape.
+	if info := readBuildInfo(); info != nil && info.GoVersion == "" {
+		t.Errorf("build info without GoVersion: %+v", info)
 	}
 }

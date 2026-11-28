@@ -26,60 +26,29 @@ func durationSeconds(n int) time.Duration { return time.Duration(n) * time.Secon
 // --- health, auth ---------------------------------------------------------
 
 func TestHealthCheck(t *testing.T) {
-	// Need operator token for the detailed health check
 	e := newEnv(t, envOpts{operator: true})
-	// Unauthenticated request should return only {"status":"ok"}
-	code, m, rec := e.call("GET", "/healthz", "", nil)
-	if code != 200 {
-		t.Fatalf("healthz: got status %d, want 200", code)
-	}
-	if m["status"] != "ok" {
-		t.Fatalf("healthz: got status %v, want 'ok'", m["status"])
-	}
-	// Check that unauthenticated request does NOT include vault_id, key_epoch, or version
-	if _, ok := m["vault_id"]; ok {
-		t.Errorf("healthz unauthenticated should not include vault_id, got %v", m["vault_id"])
-	}
-	if _, ok := m["key_epoch"]; ok {
-		t.Errorf("healthz unauthenticated should not include key_epoch, got %v", m["key_epoch"])
-	}
-	if _, ok := m["version"]; ok {
-		t.Errorf("healthz unauthenticated should not include version, got %v", m["version"])
-	}
-	// The body should be exactly {"status":"ok"}
-	body := rec.Body.String()
-	expected := `{"status":"ok"}` + "\n"
-	if body != expected {
-		t.Errorf("healthz unauthenticated body = %q, want %q", body, expected)
+
+	// Unauthenticated: exactly {"status":"ok"}, nothing about the vault.
+	code, _, rec := e.call("GET", "/healthz", "", nil)
+	if code != 200 || rec.Body.String() != minimalHealthBody {
+		t.Fatalf("unauthenticated healthz: %d %q, want 200 %q", code, rec.Body.String(), minimalHealthBody)
 	}
 
-	// With an operator token, the detailed body should be present
-	code, m, _ = e.call("GET", "/healthz", e.opTok, nil)
-	if code != 200 {
-		t.Fatalf("healthz with operator token: got status %d, want 200", code)
+	// With the operator token: the full detailed body, version included.
+	var names []string
+	for _, s := range e.stack.Actions.List() {
+		names = append(names, s.Name)
 	}
-	if m["status"] != "ok" {
-		t.Errorf("healthz with operator token: got status %v, want 'ok'", m["status"])
-	}
-	if m["vault_id"] != e.stack.Vault.VaultID() {
-		t.Errorf("healthz with operator token: got vault_id %v, want %v", m["vault_id"], e.stack.Vault.VaultID())
-	}
-	if m["key_epoch"].(float64) != float64(e.stack.Vault.KeyEpoch()) {
-		t.Errorf("healthz with operator token: got key_epoch %v, want %v", m["key_epoch"], e.stack.Vault.KeyEpoch())
-	}
-	if _, ok := m["version"]; !ok {
-		t.Error("healthz with operator token should include version")
-	}
-	// APP_ENV=production should have no extra effect (both authenticated and unauthenticated work the same)
+	want := &healthWant{vaultID: e.stack.Vault.VaultID(), keyEpoch: int(e.stack.Vault.KeyEpoch()), actions: names}
+	_, _, rec = e.call("GET", "/healthz", e.opTok, nil)
+	wantDetailed(t, "operator token", rec, want)
+
+	// APP_ENV=production has no extra effect any more: same two answers.
 	t.Setenv("APP_ENV", "production")
-	// Unauthenticated still gets minimal response
-	if _, m, _ = e.call("GET", "/healthz", "", nil); len(m) != 1 || m["status"] != "ok" {
-		t.Errorf("healthz with APP_ENV=production unauthenticated: got %v, want only status:ok", m)
-	}
-	// Authenticated still gets detailed response
-	if _, m, _ = e.call("GET", "/healthz", e.opTok, nil); m["status"] != "ok" || m["vault_id"] != e.stack.Vault.VaultID() {
-		t.Errorf("healthz with APP_ENV=production and operator token: got %v, want detailed response", m)
-	}
+	_, _, rec = e.call("GET", "/healthz", "", nil)
+	wantMinimal(t, "production, unauthenticated", rec)
+	_, _, rec = e.call("GET", "/healthz", e.opTok, nil)
+	wantDetailed(t, "production, operator token", rec, want)
 }
 
 func TestAuthRejectsMissingAndWrongTokens(t *testing.T) {

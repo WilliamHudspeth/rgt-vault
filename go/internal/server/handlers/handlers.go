@@ -350,34 +350,23 @@ func queryDefault(r *http.Request, name, def string) string {
 // GET /healthz, XML policy stubs
 // ---------------------------------------------------------------------------
 
-// HealthCheck returns server health information.
-// Unauthenticated requests return only {"status":"ok"}.
-// Authenticated requests with audit or operator scope return the detailed
-// body including vault_id, key_epoch, and version.
+// HealthCheck answers GET /healthz. The route is reachable without a token
+// (the auth middleware passes it through, attaching the caller when a valid
+// token was sent), so the default body reveals nothing: exactly
+// {"status":"ok"}. Only a caller holding the audit or operator scope also
+// gets the vault id, key epoch, action list and the build version.
+// APP_ENV=production has no effect: nothing detailed is public any more.
 func (h *Handlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
-	// Check if the request is authenticated with audit or operator scope
 	p, ok := PrincipalFromContext(r.Context())
-	if !ok {
-		// Unauthenticated: return minimal response
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status": "ok",
-		})
+	if !ok || !p.Has(auth.ScopeAudit) { // Has(audit) is also true for operator
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 		return
 	}
-	// Authenticated: check if it has audit scope (operator implies audit)
-	if !p.Has(auth.ScopeAudit) {
-		// Authenticated but no audit scope: return minimal response
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status": "ok",
-		})
-		return
-	}
-
-	// Authenticated with audit or operator scope: return detailed response
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":    "ok",
 		"vault_id":  h.Vault.VaultID(),
 		"key_epoch": h.Vault.KeyEpoch(),
+		"actions":   h.actionNames(),
 		"version":   buildinfo.Version(),
 	})
 }
