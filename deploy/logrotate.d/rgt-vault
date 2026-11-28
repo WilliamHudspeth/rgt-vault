@@ -4,18 +4,27 @@
 # (ASVS V7 / Refs RGT-430, RGT-512).
 #
 # IMPORTANT DEPLOYMENT NOTES:
-#   1. Default mode: deploy/rgt-vault-go.service writes exclusively to
-#      stdout/stderr under systemd-journald (configured via
-#      deploy/journald.conf.d/rgt-vault.conf) with ProtectSystem=strict and
-#      ReadWritePaths=/var/lib/rgt-vault. File logging in go/internal/logging is
-#      NOT yet wired into rgt-vault serve (tracked in RGT-512), and the Go
-#      daemon does not install a SIGHUP handler — never send SIGHUP from
-#      postrotate, or Go's default signal disposition will terminate the service.
-#   2. Optional file-logging mode (if redirecting output or after RGT-512):
-#      Provision /var/log/rgt-vault owned by root:adm mode 0750 (for example via
-#      systemd-tmpfiles: `d /var/log/rgt-vault 0750 root adm -`) so the
-#      unprivileged rgtvault user cannot unlink rotated archives, and use
-#      copytruncate below until SIGHUP FileWriter.Reopen() wiring (RGT-512) lands.
+#   1. Default mode: file logging is NOT active. deploy/rgt-vault-go.service
+#      writes only to stdout/stderr under systemd-journald (see
+#      deploy/journald.conf.d/rgt-vault.conf) and has ProtectSystem=strict with
+#      ReadWritePaths=/var/lib/rgt-vault, so it cannot write /var/log/rgt-vault.
+#      go/internal/logging (including its FileWriter) is not yet wired into
+#      `rgt-vault serve`; that wiring is follow-up work (RGT-512). Until then
+#      this file is a reference policy that matches nothing on a default install.
+#   2. Never send SIGHUP from postrotate. The daemon's only SIGHUP handler
+#      reloads the TLS certificate (a no-op without --tls-cert); it does not
+#      reopen log files, so a SIGHUP here would be misleading at best. Rotation
+#      uses copytruncate (the writer opens with O_APPEND, so truncation is safe
+#      and no reopen is needed) until SIGHUP -> FileWriter.Reopen() is wired.
+#   3. If you do redirect output to a file, you must (a) add /var/log/rgt-vault
+#      to ReadWritePaths in a drop-in and (b) provision the directory so the
+#      unprivileged rgtvault user cannot delete rotated archives, for example
+#      with systemd-tmpfiles: `d /var/log/rgt-vault 0750 rgtvault adm -`. The
+#      directory stays writable by rgtvault (it must create the active file), so
+#      rgtvault CAN remove archives there; the root:adm 0440 chown/chmod below
+#      stops edits to an archive's content but NOT deletion. Tamper-evidence
+#      against rgtvault needs root-owned archives in a root-owned directory
+#      (ship logs off-host or keep the journal), which this file does not set up.
 
 /var/log/rgt-vault/*.log {
     su root adm
@@ -27,8 +36,9 @@
     copytruncate
     missingok
     notifempty
-    # Active log is owned by rgtvault and readable only by the adm audit group
-    # (never world-readable).
+    # Ignored by copytruncate (the active file keeps its inode and the 0600
+    # mode FileWriter gives it); kept so a later switch to the create-and-HUP
+    # method (RGT-512) gets a never-world-readable file.
     create 0640 rgtvault adm
     sharedscripts
     postrotate

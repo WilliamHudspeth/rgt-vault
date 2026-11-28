@@ -25,9 +25,11 @@ func openLogFileOS(path string) (*os.File, error) {
 	if !dirInfo.IsDir() {
 		return nil, errors.New("logging: log parent path is not a directory")
 	}
-	if dirInfo.Mode().Perm()&0o077 != 0 {
-		// Tighten an existing directory when owned by the current process;
-		// ignore EPERM on system-owned parent directories like /tmp.
+	if dirInfo.Mode().Perm()&0o077 != 0 && ownedByCurrentUser(dirInfo) && dirInfo.Mode()&os.ModeSticky == 0 {
+		// Tighten an existing group/other-accessible log directory, but only
+		// when this process owns it and it is not a sticky shared directory
+		// such as /tmp: never chmod a system directory, even when running as root.
+		// A failure here is not fatal (the file itself is still created 0600).
 		_ = os.Chmod(dir, 0o700)
 	}
 
@@ -51,4 +53,10 @@ func openLogFileOS(path string) (*os.File, error) {
 		}
 	}
 	return f, nil
+}
+
+// ownedByCurrentUser reports whether info's owner is the effective user.
+func ownedByCurrentUser(info os.FileInfo) bool {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	return ok && int(st.Uid) == os.Geteuid()
 }

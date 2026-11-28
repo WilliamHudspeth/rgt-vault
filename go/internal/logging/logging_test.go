@@ -250,14 +250,14 @@ func TestRedactionAcrossTypesAndNesting(t *testing.T) {
 
 	nestedMap := map[string]any{
 		"level1": map[string]any{
-			"password":    rawSecret,
-			"totp_code":   rawTOTP,
-			"wrappedDek":  rawDEK,
-			"SigningKey":  rawSecret,
-			"HarnessKey":  rawSecret,
-			"AccessKey":   rawSecret,
-			"safe_list":   []any{"ok", map[string]string{"api_key": rawSecret, "code": rawTOTP, "pin": "7391", "region": "us-east-1"}},
-			rawBearer:     "secret-used-as-map-key",
+			"password":            rawSecret,
+			"totp_code":           rawTOTP,
+			"wrappedDek":          rawDEK,
+			"SigningKey":          rawSecret,
+			"HarnessKey":          rawSecret,
+			"AccessKey":           rawSecret,
+			"safe_list":           []any{"ok", map[string]string{"api_key": rawSecret, "code": rawTOTP, "pin": "7391", "region": "us-east-1"}},
+			rawBearer:             "secret-used-as-map-key",
 			"Bearer " + rawSecret: "bearer-map-key",
 		},
 		"raw_bytes": []byte(rawSecret),
