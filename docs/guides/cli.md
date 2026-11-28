@@ -79,14 +79,19 @@ next request.
 
 ```text
 rgt-vault serve [--db PATH] [--policy FILE] [--provider keyring|platform]
-                [--host 127.0.0.1] [--port 8765] [--allow-non-loopback]
+                [--host 127.0.0.1] [--port 8765]
+                [--tls-cert FILE --tls-key FILE [--tls-client-ca FILE [--tls-client-auth require|verify-if-given]]]
+                [--allow-insecure-non-loopback]
                 [--token-store PATH | --legacy-shared-token [--token-file PATH] [--operator-token-file PATH]]
                 [--require-approval [--totp-secret-file PATH] [--approval-timeout 120s]]
                 [--harness-key-file PATH] [--allow-private-network]
 ```
 
-- Loopback only: a non-loopback `--host` is refused without `--allow-non-loopback`, and then it
-  is plain HTTP, so put a TLS reverse proxy in front.
+- Loopback plain HTTP is the default. A non-loopback `--host` is refused unless the daemon serves
+  TLS (`--tls-cert`/`--tls-key`: TLS 1.2+, AEAD suites, certificate hot-reload on SIGHUP, optional
+  mTLS with `--tls-client-ca`) or you pass `--allow-insecure-non-loopback` (plain HTTP, logged and
+  audited; the old `--allow-non-loopback` is a deprecated alias). Clients use `https://` with
+  `--cacert`. See [TLS and transport security](tls.md).
 - Authentication is the per-agent token store (`--token-store`). `serve` refuses an empty or
   corrupt store.
 - `--legacy-shared-token` (deprecated, logs a warning) restores the single shared `--token-file`

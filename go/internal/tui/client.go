@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"rgt-vault-server/internal/netguard"
+	"rgt-vault-server/internal/transport"
 	"rgt-vault-server/internal/validation"
 )
 
@@ -69,9 +70,19 @@ func NewHTTPClient(baseURL, token string) *HTTPClient {
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
 		hc: &http.Client{
-			Timeout:   5 * time.Second,
-			Transport: &http.Transport{DialContext: netguard.NewDialer(true).DialContext},
+			Timeout:       5 * time.Second,
+			Transport:     &http.Transport{DialContext: netguard.NewDialer(true).DialContext},
+			CheckRedirect: transport.NoRedirect, // never replay the bearer token to a redirect target
 		},
+	}
+}
+
+// SetTransport replaces the HTTP transport (the TLS policy of
+// internal/transport: TLS 1.2+, AEAD suites, --cacert). A nil transport keeps
+// the default.
+func (c *HTTPClient) SetTransport(rt http.RoundTripper) {
+	if rt != nil {
+		c.hc.Transport = rt
 	}
 }
 

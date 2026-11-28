@@ -54,7 +54,16 @@ BindPaths=-/dev/tpmrm0
 DeviceAllow=/dev/tpmrm0 rw
 
 # Loopback only (the Go server's default; stated explicitly on purpose).
-# Put a TLS reverse proxy in front if you must expose it. The bearer tokens are
+# Put a TLS reverse proxy in front if you must expose it (deploy/nginx-rgt-vault.conf,
+# deploy/Caddyfile.example), or let the daemon terminate TLS itself (RGT-251):
+# append to ExecStart, with the key mode 0600 and owned by rgtvault (the daemon
+# REFUSES a key that group/other can read), then `systemctl reload rgt-vault-go`
+# re-reads the certificate without dropping connections (SIGHUP):
+#   --tls-cert /etc/rgt-vault/tls/server.crt --tls-key /etc/rgt-vault/tls/server.key
+#   optional mutual TLS for server-to-server clients (the bearer token is still
+#   required): --tls-client-ca /etc/rgt-vault/tls/clients-ca.pem
+# A non-loopback --host is refused without TLS. See docs/guides/tls.md.
+# The bearer tokens are
 # never logged: the journal shows only the token file paths and short ids.
 # CORS is denied unless exact origins are listed, for example:
 # Environment=CORS_ALLOWED_ORIGINS=https://dashboard.example
@@ -70,6 +79,10 @@ ExecStart=/opt/rgt-vault/bin/rgt-vault serve \
     --provider platform \
     --token-store /var/lib/rgt-vault/tokens.json \
     --host 127.0.0.1 --port 8765
+
+# SIGHUP re-reads the TLS certificate/key without dropping connections; with
+# no --tls-cert the daemon just logs and ignores it.
+ExecReload=/bin/kill -HUP $MAINPID
 
 Restart=on-failure
 RestartSec=2
