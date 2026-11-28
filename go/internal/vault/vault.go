@@ -266,6 +266,11 @@ func (v *Vault) load(ctx context.Context) error {
 		return fmt.Errorf("vault: stat keychain: %w", statErr)
 	}
 
+	if b, ok := v.provider.(VaultBinder); ok {
+		if err := b.BindVault(v.vaultID); err != nil {
+			return err
+		}
+	}
 	if fresh {
 		if b, ok := v.provider.(Bootstrapper); ok {
 			if err := b.BootstrapMasterSecret(); err != nil {

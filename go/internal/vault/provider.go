@@ -23,3 +23,11 @@ type Rotator interface {
 type Bootstrapper interface {
 	BootstrapMasterSecret() error
 }
+
+// VaultBinder is implemented by providers whose storage location depends on
+// the vault (RGT-522: the file provider's per-vault key path; RGT-535: the
+// per-vault keyring account). Open calls it once, after reading the vault id
+// and before Bootstrap/GetMasterSecret.
+type VaultBinder interface {
+	BindVault(vaultID string) error
+}

@@ -27,7 +27,8 @@ UMask=0077
 #   --policy    ABAC policy YAML, read-only under /etc. Without it every
 #               request is denied (default deny), so a missing file is an
 #               error here on purpose: create /etc/rgt-vault/policy.yaml first.
-#   --provider  platform. There is no session D-Bus for a Secret Service
+#   --provider  platform (or file, see the alternative below). There is no
+#               session D-Bus for a Secret Service
 #               keyring under systemd, so the default `keyring` provider cannot
 #               work. On Linux `platform` is the TPM 2.0: provision it ONCE,
 #               as the service user, before the first start:
@@ -52,6 +53,29 @@ Environment=VAULT_TPM_PUB=/var/lib/rgt-vault/sealed/master_secret.pub
 SupplementaryGroups=tss
 BindPaths=-/dev/tpmrm0
 DeviceAllow=/dev/tpmrm0 rw
+
+# --- alternative: --provider file + an encrypted credential (RGT-522) -- #
+# No tpm2-tools and no keyring needed. The master key is a 32-byte key file,
+# sealed at rest with systemd-creds (to the TPM2 and/or the host key);
+# systemd decrypts it at start into a non-swappable ramfs that only the
+# service user can read ($CREDENTIALS_DIRECTORY/rgt-vault-master), and
+# `--provider file` reads it from there. A PLAIN key file (no credential) is
+# weaker than the TPM provider at rest: anyone who copies it together with
+# the vault opens the vault. See docs/guides/providers.md#systemd.
+# Provision ONCE (keep an offline backup of key.txt before shredding it):
+#   sudo -u rgtvault rgt-vault provider seal file --generate --out /var/lib/rgt-vault/key.txt
+#   sudo -u rgtvault rgt-vault --provider file --master-key-file /var/lib/rgt-vault/key.txt init \
+#        --db /var/lib/rgt-vault/vault.db --token-store /var/lib/rgt-vault/tokens.json \
+#        --operator-token-file /var/lib/rgt-vault/operator.token
+#   sudo mkdir -p /etc/credstore.encrypted
+#   sudo systemd-creds encrypt --with-key=tpm2 --name=rgt-vault-master \
+#        /var/lib/rgt-vault/key.txt /etc/credstore.encrypted/rgt-vault-master
+#   sudo shred -u /var/lib/rgt-vault/key.txt
+# then, instead of the TPM lines above (Environment=VAULT_TPM_*,
+# SupplementaryGroups=tss, BindPaths=, DeviceAllow=), use
+#   LoadCredentialEncrypted=rgt-vault-master:/etc/credstore.encrypted/rgt-vault-master
+# and `--provider file` in ExecStart. `rotate --target master` is refused for
+# a credential: re-seal a new key the same way and restart.
 
 # Production mode (RGT-427, ASVS 14.3): APP_ENV=production keeps the build
 # version out of the unauthenticated /healthz answer. Error responses are

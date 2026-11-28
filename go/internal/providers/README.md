@@ -10,9 +10,11 @@ package does not import the vault package.
 | `MacOSKeychainProvider` | `/usr/bin/security find-generic-password -w` | printable ASCII text; its bytes are the secret | yes |
 | `DPAPIProvider` | `CryptUnprotectData(flags=4)`, optional entropy | base64 text file (`VAULT_DPAPI_BLOB`) | yes |
 | `TPMProvider` | tpm2-tools (createprimary, load, startauthsession, policypcr, unseal), `<priv>.pcrs` | `.priv`/`.pub` blobs | yes (UNVERIFIED on hardware) |
+| `FileProvider` / `CredentialProvider` (`--provider file`, RGT-522) | key file: `--master-key-file` / `RGT_VAULT_MASTER_KEY_FILE`, else `$CREDENTIALS_DIRECTORY/rgt-vault-master` (systemd, read-only), else `~/.config/rgt-vault/keys/<vault-id>.key` (bound via `VaultBinder`) | same text as the keyring entry (urlsafe-base64 of 32 bytes + `\n`); 32 raw bytes also accepted on read; every read through `internal/secfile` (owner/mode/links/dir chain; Windows DACL) | n/a (Go only; the vault format is unchanged). Docs: `docs/guides/providers.md` |
 
 Env vars (same as Python): `VAULT_DPAPI_BLOB`, `VAULT_KEYCHAIN_SERVICE`, `VAULT_KEYCHAIN_ACCOUNT`,
-`VAULT_TPM_PRIV`, `VAULT_TPM_PUB`.
+`VAULT_TPM_PRIV`, `VAULT_TPM_PUB`. File provider (Go only): `RGT_VAULT_MASTER_KEY_FILE`, `CREDENTIALS_DIRECTORY`,
+`RGT_VAULT_MASTER_CREDENTIAL`, `RGT_VAULT_INSECURE_KEY_ACL` (diagnosis only).
 
 Rules: external tools run with an argv (never a shell); errors carry the tool name and exit status only (RGT-371);
 `unsafe` appears only in `dpapi_windows.go`. Tests use the `Runner` / keyring / DPAPI seams, so they run on any OS.

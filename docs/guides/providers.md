@@ -1,0 +1,143 @@
+# Master-key providers
+
+rgt-vault encrypts every secret with a data key (DEK). The DEK is wrapped under a key derived (Argon2id, then
+HKDF) from a 32-byte **master secret**, and a **provider** holds that master secret. Choose it with
+`--provider` / `RGT_VAULT_PROVIDER`:
+
+| Provider | Where the master secret is | Use it for |
+|---|---|---|
+| `keyring` (default) | the OS keyring: Secret Service (Linux), login Keychain (macOS), Credential Manager (Windows) | a desktop session; Python-compatible |
+| `file` | a 32-byte key file, or a systemd credential | servers, containers, headless hosts, systemd units |
+| `platform` | Windows DPAPI, the macOS Keychain or the Linux TPM 2.0 | hardened installs with that hardware |
+
+The provider only delivers 32 bytes. Changing provider does not change `keychain.json`, the KDF or the wrap.
+
+## The `file` provider
+
+```bash
+rgt-vault init --provider file
+rgt-vault serve --provider file --policy policy.yaml
+```
+
+The key comes from exactly one source, chosen in this order:
+
+1. **An explicit path:** `--master-key-file PATH` or `RGT_VAULT_MASTER_KEY_FILE`.
+2. **A systemd credential:** `$CREDENTIALS_DIRECTORY/rgt-vault-master` (rename it with
+   `RGT_VAULT_MASTER_CREDENTIAL`), delivered by `LoadCredential=` or `LoadCredentialEncrypted=`. This source is
+   read-only.
+3. **The per-vault default:** `~/.config/rgt-vault/keys/<vault-id>.key`. The vault id comes from vault.db,
+   so two vaults never share a key file.
+
+On disk the key is one line: urlsafe-base64 of 32 random bytes and a newline, the same text the keyring
+entry holds. On read, rgt-vault also accepts the unpadded or standard-alphabet form, or exactly 32 raw bytes.
+It refuses anything else and anything over 128 bytes.
+
+**Creation.** `init` on a new vault creates the key file only if it is missing. It creates the directory
+0700, then the file 0600 with `O_CREAT|O_EXCL|O_NOFOLLOW`, and fsyncs the file and the directory. On Windows
+the file gets a protected owner + SYSTEM DACL at creation. An existing key file is never overwritten. If one
+is already there, `init` uses it (a pre-provisioned key). If the key file of an existing vault is missing,
+opening fails: rgt-vault never makes a new key for a vault that already has secrets.
+
+**Rotation.** `rgt-vault rotate --target master` writes the new key to a temp file in the same directory
+(same checks), then renames it over the old one. A crash in between is recovered by the vault's
+`keychain.json.new` logic. With a systemd credential, rotation is refused before anything changes: re-seal a
+new key (below) and restart.
+
+### Checks on every read
+
+rgt-vault refuses a key file that other users could read or replace. It makes every check on the opened
+handle, never with a separate stat before the open. Each refusal names the fix (`chmod 600 …`, `chown …`,
+`chmod go-w DIR`).
+
+Linux and macOS (in the style of OpenSSH StrictModes):
+
+- The path is resolved once, so the symlink chains of Kubernetes/Docker secret mounts work.
+- The key's own directory must be owned by you or root and must not be group- or world-writable.
+- Every ancestor directory up to `/` follows the same rule. A root-owned sticky directory such as `/tmp` is
+  accepted as an ancestor, never as the key's own directory.
+- The file is opened `O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC`. It must be a regular file with exactly one
+  link and no setuid/setgid bit, owned by you or root, with no group or other permission bits, and at most
+  128 bytes.
+
+Windows:
+
+- The file is opened with `FILE_FLAG_OPEN_REPARSE_POINT`. Symlinks, junctions, directories and files with
+  more than one hard link are refused.
+- The owner must be you, SYSTEM or BUILTIN\Administrators. The DACL must exist and must not be NULL. Allow
+  ACEs may name only those three. Everyone, Authenticated Users, BUILTIN\Users and any other SID are refused.
+  To fix a file: `icacls FILE /inheritance:r /grant:r "%USERNAME%:F" /grant:r SYSTEM:F`.
+- A DACL that cannot be read or parsed is refused. For diagnosis only, `RGT_VAULT_INSECURE_KEY_ACL=1` turns
+  ACL refusals into a warning, printed on every start. Do not leave it set.
+
+### Provisioning and migration
+
+`rgt-vault provider seal file` writes a key file (0600, never over an existing file without `--force`):
+
+```bash
+rgt-vault provider seal file --generate     --out ~/keys/master.key   # a key for a NEW vault
+rgt-vault provider seal file --from-keyring --out ~/keys/master.key   # move a keyring vault to a file
+rgt-vault provider seal file --master-file raw32.bin --out ~/keys/master.key   # exactly 32 raw bytes
+```
+
+After `--from-keyring`, open the vault with `--provider file --master-key-file ~/keys/master.key`. The keyring
+entry is left as it is: delete it yourself once the file works. `--out -` writes the key to standard
+output, but only when that is not a terminal, for example to pipe it into `systemd-creds encrypt`.
+
+## systemd
+
+Under systemd there is no session D-Bus, so `keyring` cannot work. Use `platform` (the TPM, see
+`deploy/rgt-vault-go.service`) or `file` with an **encrypted credential**:
+
+```bash
+sudo -u rgtvault rgt-vault provider seal file --generate --out /var/lib/rgt-vault/key.txt
+sudo -u rgtvault rgt-vault --provider file --master-key-file /var/lib/rgt-vault/key.txt init \
+     --db /var/lib/rgt-vault/vault.db --token-store /var/lib/rgt-vault/tokens.json \
+     --operator-token-file /var/lib/rgt-vault/operator.token
+sudo mkdir -p /etc/credstore.encrypted
+sudo systemd-creds encrypt --with-key=tpm2 --name=rgt-vault-master \
+     /var/lib/rgt-vault/key.txt /etc/credstore.encrypted/rgt-vault-master
+# keep an offline backup of key.txt, then:
+sudo shred -u /var/lib/rgt-vault/key.txt
+```
+
+In the unit:
+
+```ini
+LoadCredentialEncrypted=rgt-vault-master:/etc/credstore.encrypted/rgt-vault-master
+ExecStart=/opt/rgt-vault/bin/rgt-vault serve --provider file --db /var/lib/rgt-vault/vault.db ...
+```
+
+At start, systemd decrypts the credential into a non-swappable ramfs that only the service user can read.
+rgt-vault reads `$CREDENTIALS_DIRECTORY/rgt-vault-master` there, with the checks above, and has no crypto of
+its own for this. `--with-key=tpm2` seals the key to this machine's TPM. Add `--tpm2-pcrs=` to bind it to the
+boot state too; re-seal after firmware updates. `--with-key=host` uses `/var/lib/systemd/credential.secret`
+instead, which protects only against copying the credential file alone. To **rotate**, generate a new key,
+re-run `systemd-creds encrypt` and restart: `rotate --target master` is refused for a credential. (The
+ownership and mode systemd gives the credential files have not been checked on a real host by this project;
+the checks accept files owned by the service user or root, mode 0400.)
+
+## When the keyring is unreachable
+
+`rgt-vault init` checks the provider before it creates vault.db. With no Secret Service on the session D-Bus
+(Linux), no logon session (Windows, error 1312) or a locked Keychain (macOS), it exits 1. It lists the
+options above, `--provider file` first, and creates no files. If vault.db was created in that run and opening
+then fails, `init` removes vault.db, -wal, -shm and keychain.json again (only the files it created).
+`serve` and the offline commands print how to reach the keyring or move the key to a file.
+
+## Threat model
+
+| Provider | Protects against | Does not protect against |
+|---|---|---|
+| `file`, plain | other local non-root users; agents running as other users (the product's trust boundary); misconfigured permissions (refused) | root/Administrator; any process running as the vault's user; disk theft, backups and VM images that contain the key file; a vault directory and key directory backed up together |
+| `file` via `LoadCredentialEncrypted=` (TPM2) | the above, **plus** disk/VM-image theft and backup leakage (the key is sealed to the machine's TPM, and to PCRs if configured); the plaintext exists only in an unswappable ramfs for the service user | root on the running host; a compromised service user; PCR changes after firmware updates (if PCRs are bound, re-seal) |
+| `file` via `LoadCredentialEncrypted=` (host key only) | casual copying of the credential file | anyone who also copies `/var/lib/systemd/credential.secret` (same disk) |
+| `keyring` | other users; encrypted at rest under the login password; locked while logged out | any process in the user's unlocked session; does not work headless or under systemd |
+| `platform` TPM | disk theft; the key never exists in a file | root on the running host; PCR changes |
+| `platform` DPAPI (machine scope) | disk theft (bound to the machine) | any local user who can read the blob (restrict its ACL, use entropy) |
+
+**The `file` provider is weaker than TPM or DPAPI at rest** unless it is delivered as an encrypted systemd
+credential. A plain key file is only as safe as the disk, the backups and the account that hold it: anyone
+who has the key file and the vault can open the vault. Keep `~/.config/rgt-vault/keys` out of the backups of
+`~/.secure-vault`, or back them up to different places.
+
+Design and decisions: [docs/design/file-provider.md](../design/file-provider.md).

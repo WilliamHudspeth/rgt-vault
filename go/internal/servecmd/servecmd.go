@@ -9,7 +9,12 @@
 //
 //	--db / RGT_VAULT_DB                   default ~/.secure-vault/vault.db
 //	--policy / RGT_VAULT_POLICY           ABAC policy YAML; unset = deny everything
-//	--provider / RGT_VAULT_PROVIDER       keyring (default) or platform
+//	--provider / RGT_VAULT_PROVIDER       keyring (default), file or platform
+//	--master-key-file / RGT_VAULT_MASTER_KEY_FILE
+//	                                      key file of the file provider; unset = the
+//	                                      systemd credential $CREDENTIALS_DIRECTORY/
+//	                                      rgt-vault-master, else ~/.config/rgt-vault/
+//	                                      keys/<vault-id>.key (docs/guides/providers.md)
 //	--host / RGT_VAULT_HOST               listen address, default 127.0.0.1
 //	--port / RGT_VAULT_PORT               listen port, default 8765
 //	--tls-cert / RGT_VAULT_TLS_CERT       PEM certificate (chain) to serve HTTPS with
@@ -78,6 +83,7 @@ import (
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/hooks"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/server/handlers"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/transport"
@@ -125,7 +131,7 @@ type Env struct {
 	// Logger receives warnings and progress (default log.Default()).
 	Logger *log.Logger
 	// NewProvider builds the named master-secret provider (default
-	// server.NewProvider).
+	// server.NewProviderWith with the resolved --master-key-file).
 	NewProvider func(name string) (vault.MasterProvider, error)
 	// KDFParams are the Argon2 parameters for a NEW keychain (tests only;
 	// zero means Python's defaults).
@@ -156,20 +162,21 @@ func (e Env) logger() *log.Logger {
 	return log.Default()
 }
 
-func (e Env) newProvider(name string) (vault.MasterProvider, error) {
+func (e Env) newProvider(r Resolved) (vault.MasterProvider, error) {
 	if e.NewProvider != nil {
-		return e.NewProvider(name)
+		return e.NewProvider(r.Provider)
 	}
-	return server.NewProvider(name)
+	return server.NewProviderWith(r.Provider, r.ProviderOptions())
 }
 
 // VaultFlags are the flags that select a vault: --db, --policy, --provider.
 // `rgt-vault` registers them once as persistent root flags (like Python's
 // global options); `rgt-vault-server` registers them on its own command.
 type VaultFlags struct {
-	DB       string
-	Policy   string
-	Provider string
+	DB            string
+	Policy        string
+	Provider      string
+	MasterKeyFile string
 }
 
 // Register adds the flags to cmd.
@@ -180,7 +187,8 @@ func (v *VaultFlags) Register(cmd *cobra.Command, persistent bool) {
 	}
 	fs.StringVar(&v.DB, "db", "", "vault database (env RGT_VAULT_DB, default "+server.DefaultDBPath+")")
 	fs.StringVar(&v.Policy, "policy", "", "ABAC policy YAML (env RGT_VAULT_POLICY; default: deny everything)")
-	fs.StringVar(&v.Provider, "provider", "", "master-secret provider: keyring or platform (env RGT_VAULT_PROVIDER, default keyring)")
+	fs.StringVar(&v.Provider, "provider", "", "master-secret provider: keyring, file or platform (env RGT_VAULT_PROVIDER, default keyring; see docs/guides/providers.md)")
+	fs.StringVar(&v.MasterKeyFile, "master-key-file", "", "key file of --provider file (env "+providers.EnvMasterKeyFile+"; default: the systemd credential rgt-vault-master, else ~/.config/rgt-vault/keys/<vault-id>.key)")
 }
 
 // Resolved are the vault-selection settings after flag > environment >
@@ -189,6 +197,14 @@ type Resolved struct {
 	DB       string
 	Policy   string
 	Provider string
+	// MasterKeyFile is the explicit key file of the file provider (expanded;
+	// empty when the provider is not "file" or no path was given).
+	MasterKeyFile string
+}
+
+// ProviderOptions are the provider settings of r.
+func (r Resolved) ProviderOptions() server.ProviderOptions {
+	return server.ProviderOptions{MasterKeyFile: r.MasterKeyFile}
 }
 
 // Resolve applies flag > environment > default.
@@ -198,8 +214,22 @@ func (v *VaultFlags) Resolve(getenv func(string) string) (Resolved, error) {
 		Policy:   firstNonEmpty(v.Policy, getenv("RGT_VAULT_POLICY")),
 		Provider: firstNonEmpty(v.Provider, getenv("RGT_VAULT_PROVIDER"), server.ProviderKeyring),
 	}
-	if r.Provider != server.ProviderKeyring && r.Provider != server.ProviderPlatform {
-		return Resolved{}, fmt.Errorf("unknown provider %q: use 'keyring' or 'platform'", r.Provider)
+	switch r.Provider {
+	case server.ProviderKeyring, server.ProviderPlatform, server.ProviderFile:
+	default:
+		return Resolved{}, fmt.Errorf("unknown provider %q: use 'keyring', 'file' or 'platform'", r.Provider)
+	}
+	if r.Provider == server.ProviderFile {
+		r.MasterKeyFile = firstNonEmpty(v.MasterKeyFile, getenv(providers.EnvMasterKeyFile))
+		if r.MasterKeyFile != "" {
+			p, err := server.ExpandHome(r.MasterKeyFile)
+			if err != nil {
+				return Resolved{}, err
+			}
+			r.MasterKeyFile = p
+		}
+	} else if v.MasterKeyFile != "" {
+		return Resolved{}, fmt.Errorf("--master-key-file needs --provider file (the provider is %q)", r.Provider)
 	}
 	db, err := server.ExpandHome(r.DB)
 	if err != nil {
@@ -684,7 +714,7 @@ func Run(ctx context.Context, cfg config, env Env) error {
 			"probe internal services (SSRF). Only enable on trusted networks.")
 	}
 
-	prov, err := env.newProvider(cfg.vault.Provider)
+	prov, err := env.newProvider(cfg.vault)
 	if err != nil {
 		return err
 	}
@@ -711,7 +741,7 @@ func Run(ctx context.Context, cfg config, env Env) error {
 		KDFParams:           env.KDFParams,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to open vault: %w", err)
+		return fmt.Errorf("failed to open vault: %w", WithKeyringRemedy(err))
 	}
 	defer func() {
 		if cerr := stack.Close(); cerr != nil {

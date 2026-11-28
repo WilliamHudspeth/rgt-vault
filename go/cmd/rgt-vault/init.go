@@ -1,19 +1,24 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 
 	"github.com/spf13/cobra"
 
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/keychain"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/servecmd"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // initOptions are the flags of `rgt-vault init`.
@@ -147,20 +152,11 @@ func runInit(cmd *cobra.Command, vf *servecmd.VaultFlags, o initOptions, out io.
 		if err != nil {
 			return err
 		}
-		existed := vaultFileExists(res.DB)
-		stack, err := openStackAt(ctx, res, server.StackOptions{})
+		vaultLines, err := initVault(ctx, res)
 		if err != nil {
 			return err
 		}
-		id, epoch := stack.Vault.VaultID(), stack.Vault.KeyEpoch()
-		if err := stack.Close(); err != nil {
-			return fmt.Errorf("closing vault: %w", err)
-		}
-		state := "created"
-		if existed {
-			state = "kept (opened and verified)"
-		}
-		lines = append(lines, fmt.Sprintf("vault:           %s  %s  id %s  epoch %d", res.DB, state, id, epoch))
+		lines = append(lines, vaultLines...)
 	}
 
 	type target struct {
@@ -202,7 +198,15 @@ func runInit(cmd *cobra.Command, vf *servecmd.VaultFlags, o initOptions, out io.
 		return nil
 	}
 	fmt.Fprintln(out, "  rgt-vault token mint --agent <name> [--scope agent,lease] --out <file>   (one per agent)")
-	fmt.Fprintln(out, "  rgt-vault serve --policy policy.yaml")
+	serve := "  rgt-vault serve --policy policy.yaml"
+	if res, err := vf.Resolve(os.Getenv); err == nil && !o.tokensOnly && res.Provider != server.ProviderKeyring {
+		serve = "  rgt-vault --provider " + res.Provider
+		if res.MasterKeyFile != "" {
+			serve += " --master-key-file " + res.MasterKeyFile
+		}
+		serve += " serve --policy policy.yaml"
+	}
+	fmt.Fprintln(out, serve)
 	return nil
 }
 
@@ -329,4 +333,88 @@ func ensureStoreFile(st *auth.Store) error {
 	}
 	_, err := writeSecretFile(st.Path(), []byte("{\n  \"version\": 1,\n  \"tokens\": []\n}\n"), false)
 	return err
+}
+
+// prober is implemented by providers that can check, before a vault is
+// created, that they will work (keyring reachable, key directory safe).
+type prober interface{ Probe() error }
+
+// locator names where a provider keeps the master key (never the key).
+type locator interface{ Location() string }
+
+// initProvider builds the provider of res (the test seam first).
+func initProvider(res servecmd.Resolved) (vault.MasterProvider, error) {
+	if newProvider != nil {
+		return newProvider(res.Provider)
+	}
+	return server.NewProviderWith(res.Provider, res.ProviderOptions())
+}
+
+// vaultFiles are the files a new vault at db consists of.
+func vaultFiles(db string) []string {
+	kc := filepath.Join(filepath.Dir(db), keychain.FileName)
+	return []string{db, db + "-wal", db + "-shm", db + "-journal", kc, kc + ".new"}
+}
+
+// initVault opens (and, if missing, creates) the vault at res. The provider
+// is probed before vault.db is created; if opening fails, the vault files
+// created by this run (and only those) are removed.
+func initVault(ctx context.Context, res servecmd.Resolved) ([]string, error) {
+	existed := vaultFileExists(res.DB)
+	prov, err := initProvider(res)
+	if err != nil {
+		return nil, err
+	}
+	if !existed {
+		if p, ok := prov.(prober); ok {
+			if err := p.Probe(); err != nil {
+				if providers.IsKeyringUnavailable(err) {
+					return nil, &exitError{code: 1, msg: (&servecmd.KeyringRemedyError{Init: true, NothingCreated: true, Cause: err}).Error()}
+				}
+				return nil, fmt.Errorf("master-secret provider %q is not usable: %w\nNo files were created", res.Provider, err)
+			}
+		}
+	}
+	var created []string
+	for _, f := range vaultFiles(res.DB) {
+		if _, err := os.Lstat(f); errors.Is(err, os.ErrNotExist) {
+			created = append(created, f)
+		}
+	}
+	stack, err := server.OpenStack(ctx, server.StackOptions{DBPath: res.DB, PolicyFile: res.Policy, MasterProvider: prov, KDFParams: kdfParams})
+	if err != nil {
+		left := removeCreated(created)
+		if providers.IsKeyringUnavailable(err) && !existed {
+			return nil, &exitError{code: 1, msg: (&servecmd.KeyringRemedyError{Init: true, NothingCreated: len(left) == 0, Cause: err}).Error()}
+		}
+		if !existed && len(left) == 0 {
+			return nil, fmt.Errorf("opening vault %s: %w\nNo vault files were left behind", res.DB, err)
+		}
+		return nil, fmt.Errorf("opening vault %s: %w", res.DB, servecmd.WithKeyringRemedy(err))
+	}
+	id, epoch := stack.Vault.VaultID(), stack.Vault.KeyEpoch()
+	if err := stack.Close(); err != nil {
+		return nil, fmt.Errorf("closing vault: %w", err)
+	}
+	state := "created"
+	if existed {
+		state = "kept (opened and verified)"
+	}
+	lines := []string{fmt.Sprintf("vault:           %s  %s  id %s  epoch %d", res.DB, state, id, epoch)}
+	if l, ok := prov.(locator); ok {
+		lines = append(lines, fmt.Sprintf("%-16s %s (%s)", "master key:", l.Location(), res.Provider))
+	}
+	return lines, nil
+}
+
+// removeCreated removes the files of paths that exist now; it returns the
+// ones it could not remove.
+func removeCreated(paths []string) []string {
+	var left []string
+	for _, p := range paths {
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			left = append(left, p)
+		}
+	}
+	return left
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/keychain"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/servecmd"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
 
 // writeSecretFile writes data to path as a fresh 0600 file, atomically: the
@@ -102,7 +103,9 @@ func openStackFor(ctx context.Context, vf *servecmd.VaultFlags, create, approval
 func openStackAt(ctx context.Context, res servecmd.Resolved, o server.StackOptions) (*server.Stack, error) {
 	mk := newProvider
 	if mk == nil {
-		mk = server.NewProvider
+		mk = func(name string) (vault.MasterProvider, error) {
+			return server.NewProviderWith(name, res.ProviderOptions())
+		}
 	}
 	prov, err := mk(res.Provider)
 	if err != nil {
@@ -114,7 +117,7 @@ func openStackAt(ctx context.Context, res servecmd.Resolved, o server.StackOptio
 	}
 	stack, err := server.OpenStack(ctx, o)
 	if err != nil {
-		return nil, fmt.Errorf("opening vault %s: %w", res.DB, err)
+		return nil, fmt.Errorf("opening vault %s: %w", res.DB, servecmd.WithKeyringRemedy(err))
 	}
 	return stack, nil
 }
