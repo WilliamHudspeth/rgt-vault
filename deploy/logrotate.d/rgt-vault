@@ -1,0 +1,29 @@
+# /etc/logrotate.d/rgt-vault
+#
+# Log rotation policy for file-based rgt-vault JSON logs (ASVS V7 / RGT-430).
+# By default deploy/rgt-vault-go.service logs to stdout/stderr under
+# systemd-journald (configured via deploy/journald.conf.d/rgt-vault.conf).
+# Install this file to /etc/logrotate.d/rgt-vault when running rgt-vault with
+# file output under /var/log/rgt-vault/.
+
+/var/log/rgt-vault/*.log {
+    su root adm
+    daily
+    rotate 90
+    maxage 90
+    compress
+    delaycompress
+    missingok
+    notifempty
+    # Active log is owned by rgtvault and readable only by the adm audit group
+    # (never world-readable).
+    create 0640 rgtvault adm
+    sharedscripts
+    postrotate
+        # Transfer rotated archives to root:adm mode 0440 so the unprivileged
+        # rgtvault daemon process cannot modify or truncate historical logs.
+        chown root:adm /var/log/rgt-vault/*.log.[0-9]* /var/log/rgt-vault/*.gz 2>/dev/null || true
+        chmod 0440 /var/log/rgt-vault/*.log.[0-9]* /var/log/rgt-vault/*.gz 2>/dev/null || true
+        systemctl kill -s HUP --kill-who=main rgt-vault-go.service 2>/dev/null || true
+    endscript
+}
