@@ -1315,7 +1315,7 @@ func TestASVS_V5_HTTPSecurityHeadersXMLPolicyAndOutputEscaping(t *testing.T) {
 	// 3. JSON output escaping of HTML metacharacters (<, >, &) close to the HTTP
 	// response writer (RGT-242, RGT-366).
 	rec := httptest.NewRecorder()
-	server.WriteJSONError(rec, http.StatusBadRequest, "ValidationError", "<script>alert(1)&\"</script>")
+	server.WriteJSONError(rec, httptest.NewRequest(http.MethodGet, "/x", nil), http.StatusBadRequest, "ValidationError", "<script>alert(1)&\"</script>")
 	rawBody := rec.Body.String()
 	if strings.Contains(rawBody, "<script>") || strings.Contains(rawBody, "</script>") {
 		t.Errorf("WriteJSONError did not HTML-escape angle brackets in JSON output: %s", rawBody)
