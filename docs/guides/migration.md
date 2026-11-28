@@ -321,3 +321,30 @@ token is accepted once**, then refused until it expires (`403`, `CAPABILITY_DENI
   (policy, rate limit, handler error) has still used the token: mint a new one to retry.
 - **Limits:** the cache is in memory and holds 4096 live ids. It is emptied by a restart (keep TTLs
   short) and refuses new tokens when it is full of live ids, rather than evicting one.
+
+## Go server v0.4.0: secrets need a destinations entry (RGT-523, breaking)
+
+Before upgrading to v0.4.0: every secret used with `http_get_with_auth`,
+`http_post_with_auth` or `openai_chat` needs an entry under `destinations:` in
+the policy file (`ns/name: [host]` or `ns/*: [...]`), or its HTTP actions will
+be refused with 403. Start the new version once and read the
+`WARNING: destinations:` lines to find namespaces still missing.
+`--destinations=warn` sends requests for secrets that have no entry while
+logging and auditing them. It is removed in the next release and never
+relaxes a secret that already has an entry. The Python line does not enforce
+this list.
+
+```yaml
+rules:
+  - effect: allow
+    agent: coder
+    namespace: github
+    action: read
+destinations:
+  github/GITHUB_TOKEN: [api.github.com]
+  openai/*: [api.openai.com]
+```
+
+A policy file that is a bare list of rules must first become a mapping with
+`rules:` (the old list) and `destinations:`. Details:
+[Destinations](policies.md#destinations-where-a-secret-may-be-sent-go-server-v040).

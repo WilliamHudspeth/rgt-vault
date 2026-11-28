@@ -105,6 +105,7 @@ func reachDial(t testing.TB, cfg Config, table map[string][]string) (*Registry, 
 		reached.Add(1)
 		return nil, errReached
 	}
+	cfg.UnrestrictedDestinations = true // pre-RGT-523 address-policy vectors
 	reg, err := NewBuiltinRegistry(cfg)
 	if err != nil {
 		t.Fatal(err)

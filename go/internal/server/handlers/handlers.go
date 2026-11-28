@@ -723,7 +723,12 @@ func (h *Handlers) UseSecret(w http.ResponseWriter, r *http.Request) {
 		Name: name, Namespace: namespace, Agent: agent, Purpose: deref(req.Purpose, ""),
 	}, func(secret []byte) error {
 		var aerr error
-		result, aerr = h.Actions.Execute(r.Context(), *req.Action, secret, req.Params)
+		// RGT-523: the destination check needs to know which secret this
+		// is; the values are exactly those passed to Lease.
+		ctx := actions.WithSecretUse(r.Context(), actions.SecretUse{
+			Agent: agent, Namespace: namespace, Name: name, Purpose: deref(req.Purpose, ""),
+		})
+		result, aerr = h.Actions.Execute(ctx, *req.Action, secret, req.Params)
 		return aerr
 	})
 	if err != nil {
@@ -1197,6 +1202,12 @@ func (h *Handlers) ExecuteCapability(w http.ResponseWriter, r *http.Request) {
 }
 
 func executeError(capability string, err error) error {
+	// RGT-523: a destination refusal keeps its own text and 403 class on the
+	// capability path too (it names only host:port and the secret).
+	var dr *actions.Error
+	if errors.As(err, &dr) && errors.Is(dr, actions.ErrDestinationRefused) {
+		return newAppError(http.StatusForbidden, "DestinationRefusedError", dr.Error())
+	}
 	if errors.Is(err, vault.ErrCapabilityFailed) {
 		// The handler's own error: never echoed.
 		log.Printf("ERROR: capability %s failed; details suppressed from response: %s", LogSafe(capability), LogSafe(err.Error()))

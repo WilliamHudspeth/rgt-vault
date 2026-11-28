@@ -38,6 +38,15 @@ type Config struct {
 	// is limited only by the address policy; an entry with an EMPTY list denies
 	// every host (fail closed).
 	HostAllowlist map[string][]string
+	// Destinations binds each secret to the hosts it may be sent to
+	// (RGT-523). Without it every HTTP action is refused (NO_LIST), unless
+	// UnrestrictedDestinations is set.
+	Destinations *DestinationPolicy
+	// UnrestrictedDestinations turns the destination check off: any host
+	// the address policy allows is accepted. Never set by the server; it
+	// exists for library users and tests that need the old behaviour, and it
+	// must be asked for explicitly.
+	UnrestrictedDestinations bool
 	// HeaderAllowlist, when non-empty, limits which caller headers are accepted
 	// (case-insensitive names).
 	HeaderAllowlist []string

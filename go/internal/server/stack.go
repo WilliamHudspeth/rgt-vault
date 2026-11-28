@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -95,6 +96,15 @@ type StackOptions struct {
 	// private addresses (python --allow-private-network; SSRF risk).
 	AllowPrivateNetwork bool
 
+	// Destinations is the serve --destinations mode (RGT-523): enforce (the
+	// zero value) or warn (temporary migration switch; relaxes only secrets
+	// without a destinations entry).
+	Destinations actions.DestinationMode
+
+	// actionsOverride lets in-package tests adjust the action config (root
+	// CAs, resolver and dial seams). Never set outside tests.
+	actionsOverride func(*actions.Config)
+
 	// RateLimit / RateWindow configure the vault's per-agent lease limiter
 	// (zero = vault.DefaultRateLimit per vault.DefaultRateWindow).
 	RateLimit  int
@@ -115,6 +125,12 @@ type Stack struct {
 	Capabilities *capabilities.Registry
 	// DBPath is the resolved database path.
 	DBPath string
+	// DestinationMode is the destination check's mode (shown at start-up).
+	DestinationMode actions.DestinationMode
+	// DestinationWarnings are the start-up lines about the destination
+	// allow-list (mode, gaps per namespace, entries naming no stored
+	// secret). They name namespaces only. serve logs each as a WARNING.
+	DestinationWarnings []string
 }
 
 // Close closes the vault.
@@ -265,7 +281,42 @@ func OpenStack(ctx context.Context, o StackOptions) (*Stack, error) {
 		verifier = captoken.NewReplayGuard(hv)
 	}
 
-	acts, err := actions.NewBuiltinRegistry(actions.Config{AllowPrivateNetwork: o.AllowPrivateNetwork})
+	// RGT-523: the destination allow-list, built from the SAME policy text
+	// the vault gets. With no policy or no "destinations:" section it is
+	// empty and every HTTP action is refused (NO_LIST). The audit callback
+	// needs the vault, which opens below; nothing runs an action before
+	// OpenStack returns.
+	var opened *vault.Vault
+	alerts := o.Notifier
+	if alerts == nil {
+		alerts = approval.LogNotifier{}
+	}
+	dest, err := actions.NewDestinationPolicy(actions.DestinationOptions{
+		PolicyYAML: policyYAML,
+		Mode:       o.Destinations,
+		Audit: func(ctx context.Context, r actions.DestinationRefusal) error {
+			if opened == nil {
+				return errors.New("vault is not open")
+			}
+			return opened.Audit(ctx, vault.DestinationRefusedEvent,
+				sql.NullString{String: r.Use.Name, Valid: r.Use.Name != ""}, r.AuditDetails(),
+				sql.NullString{String: r.Use.Agent, Valid: r.Use.Agent != ""})
+		},
+		Alert: func(ctx context.Context, r actions.DestinationRefusal, suppressed int) {
+			alerts.Notify(ctx, approval.Event{
+				Kind: approval.EventKind(vault.DestinationRefusedEvent), Agent: r.Use.Agent,
+				Detail: r.AlertDetail(suppressed), Time: time.Now(),
+			})
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	acfg := actions.Config{AllowPrivateNetwork: o.AllowPrivateNetwork, Destinations: dest}
+	if o.actionsOverride != nil {
+		o.actionsOverride(&acfg)
+	}
+	acts, err := actions.NewBuiltinRegistry(acfg)
 	if err != nil {
 		return nil, err
 	}
@@ -295,8 +346,19 @@ func OpenStack(ctx context.Context, o StackOptions) (*Stack, error) {
 	if err != nil {
 		return nil, err
 	}
+	opened = v
+	stored, err := v.Store().IterAllActiveSecrets(ctx)
+	if err != nil {
+		_ = v.Close()
+		return nil, err
+	}
+	refs := make([]actions.SecretRef, 0, len(stored))
+	for _, s := range stored {
+		refs = append(refs, actions.SecretRef{Namespace: s.Namespace, Name: s.Name})
+	}
 	return &Stack{Vault: v, Broker: broker, GatedOps: o.RequireApprovalFor, Notifier: o.Notifier,
-		Actions: acts, Capabilities: caps, DBPath: dbPath}, nil
+		Actions: acts, Capabilities: caps, DBPath: dbPath,
+		DestinationMode: dest.Mode(), DestinationWarnings: dest.StartupWarnings(refs)}, nil
 }
 
 // maxTOTPSecretFile bounds what is read from the TOTP secret file.

@@ -281,3 +281,20 @@ directory on its path; on Windows any ACE beyond you, SYSTEM and Administrators)
 unreachable, `init` stops before creating anything and lists these options. A plain key file is weaker than
 the TPM or DPAPI at rest. Read [providers.md](providers.md) for the checks, the systemd recipe and the threat
 model.
+
+## Destinations: where `use` may send a secret (RGT-523)
+
+The server sends a secret with `http_get_with_auth`, `http_post_with_auth` or `openai_chat` only to the hosts
+listed for it under `destinations:` in the policy file. The `use` examples above need, for instance:
+
+```yaml
+destinations:
+  ci/GITHUB_TOKEN: [api.github.com]
+  openai/*: [api.openai.com]
+```
+
+Without an entry, `use` fails with `HTTP 403 DestinationRefusedError` (`no destination is allowed for secret
+ci/GITHUB_TOKEN: add it under "destinations:" in the policy file`). `echo` needs no entry.
+`serve --destinations=warn` (env `RGT_VAULT_DESTINATIONS`) sends requests for secrets without an entry while
+logging and auditing them. It is temporary, and a secret that has an entry is always enforced. Details:
+[Destinations](policies.md#destinations-where-a-secret-may-be-sent-go-server-v040).

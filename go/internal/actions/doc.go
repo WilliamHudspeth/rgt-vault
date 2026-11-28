@@ -7,11 +7,24 @@
 // Lease callback owns it and wipes it afterwards), the caller's params, and
 // returns a JSON-serialisable map. Wire it into the vault like this:
 //
-//	reg, _ := actions.NewBuiltinRegistry(actions.Config{})
+//	dest, _ := actions.NewDestinationPolicy(actions.DestinationOptions{PolicyYAML: policyYAML})
+//	reg, _ := actions.NewBuiltinRegistry(actions.Config{Destinations: dest})
 //	err := v.Lease(ctx, req, func(secret []byte) error {
+//		ctx := actions.WithSecretUse(ctx, actions.SecretUse{Agent: req.Agent,
+//			Namespace: req.Namespace, Name: req.Name, Purpose: req.Purpose})
 //		out, err = reg.Execute(ctx, "http_get_with_auth", secret, params)
 //		return err
 //	})
+//
+// # Destination allow-list (RGT-523)
+//
+// Each secret is bound to the hosts it may be sent to by the policy file's
+// "destinations:" section (see destinations.go and
+// docs/design/destinations.md). The HTTP actions refuse any other
+// destination before a DNS lookup or connection, and re-check the dial and
+// every redirect hop. A Config without a DestinationPolicy refuses every
+// HTTP action; Config.UnrestrictedDestinations must be set explicitly to get
+// the old, address-policy-only behaviour.
 //
 // # Hardening relative to Python (each is pinned by a test)
 //
