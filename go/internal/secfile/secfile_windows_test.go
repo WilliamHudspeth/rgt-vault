@@ -245,3 +245,47 @@ func TestLockRefusesReparseAndDir(t *testing.T) {
 		t.Fatalf("Lock(symlink) = %v", err)
 	}
 }
+
+// Error paths when the current user's SID cannot be read.
+func TestNoCurrentUserSID(t *testing.T) {
+	d := keyDir(t)
+	good := filepath.Join(d, "good")
+	if err := CreateSecret(good, []byte("k")); err != nil {
+		t.Fatal(err)
+	}
+	old := currentUserSID
+	t.Cleanup(func() { currentUserSID = old })
+	currentUserSID = func() (*windows.SID, error) { return nil, errors.New("no token") }
+	if err := CreateSecret(filepath.Join(d, "new"), []byte("k")); err == nil {
+		t.Fatal("CreateSecret without a user SID succeeded")
+	}
+	if _, err := Lock(filepath.Join(d, "x.lock")); err == nil {
+		t.Fatal("Lock without a user SID succeeded")
+	}
+	if _, err := OpenSecret(good, Options{}); !errors.Is(err, ErrInsecure) {
+		t.Fatalf("OpenSecret without a user SID: %v", err)
+	}
+}
+
+func TestCheckDirChainWindows(t *testing.T) {
+	d := keyDir(t)
+	f := filepath.Join(d, "f")
+	if err := CreateSecret(f, []byte("k")); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkDirChain(f); !errors.Is(err, ErrInsecure) {
+		t.Fatalf("checkDirChain(file) = %v", err)
+	}
+	if err := checkDirChain(filepath.Join(d, "missing")); err == nil {
+		t.Fatal("checkDirChain(missing) succeeded")
+	}
+	link := filepath.Join(d, "dirlink")
+	if err := os.Symlink(d, link); err == nil {
+		if err := checkDirChain(link); !errors.Is(err, ErrInsecure) {
+			t.Fatalf("checkDirChain(symlink) = %v", err)
+		}
+	}
+	if err := checkDirChain(d); err != nil {
+		t.Fatalf("checkDirChain(dir) = %v", err)
+	}
+}

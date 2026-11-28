@@ -176,3 +176,54 @@ func TestLockAndTryLock(t *testing.T) {
 		t.Fatalf("TryLock in a missing directory: %v", err)
 	}
 }
+
+// Platform-neutral parts of CheckCreatable (the permission rows are in the
+// Unix tests).
+func TestCheckCreatableNeutral(t *testing.T) {
+	base := keyDir(t)
+	deep := filepath.Join(base, "a", "b")
+	if err := CheckCreatable(deep); err != nil {
+		t.Fatalf("CheckCreatable: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "a")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal("CheckCreatable created a directory")
+	}
+	if err := CheckCreatable(base); err != nil {
+		t.Fatalf("existing dir: %v", err)
+	}
+	f := filepath.Join(base, "file")
+	if err := CreateSecret(f, []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckCreatable(filepath.Join(f, "x")); err == nil {
+		t.Fatal("CheckCreatable under a regular file succeeded")
+	}
+	if err := CheckDir(f); err == nil {
+		t.Fatal("CheckDir(regular file) succeeded")
+	}
+}
+
+// ReplaceSecret over a non-empty directory: the rename fails and the temp
+// file is removed (all platforms).
+func TestReplaceSecretRenameFails(t *testing.T) {
+	d := keyDir(t)
+	sub := filepath.Join(d, "sub")
+	if err := os.Mkdir(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "x"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReplaceSecret(sub, []byte("x")); err == nil {
+		t.Fatal("ReplaceSecret over a non-empty directory succeeded")
+	}
+	ents, _ := os.ReadDir(d)
+	for _, e := range ents {
+		if strings.Contains(e.Name(), ".tmp-") {
+			t.Fatalf("temp file left behind: %s", e.Name())
+		}
+	}
+	if err := ReplaceSecret(filepath.Join(d, "missing", "k"), []byte("x")); err == nil {
+		t.Fatal("ReplaceSecret into a missing dir succeeded")
+	}
+}
