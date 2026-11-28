@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo"
 )
@@ -286,15 +287,15 @@ func TestCallTool_LeaseSecret_NotFound(t *testing.T) {
 	}
 }
 
-func TestCallTool_LeaseSecret_BackendErrorSanitized(t *testing.T) {
+func TestCallTool_LeaseSecret_BackendErrorCarriesReason(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		fmt.Fprint(w, `{"error":"AuthorizationError","detail":"insufficient scope at /var/lib/vault"}`)
 	}))
 	defer ts.Close()
 	text, isError := newTestServer(ts).callTool("lease_secret", map[string]any{"namespace": "ns1", "name": "missing"})
-	if !isError || text != "backend error: 403 Forbidden" {
-		t.Errorf("expected sanitized 403, got (%q, %v)", text, isError)
+	if !isError || text != "AuthorizationError: insufficient scope at /var/lib/vault (HTTP 403)" {
+		t.Errorf("expected the server's reason, got (%q, %v)", text, isError)
 	}
 }
 
@@ -787,4 +788,76 @@ func TestToolsListAdvertisesPurposeBound(t *testing.T) {
 		return
 	}
 	t.Fatal("execute_secret not listed")
+}
+
+// RGT-536: the detail the model sees is the server's own text, neutralised.
+func TestBackendError_DetailIsSanitised(t *testing.T) {
+	cases := []struct {
+		name, body, want string
+	}{
+		{"control chars", `{"error":"PolicyDeniedError","detail":"line1\nline2\u001b[31m\u009b‮ end","incident_id":"ab\ncd"}`,
+			"PolicyDeniedError: line1?line2?[31m???end (HTTP 403, incident ab?cd)"},
+		{"invalid utf8 (decoded to U+FFFD)", "{\"error\":\"E\",\"detail\":\"bad\xff\xfebytes\"}", "E: bad\ufffd\ufffdbytes (HTTP 403)"},
+		{"class sanitised", `{"error":"E\u001b[2J","detail":"d"}`, "E?[2J: d (HTTP 403)"},
+		{"capped", `{"error":"E","detail":"` + strings.Repeat("y", 900) + `"}`, "E: " + strings.Repeat("y", 500) + "… (HTTP 403)"},
+		{"no detail", `{"error":"E"}`, "backend error: 403 Forbidden"},
+		{"not json", `<html>proxy</html>`, "backend error: 403 Forbidden"},
+		{"non-string detail", `{"error":"E","detail":{"x":1}}`, "backend error: 403 Forbidden"},
+		{"token echoed", `{"error":"E","detail":"token test-token rejected"}`, "E: token [redacted] rejected (HTTP 403)"},
+		{"approval timeout", `{"error":"PolicyDeniedError","detail":"approval denied for use of 'k' (ns): approval timed out after 120s","incident_id":"i1"}`,
+			"approval timed out: a human did not approve in time (approval denied for use of 'k' (ns): approval timed out after 120s) (HTTP 403, incident i1)"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusForbidden)
+				fmt.Fprint(w, c.body)
+			}))
+			defer ts.Close()
+			s := newTestServer(ts)
+			s.SetLogger(log.New(io.Discard, "", 0))
+			text, isErr := s.callTool("execute_secret", map[string]any{"namespace": "ns", "name": "n", "action": "a"})
+			if !isErr || text != c.want {
+				t.Fatalf("got (%q, %v)\nwant %q", text, isErr, c.want)
+			}
+			for _, r := range text {
+				if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || r == '‮' || r == ' ' {
+					t.Fatalf("control character %U in %q", r, text)
+				}
+			}
+		})
+	}
+}
+
+// A call that may wait for a human must outlive 10 seconds; the others must
+// not hang forever.
+func TestApprovalWaitDeadline(t *testing.T) {
+	s := NewServer("http://x", "t")
+	if got := s.timeoutFor("execute_secret"); got != DefaultApprovalWait {
+		t.Errorf("execute_secret timeout = %v", got)
+	}
+	if got := s.timeoutFor("list_secrets"); got != DefaultRequestTimeout {
+		t.Errorf("list_secrets timeout = %v", got)
+	}
+	s.SetApprovalWait(0)
+	if s.approvalWait != DefaultApprovalWait {
+		t.Errorf("0 should keep the default, got %v", s.approvalWait)
+	}
+
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer slow.Close()
+	s = newTestServer(slow)
+	s.SetLogger(log.New(io.Discard, "", 0))
+	args := map[string]any{"namespace": "ns", "name": "n", "action": "a"}
+	s.SetApprovalWait(50 * time.Millisecond)
+	if text, isErr := s.callTool("execute_secret", args); !isErr || text != "backend unreachable" {
+		t.Errorf("short wait: (%q, %v)", text, isErr)
+	}
+	s.SetApprovalWait(5 * time.Second)
+	if text, isErr := s.callTool("execute_secret", args); isErr || !strings.Contains(text, "ok") {
+		t.Errorf("long wait: (%q, %v)", text, isErr)
+	}
 }

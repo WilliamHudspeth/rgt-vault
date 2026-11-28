@@ -4,8 +4,9 @@
 //
 // Tools: list_secrets, lease_secret, revoke_secret, execute_secret and, for the
 // capability platform (python/server/mcp_server.py), execute_capability and
-// list_capabilities. The resource vault://policy exposes a read-only policy
-// summary. A v2 capability token is supplied by the caller as a tool argument
+// list_capabilities. There are no resources: the former vault://policy summary
+// was removed (RGT-536) because no backend route tells a caller what its own
+// token may do; a refused call now carries the server's reason instead. A v2 capability token is supplied by the caller as a tool argument
 // or configured once with LoadCapabilityTokenFile; it is only ever forwarded
 // to the backend and is never logged or echoed.
 package mcp
@@ -13,14 +14,17 @@ package mcp
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/apierr"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/netguard"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/transport"
@@ -30,10 +34,6 @@ import (
 // DefaultBackendURL is the backend a Server talks to when none is given: the
 // vault server's default listen address (cmd/server: 127.0.0.1:8765, D6).
 const DefaultBackendURL = "http://127.0.0.1:8765"
-
-// PolicyResourceURI is the URI of the read-only policy summary resource
-// (python: @mcp.resource("vault://policy")).
-const PolicyResourceURI = "vault://policy"
 
 type rpcRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -74,10 +74,9 @@ type Server struct {
 	// (a tool argument overrides it). It is a credential: never logged,
 	// never put in a tool result.
 	capToken string
-	// policyFile, when set, is the ABAC policy file the policy summary
-	// resource counts rules in. The backend has no policy-summary route, so
-	// without it the rule count is reported as null.
-	policyFile string
+	// approvalWait bounds a call that may wait for a human (lease_secret,
+	// execute_secret, execute_capability); other calls use requestTimeout.
+	approvalWait time.Duration
 }
 
 // NewServer initializes a new Server with trimmed backendURL, default client timeout,
@@ -87,10 +86,12 @@ func NewServer(backendURL, token string) *Server {
 		backendURL = DefaultBackendURL
 	}
 	return &Server{
-		backendURL: strings.TrimSuffix(backendURL, "/"),
-		token:      token,
+		backendURL:   strings.TrimSuffix(backendURL, "/"),
+		token:        token,
+		approvalWait: DefaultApprovalWait,
 		httpClient: &http.Client{
-			Timeout:       10 * time.Second,
+			// No client-wide Timeout: each call sets its own deadline (do),
+			// because a call that waits for approval outlives 10 seconds.
 			Transport:     &http.Transport{DialContext: netguard.NewDialer(true).DialContext},
 			CheckRedirect: transport.NoRedirect, // never replay the bearer token to a redirect target
 		},
@@ -262,17 +263,33 @@ func lookupTool(name string) (toolSpec, bool) {
 	return toolSpec{}, false
 }
 
+// approvalNote is appended to the description of every tool that can wait for
+// a human; it names the time limit so the model (and its client) know a slow
+// call is a pending approval, not a hang.
+func (s *Server) approvalNote() string {
+	return " May wait up to " + s.approvalWait.Round(time.Second).String() +
+		" for a human to approve it; a refusal or a timeout comes back as an error with the reason."
+}
+
+// waitsForApproval lists the tools whose backend call may block on the
+// approval broker.
+var waitsForApproval = map[string]bool{"lease_secret": true, "execute_secret": true, "execute_capability": true}
+
 // toolListing renders toolSpecs as the tools/list result.
-func toolListing() []any {
+func (s *Server) toolListing() []any {
 	out := make([]any, 0, len(toolSpecs))
 	for _, t := range toolSpecs {
 		req := make([]any, len(t.Required))
 		for i, r := range t.Required {
 			req[i] = r
 		}
+		desc := t.Description
+		if waitsForApproval[t.Name] {
+			desc += s.approvalNote()
+		}
 		out = append(out, map[string]any{
 			"name":        t.Name,
-			"description": t.Description,
+			"description": desc,
 			"inputSchema": map[string]any{
 				"type":       "object",
 				"properties": t.Properties,
@@ -330,8 +347,7 @@ func (s *Server) handle(req rpcRequest) *rpcResponse {
 		result := map[string]any{
 			"protocolVersion": negotiateProtocolVersion(req.Params),
 			"capabilities": map[string]any{
-				"tools":     map[string]any{},
-				"resources": map[string]any{},
+				"tools": map[string]any{},
 			},
 			"serverInfo": map[string]any{
 				"name":    s.serverName,
@@ -348,40 +364,8 @@ func (s *Server) handle(req rpcRequest) *rpcResponse {
 		return &rpcResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Result:  map[string]any{"tools": toolListing()},
+			Result:  map[string]any{"tools": s.toolListing()},
 		}
-
-	case "resources/list":
-		return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"resources": []any{
-			map[string]any{
-				"uri":         PolicyResourceURI,
-				"name":        "policy",
-				"title":       "Policy summary",
-				"description": "Read-only, non-sensitive policy metadata: rule count and default lease TTL.",
-				"mimeType":    "application/json",
-			},
-		}}}
-
-	case "resources/templates/list":
-		return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"resourceTemplates": []any{}}}
-
-	case "resources/read":
-		var params struct {
-			URI string `json:"uri"`
-		}
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32602, Message: "invalid params: " + err.Error()}}
-		}
-		if params.URI != PolicyResourceURI {
-			return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32002, Message: "resource not found"}}
-		}
-		text, err := json.Marshal(s.policySummary())
-		if err != nil {
-			return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32603, Message: "internal error"}}
-		}
-		return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"contents": []any{
-			map[string]any{"uri": PolicyResourceURI, "mimeType": "application/json", "text": string(text)},
-		}}}
 
 	case "tools/call":
 		var params struct {
@@ -455,7 +439,7 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 	case "list_secrets":
 		ns := getStr("namespace")
 		reqURL := s.backendURL + "/v1/secrets?namespace=" + url.QueryEscape(ns)
-		resp, body, err := s.do("GET", reqURL, nil)
+		resp, body, err := s.do(name, "GET", reqURL, nil)
 		if err != nil {
 			return s.unreachable(name, err)
 		}
@@ -497,7 +481,7 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 		if err != nil {
 			return "encode error", true
 		}
-		resp, body, err := s.do("POST", reqURL, lb)
+		resp, body, err := s.do(name, "POST", reqURL, lb)
 		if err != nil {
 			return s.unreachable(name, err)
 		}
@@ -522,7 +506,7 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 		ns := getStr("namespace")
 		nm := getStr("name")
 		reqURL := s.backendURL + "/v1/secrets/" + url.PathEscape(ns) + "/" + url.PathEscape(nm) + "/revoke"
-		resp, body, err := s.do("POST", reqURL, nil)
+		resp, body, err := s.do(name, "POST", reqURL, nil)
 		if err != nil {
 			return s.unreachable(name, err)
 		}
@@ -580,7 +564,7 @@ func (s *Server) callTool(name string, args map[string]any) (string, bool) {
 			return "encode error: " + err.Error(), true
 		}
 
-		resp, body, err := s.do("POST", reqURL, bodyBytes)
+		resp, body, err := s.do(name, "POST", reqURL, bodyBytes)
 		if err != nil {
 			return s.unreachable(name, err)
 		}
@@ -601,18 +585,52 @@ const maxLoggedErrorBody = 512
 const maxBackendBody = 4 << 20
 
 // backendError turns a non-success backend response into a tool error. The
-// backend's error body may contain internal details (paths, stack context,
-// policy internals) it was never meant to hand to an arbitrary MCP client, so
-// the body is only logged (stderr, truncated) and the client gets the status.
-func (s *Server) backendError(tool string, resp *http.Response, body []byte) (string, bool) {
+// full body is logged (stderr, truncated, credentials redacted). The model
+// gets the server's own error envelope (errorText): its detail strings are
+// written for callers, so the model can tell "wrong purpose" from "ask the
+// human" from "not allowed at all"; stack traces and log-only internals are
+// never in the envelope.
+func (s *Server) backendError(tool string, resp *http.Response, body []byte, extra ...string) (string, bool) {
 	// Redact credentials before truncating so a cut can never leave a token
 	// prefix behind.
-	logged := s.redact(string(body))
+	logged := s.redact(string(body), extra...)
 	if len(logged) > maxLoggedErrorBody {
 		logged = logged[:maxLoggedErrorBody]
 	}
 	s.logf("%s backend error: %s - %q", tool, resp.Status, logged)
-	return "backend error: " + resp.Status, true
+	return s.errorText(resp, body, extra...), true
+}
+
+// errorText renders the model-facing text of a refused call:
+//
+//	<error class>: <detail> (HTTP <code>, incident <id>)
+//
+// Every piece is redacted of credentials, neutralised (control characters,
+// bidi overrides, invalid UTF-8 become "?") and capped. A body that is not
+// the standard envelope (a proxy page, an empty reason) gives the status
+// alone: "backend error: <status>".
+func (s *Server) errorText(resp *http.Response, body []byte, extra ...string) string {
+	b, ok := apierr.Parse(body)
+	if !ok {
+		return "backend error: " + resp.Status
+	}
+	clean := func(v string, max int) string {
+		return apierr.SafeText(strings.TrimSpace(s.redact(v, extra...)), max)
+	}
+	class := clean(b.Error, apierr.MaxClassRunes)
+	if class == "" {
+		class = "error"
+	}
+	detail := clean(b.Detail, apierr.MaxDetailRunes)
+	if strings.Contains(strings.ToLower(detail), "approval timed out") {
+		class = "approval timed out"
+		detail = "a human did not approve in time (" + detail + ")"
+	}
+	meta := "HTTP " + strconv.Itoa(resp.StatusCode)
+	if id := clean(b.IncidentID, apierr.MaxIDRunes); id != "" {
+		meta += ", incident " + id
+	}
+	return class + ": " + detail + " (" + meta + ")"
 }
 
 // DefaultAgent was the agent label sent before H1. It is no longer applied
@@ -658,13 +676,42 @@ func (s *Server) logf(format string, args ...any) {
 	}
 }
 
-func (s *Server) do(method, reqURL string, body []byte) (*http.Response, []byte, error) {
+// DefaultRequestTimeout bounds an ordinary backend call; DefaultApprovalWait
+// bounds a call that may wait for a human: the server's default
+// --approval-timeout (120s) plus a margin so the server's own "approval timed
+// out" answer arrives before this side gives up.
+const (
+	DefaultRequestTimeout = 10 * time.Second
+	DefaultApprovalWait   = 130 * time.Second
+)
+
+// SetApprovalWait sets how long lease_secret, execute_secret and
+// execute_capability wait for the backend (set it to the server's
+// --approval-timeout plus a margin). d <= 0 keeps DefaultApprovalWait.
+func (s *Server) SetApprovalWait(d time.Duration) {
+	if d <= 0 {
+		d = DefaultApprovalWait
+	}
+	s.approvalWait = d
+}
+
+// timeoutFor is the deadline of a call to tool.
+func (s *Server) timeoutFor(tool string) time.Duration {
+	if waitsForApproval[tool] {
+		return s.approvalWait
+	}
+	return DefaultRequestTimeout
+}
+
+func (s *Server) do(tool, method, reqURL string, body []byte) (*http.Response, []byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), s.timeoutFor(tool))
+	defer cancel()
 	var bodyReader io.Reader
 	if len(body) > 0 {
 		bodyReader = bytes.NewReader(body)
 	}
 
-	req, err := http.NewRequest(method, reqURL, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, bodyReader)
 	if err != nil {
 		return nil, nil, err
 	}

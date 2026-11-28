@@ -8,6 +8,8 @@ import (
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/apierr"
 )
 
 // Display caps for text the server (or something between us and it) supplied.
@@ -122,30 +124,6 @@ func escapeJSONText(s string) string {
 	return b.String()
 }
 
-// safeText makes server-supplied text safe to print on a terminal: control
-// characters (ESC, so no escape sequence; the C1 range; newlines), line and
-// paragraph separators, bidirectional overrides and other invisible format
-// characters become "?", invalid UTF-8 becomes "?", and the result is cut to
-// max runes (with an ellipsis). It is the same rule as the TUI's (unexported)
-// internal/tui safeText.
-func safeText(s string, max int) string {
-	var b strings.Builder
-	n := 0
-	for i := 0; i < len(s); {
-		r, size := utf8.DecodeRuneInString(s[i:])
-		i += size
-		if n >= max {
-			b.WriteString("…")
-			break
-		}
-		switch {
-		case r == utf8.RuneError && size <= 1:
-			r = '?'
-		case unicode.IsControl(r), unicode.Is(unicode.Cf, r), unicode.Is(unicode.Zl, r), unicode.Is(unicode.Zp, r):
-			r = '?'
-		}
-		b.WriteRune(r)
-		n++
-	}
-	return b.String()
-}
+// safeText makes server-supplied text safe to print on a terminal; the rule
+// lives in internal/apierr so the MCP bridge applies the same one.
+func safeText(s string, max int) string { return apierr.SafeText(s, max) }
