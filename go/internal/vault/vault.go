@@ -78,6 +78,12 @@ type Config struct {
 	// Capabilities is the capability registry for ExecuteCapability (see
 	// internal/capabilities). Nil means no capability is registered.
 	Capabilities CapabilityRegistry
+	// HoneyCapabilities are decoy capability names (internal/honeycap).
+	// Any ExecuteCapability call naming one is audited as
+	// HONEY_CAPABILITY_TRIGGERED and alerted, and still answered like any
+	// other unregistered capability. Nil disables the traps. Open fails if
+	// a honey name is a registered capability.
+	HoneyCapabilities HoneyDetector
 	// KDFParams are the Argon2 parameters used when a keychain is created or
 	// re-wrapped. Zero means kdf.DefaultParams() (what Python always writes).
 	// Loading always uses the parameters stored in keychain.json.
@@ -96,6 +102,7 @@ type Vault struct {
 	approval           approval.Gate
 	tokenVerifier      captoken.TokenVerifier
 	capabilities       CapabilityRegistry
+	honey              HoneyDetector
 	provider           MasterProvider
 	kdfParams          kdf.Params
 	vaultID            string
@@ -148,6 +155,9 @@ func Open(ctx context.Context, cfg Config) (*Vault, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := checkHoneyRegistry(cfg.HoneyCapabilities, cfg.Capabilities); err != nil {
+		return nil, err
+	}
 
 	dbPath := cfg.DBPath
 	if dbPath == "" {
@@ -178,6 +188,7 @@ func Open(ctx context.Context, cfg Config) (*Vault, error) {
 		approval:           cfg.Approval,
 		tokenVerifier:      cfg.TokenVerifier,
 		capabilities:       cfg.Capabilities,
+		honey:              cfg.HoneyCapabilities,
 		provider:           cfg.Provider,
 		kdfParams:          cfg.KDFParams,
 		keychainPath:       filepath.Join(filepath.Dir(dbPath), keychain.FileName),

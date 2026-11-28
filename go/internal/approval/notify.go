@@ -32,6 +32,9 @@ const (
 	EventTOTPReplaced EventKind = "TOTP_SECRET_REPLACED"
 	// EventTokenMinted: a bearer token was minted, rotated, revoked or imported.
 	EventTokenMinted EventKind = "TOKEN_MINTED"
+	// EventHoneyCapability: a honey (decoy) capability was invoked or probed
+	// (RGT-30, internal/honeycap). Critical.
+	EventHoneyCapability EventKind = "HONEY_CAPABILITY_TRIGGERED"
 )
 
 // Critical reports whether the event is one a flood of ordinary events must
@@ -39,7 +42,7 @@ const (
 // Delivery channels keep capacity for these.
 func (k EventKind) Critical() bool {
 	switch k {
-	case EventLockout, EventAutoDenied, EventSeparation:
+	case EventLockout, EventAutoDenied, EventSeparation, EventHoneyCapability:
 		return true
 	}
 	return false
