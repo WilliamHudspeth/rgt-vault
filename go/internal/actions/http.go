@@ -71,6 +71,13 @@ func (e *endpoint) send(ctx context.Context, cfg *Config, log *slog.Logger, r *o
 	if err != nil {
 		return nil, e.mapErr(r, err)
 	}
+	// RGT-523: the destination check runs on the URL the request is built
+	// from, before any DNS lookup or dial; the returned context carries the
+	// same decision to the dialer and the redirect check (backstops).
+	ctx, err = cfg.authorizeDestination(ctx, e.name, u)
+	if err != nil {
+		return nil, err
+	}
 	if int64(len(r.body)) > cfg.MaxRequestBytes {
 		return nil, execErr("Request body exceeds %d bytes.", cfg.MaxRequestBytes)
 	}
@@ -192,6 +199,10 @@ func mapGuard(err error) error {
 
 // mapErr turns a guard refusal or transport error into a caller-safe error.
 func (e *endpoint) mapErr(r *outReq, err error) error {
+	var ae *Error
+	if errors.As(err, &ae) && errors.Is(ae, ErrDestinationRefused) {
+		return ae // a backstop refusal from the dialer or a redirect hop
+	}
 	if m := mapGuard(err); m != nil {
 		return m
 	}
@@ -201,4 +212,15 @@ func (e *endpoint) mapErr(r *outReq, err error) error {
 func isTimeout(err error) bool {
 	var ne net.Error
 	return errors.As(err, &ne) && ne.Timeout()
+}
+
+// authorizeDestination applies the destination policy (RGT-523).
+func (c *Config) authorizeDestination(ctx context.Context, action string, u *url.URL) (context.Context, error) {
+	if c.UnrestrictedDestinations {
+		return ctx, nil
+	}
+	if c.Destinations == nil {
+		return ctx, errNoPolicy
+	}
+	return c.Destinations.authorize(ctx, action, u)
 }

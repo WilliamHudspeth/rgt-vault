@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 
+	actionspkg "github.com/WilliamHudspeth/rgt-vault/go/internal/actions"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/hooks/pyfmt"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
@@ -143,7 +144,12 @@ func useHandler(actions ActionRegistry) Handler {
 			Agent:     c.AgentID,
 			Purpose:   "capability:" + c.Capability,
 		}, func(secret []byte) error {
-			r, rerr := act.Run(ctx, secret, params)
+			// RGT-523: name the secret for the destination check, with
+			// exactly the values passed to Lease above.
+			actx := actionspkg.WithSecretUse(ctx, actionspkg.SecretUse{
+				Agent: c.AgentID, Namespace: namespace, Name: secretName, Purpose: "capability:" + c.Capability,
+			})
+			r, rerr := act.Run(actx, secret, params)
 			if rerr != nil {
 				return actionErr(rerr, "action %s failed; see server logs for details", pyfmt.Repr(actionName))
 			}

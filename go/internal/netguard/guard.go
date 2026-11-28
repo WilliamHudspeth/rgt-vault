@@ -193,6 +193,11 @@ func (g *Guard) DialContext(ctx context.Context, network, address string) (net.C
 	if !g.hostAllowed(host, port) {
 		return nil, blocked(ReasonAllowlist, host, "host:port is not on the allow-list")
 	}
+	if hc := hostCheckFrom(ctx); hc != nil {
+		if err := hc.CheckDial(ctx, host, port); err != nil {
+			return nil, err
+		}
+	}
 	ips, err := g.resolve(ctx, host)
 	if err != nil {
 		return nil, err

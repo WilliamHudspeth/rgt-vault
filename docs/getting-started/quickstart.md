@@ -76,3 +76,14 @@ curl -s localhost:8765/v1/secrets/default/OPENAI_API_KEY/use \
        "params":{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}}'
 ```
 
+With the Go server (v0.4.0 and later), a secret is sent only to the hosts
+listed for it under `destinations:` in the policy file. Without an entry,
+`openai_chat` above returns `403 DestinationRefusedError`. Add one:
+
+```yaml
+destinations:
+  default/OPENAI_API_KEY: [api.openai.com]
+```
+
+See [Destinations](../guides/policies.md#destinations-where-a-secret-may-be-sent-go-server-v040).
+

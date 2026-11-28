@@ -62,6 +62,11 @@ func (g *Guard) checkRedirect(req *http.Request, via []*http.Request) error {
 		return blocked(ReasonRedirect, "", "too many redirects")
 	}
 	first := via[0].URL
+	if hc := hostCheckFrom(req.Context()); hc != nil {
+		if err := hc.CheckRedirect(req.Context(), first, req.URL); err != nil {
+			return err
+		}
+	}
 	// Judge the whole chain, not just this hop: Go re-copies the original
 	// request's headers on every hop, so once ANY hop has left the original
 	// origin (e.g. an untrusted subdomain or another port) the credentials must

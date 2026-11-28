@@ -6,6 +6,12 @@ import (
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 )
 
+// DestinationRefusedEvent is the audit action written when an HTTP action
+// is refused because its destination is not on the secret's destination
+// allow-list (RGT-523), or, in --destinations=warn mode, sent for a secret
+// that has no entry. Additive: no existing row or hash input changes.
+const DestinationRefusedEvent = "DESTINATION_REFUSED"
+
 // AuditLog returns the newest limit audit rows, newest first (python
 // get_audit_log). A negative limit means no limit.
 func (v *Vault) AuditLog(ctx context.Context, limit int) ([]store.AuditRow, error) {

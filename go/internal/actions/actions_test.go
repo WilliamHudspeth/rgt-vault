@@ -35,6 +35,10 @@ func tlsServer(t *testing.T, h http.Handler) (*httptest.Server, Config) {
 
 func registry(t *testing.T, cfg Config) *Registry {
 	t.Helper()
+	// These tests predate RGT-523 and test the address policy alone, so they
+	// ask for unrestricted destinations explicitly (destinations_test.go
+	// covers the destination check).
+	cfg.UnrestrictedDestinations = true
 	r, err := NewBuiltinRegistry(cfg)
 	if err != nil {
 		t.Fatal(err)

@@ -73,6 +73,9 @@ var statusRules = []statusRule{
 	{vault.ErrCapabilityNotFound, http.StatusNotFound, "CapabilityNotFoundError"},
 	{capabilities.ErrActionNotFound, http.StatusNotFound, "ActionNotFoundError"},
 	{actions.ErrActionNotFound, http.StatusNotFound, "ActionNotFoundError"},
+	// RGT-523: a destination refusal is 403, before the generic action
+	// execution rule (500).
+	{actions.ErrDestinationRefused, http.StatusForbidden, "DestinationRefusedError"},
 	{vault.ErrCapabilityVersion, http.StatusBadRequest, "CapabilityVersionError"},
 	{vault.ErrRotateNotSupported, http.StatusBadRequest, "RotateNotSupportedError"},
 	{vault.ErrLegacyVault, http.StatusBadRequest, "VaultError"},

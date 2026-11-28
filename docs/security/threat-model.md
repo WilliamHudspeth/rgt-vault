@@ -48,6 +48,46 @@ root on the host — everything to the right then becomes readable.
 - **Wrapped-key / metadata rollback mismatch.** A stale `keychain.json` paired
   with a current DB (or vice versa) fails closed via the key epoch.
 
+### Credential exfiltration through the HTTP actions (destination allow-list, RGT-523)
+
+An agent allowed to *use* a secret chooses the URL of `http_get_with_auth`,
+`http_post_with_auth` and `openai_chat` (`base_url`). The Go server binds each
+secret to the hosts it may be sent to (`destinations:` in the policy file, see
+[policies](../guides/policies.md#destinations-where-a-secret-may-be-sent-go-server-v040)
+and [the design](../design/destinations.md)). A destination that is not listed
+is refused (403) before any DNS lookup or connection. The dial and every
+redirect hop are re-checked, and a hop to another origin is refused. A secret
+with no entry is refused by default. Each refusal is audited
+(`DESTINATION_REFUSED`) and raised as a security event. netguard's https-only
+rule, address-range policy and resolve-once dialling (the DNS rebinding
+defence) still apply to listed hosts.
+
+The claim "an agent allowed to use the token cannot make the vault send it
+elsewhere" holds only when all of these are true:
+
+- the agent has a per-agent token **without** `lease` or `operator` scope
+  (with `lease` it can read the plaintext, and with `operator` it can change
+  the policy);
+- the legacy shared token is off;
+- `serve` runs with `--destinations=enforce` (the default).
+
+What it does not cover:
+
+- **Misuse on a listed host.** A GitHub token sent to `api.github.com` can
+  still act on any repository its scopes allow. Keep credential scopes narrow.
+- **Listed hosts that forward or reflect.** An open proxy, a webhook relay or
+  an endpoint that echoes request headers on a listed origin is trusted. A
+  listed host can also reflect the secret back to the agent in response
+  headers or `body_text`, which the action returns.
+- **Wide lists written by the operator.** For example `*.example.com` on a
+  domain where others can register subdomains. Obvious public and
+  shared-hosting suffixes are refused at load; anything else is the
+  operator's call.
+- **Secrets without an entry in `--destinations=warn` mode.** They are sent to
+  any host (logged and audited). The mode is temporary, for migration.
+- **Approval prompts** do not show the destination yet.
+- **The Python line** does not enforce destinations at all.
+
 ## Partially protects against
 
 - **Local malware / compromised user account.** If the attacker can run code as

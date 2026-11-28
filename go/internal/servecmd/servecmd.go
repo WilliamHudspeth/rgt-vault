@@ -79,6 +79,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/actions"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/hooks"
@@ -261,6 +262,9 @@ type Flags struct {
 	ApprovalTimeout     time.Duration
 	HarnessKeyFile      string
 	AllowPrivateNetwork bool
+	// Destinations is the destination allow-list mode (RGT-523): enforce
+	// (default) or warn (temporary migration switch).
+	Destinations string
 
 	// RequireApprovalFor lists mutating operations (set, rotate, revoke,
 	// all) that also wait for operator approval (batch H2; default none).
@@ -297,6 +301,7 @@ type config struct {
 	approvalTimeout     time.Duration
 	harnessKeyFile      string
 	allowPrivateNetwork bool
+	destinations        actions.DestinationMode
 
 	gatedOps           []approval.GatedOp
 	securityWebhook    string
@@ -353,6 +358,9 @@ func parseConfig(f Flags, vf *VaultFlags, getenv func(string) string) (config, e
 		return config{}, err
 	}
 	cfg.gatedOps = gated
+	if cfg.destinations, err = actions.ParseDestinationMode(firstNonEmpty(f.Destinations, getenv("RGT_VAULT_DESTINATIONS"))); err != nil {
+		return config{}, err
+	}
 	cfg.securityWebhook = firstNonEmpty(f.SecurityWebhookURL, getenv("RGT_VAULT_SECURITY_WEBHOOK_URL"))
 	cfg.securityWebhookRem = f.SecurityWebhookAllowRemote
 	if cfg.securityWebhookRem && cfg.securityWebhook == "" {
@@ -491,6 +499,7 @@ func NewCommand(env Env, vf *VaultFlags) *cobra.Command {
 	_ = fs.MarkDeprecated("security-webhook-url", "put the URL in the environment variable RGT_VAULT_SECURITY_WEBHOOK_URL: a command line is visible to other users in `ps`")
 	fs.StringVar(&f.HarnessKeyFile, "harness-key-file", "", "HMAC key for v2 capability tokens (env RGT_VAULT_HARNESS_KEY_FILE)")
 	fs.BoolVar(&f.AllowPrivateNetwork, "allow-private-network", false, "let built-in HTTP actions reach loopback/private addresses (SSRF risk)")
+	fs.StringVar(&f.Destinations, "destinations", "enforce", "destination allow-list mode: enforce, or warn (TEMPORARY, removed in the next release: secrets with no destinations: entry are sent to any host, logged and audited; secrets with an entry stay enforced) (env RGT_VAULT_DESTINATIONS)")
 	return cmd
 }
 
@@ -738,6 +747,7 @@ func Run(ctx context.Context, cfg config, env Env) error {
 		ApprovalTimeout:     cfg.approvalTimeout,
 		HarnessKeyFile:      cfg.harnessKeyFile,
 		AllowPrivateNetwork: cfg.allowPrivateNetwork,
+		Destinations:        cfg.destinations,
 		KDFParams:           env.KDFParams,
 	})
 	if err != nil {
@@ -757,6 +767,10 @@ func Run(ctx context.Context, cfg config, env Env) error {
 	}
 	if cfg.vault.Policy == "" {
 		logger.Printf("WARNING: no --policy given: every secret request is denied (default deny)")
+	}
+	logger.Printf("Destinations: mode=%s (HTTP actions may send a secret only to the hosts under \"destinations:\" in the policy file)", stack.DestinationMode)
+	for _, w := range stack.DestinationWarnings {
+		logger.Printf("WARNING: %s", handlers.LogSafe(w))
 	}
 	if cfg.harnessKeyFile == "" {
 		logger.Printf("No --harness-key-file: /v1/capabilities/execute fails closed")
