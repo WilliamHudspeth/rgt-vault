@@ -181,7 +181,11 @@ func TestScrubStringIsBoundedOnHugeInput(t *testing.T) {
 // cut off. 30+ characters of each credential sit BEFORE the cap boundary.
 func TestScrubStringCapNeverLeavesCredentialPrefix(t *testing.T) {
 	const tail = " and then the rest of a very long message "
-	pemBody := strings.Repeat("MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC", 6)
+	var pb strings.Builder
+	for i := 0; i < 20; i++ { // 20 base64 lines of 64 chars
+		pb.WriteString(strings.Repeat("MIIEvQIBADANBgkqhkiG9w0BAQEFAASC", 2)[:60] + string(rune('A'+i)) + "xyz\n")
+	}
+	pemBody := pb.String()
 	filler := func(n int) string { return strings.Repeat("x ", n/2) }
 
 	shapes := []struct {
@@ -190,10 +194,10 @@ func TestScrubStringCapNeverLeavesCredentialPrefix(t *testing.T) {
 	}{
 		{"bare token after space", testTok43, testTok43},
 		{"token_id assignment", "token_id=" + testTok43, testTok43},
-		{"PEM body", "-----BEGIN PRIVATE KEY-----\n" + pemBody + "\n-----END PRIVATE KEY-----", pemBody},
+		{"PEM body", "-----BEGIN PRIVATE KEY-----\n" + pemBody + "-----END PRIVATE KEY-----", pemBody},
 	}
 	for _, sh := range shapes {
-		for _, before := range []int{12, 25, 36, 60} { // credential chars inside the cap
+		for _, before := range []int{12, 25, 36, 60, 200, 700} { // credential chars inside the cap
 			if before >= len(sh.cred) {
 				continue
 			}
