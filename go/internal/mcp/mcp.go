@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/netguard"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/transport"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/validation"
@@ -94,7 +95,7 @@ func NewServer(backendURL, token string) *Server {
 			CheckRedirect: transport.NoRedirect, // never replay the bearer token to a redirect target
 		},
 		serverName:    "rgt-vault-mcp",
-		serverVersion: "0.3.0",
+		serverVersion: buildinfo.Version(),
 		logger:        log.Default(),
 	}
 }

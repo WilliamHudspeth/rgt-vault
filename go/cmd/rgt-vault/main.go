@@ -27,6 +27,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/kdf"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/mcp"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/servecmd"
@@ -135,13 +136,7 @@ func mcpAgentLabel(flagVal string) string {
 	return ""
 }
 
-// Build metadata, injected at release time via -ldflags by GoReleaser
-// (e.g. -X main.version=0.3.0 -X main.commit=abc123 -X main.date=...).
-var (
-	version = "dev"
-	commit  = "none"
-	date    = "unknown"
-)
+
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -177,7 +172,7 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:     "rgt-vault",
 		Short:   "rgt-vault — encrypted secrets manager for AI agents",
-		Version: fmt.Sprintf("%s (commit %s, built %s)", version, commit, date),
+		Version: buildinfo.String(),
 		Run: func(cmd *cobra.Command, args []string) {
 			_ = cmd.Help()
 		},
@@ -438,7 +433,7 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 
 	rootCmd.AddCommand(setCmd, getCmd, listCmd, revokeCmd, simulateCmd,
 		fingerprintCmd, rotateCmd, verifyAuditCmd, auditCmd,
-		initCmd, serveCmd, statusCmd, mcpCmd, tuiCmd,
+		initCmd, serveCmd, statusCmd, mcpCmd, tuiCmd, newVersionCmd(),
 		newEnroll2FACmd(&vf, stdout), newExportCmd(&vf, stdout), newImportCmd(&vf, stdin, stdout),
 		newMigrateCmd(&vf, stdout), newProviderCmd(stdin, stdout),
 		newCryptoAuditCmd(stdout), newTokenCmd(&vf, stdin, stdout))

@@ -22,7 +22,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"reflect"
 	"sort"
 	"strconv"
@@ -32,15 +31,13 @@ import (
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/actions"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/approval"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/capabilities"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/hooks/pyfmt"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/store"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/validation"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
 )
-
-// Version is reported by /healthz outside production.
-const Version = "0.3.0"
 
 // Handlers holds the HTTP handlers and their dependencies.
 type Handlers struct {
@@ -353,18 +350,35 @@ func queryDefault(r *http.Request, name, def string) string {
 // GET /healthz, XML policy stubs
 // ---------------------------------------------------------------------------
 
-// HealthCheck returns server health information. No auth required.
+// HealthCheck returns server health information.
+// Unauthenticated requests return only {"status":"ok"}.
+// Authenticated requests with audit or operator scope return the detailed
+// body including vault_id, key_epoch, and version.
 func (h *Handlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
-	version := Version
-	if os.Getenv("APP_ENV") == "production" {
-		version = ""
+	// Check if the request is authenticated with audit or operator scope
+	p, ok := PrincipalFromContext(r.Context())
+	if !ok {
+		// Unauthenticated: return minimal response
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "ok",
+		})
+		return
 	}
+	// Authenticated: check if it has audit scope (operator implies audit)
+	if !p.Has(auth.ScopeAudit) {
+		// Authenticated but no audit scope: return minimal response
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "ok",
+		})
+		return
+	}
+
+	// Authenticated with audit or operator scope: return detailed response
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":    "ok",
 		"vault_id":  h.Vault.VaultID(),
 		"key_epoch": h.Vault.KeyEpoch(),
-		"actions":   h.actionNames(),
-		"version":   version,
+		"version":   buildinfo.Version(),
 	})
 }
 

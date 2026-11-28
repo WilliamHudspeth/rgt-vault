@@ -342,7 +342,12 @@ func operatorPath(path string) bool {
 
 func publicRoute(r *http.Request) bool {
 	return r.Method == http.MethodGet &&
-		(r.URL.Path == "/healthz" || r.URL.Path == "/crossdomain.xml" || r.URL.Path == "/clientaccesspolicy.xml")
+		(r.URL.Path == "/crossdomain.xml" || r.URL.Path == "/clientaccesspolicy.xml")
+}
+
+// healthzRoute reports whether the request is for /healthz.
+func healthzRoute(r *http.Request) bool {
+	return r.Method == http.MethodGet && r.URL.Path == "/healthz"
 }
 
 // authenticate identifies the caller of r.
@@ -352,6 +357,7 @@ func (mw *Middleware) authenticate(r *http.Request) (auth.Principal, error) {
 		return mw.Tokens.Authenticate(header)
 	}
 	// Legacy shared token files: the route picks the file, as before H1.
+	// For /healthz, also try OperatorTokenStore if the token isn't found in TokenStore
 	ts := mw.TokenStore
 	if operatorPath(handlers.RoutePath(r)) && mw.OperatorTokenStore != nil {
 		ts = mw.OperatorTokenStore
@@ -360,6 +366,10 @@ func (mw *Middleware) authenticate(r *http.Request) (auth.Principal, error) {
 		return auth.Principal{}, errors.New("no token store configured")
 	}
 	tokenID, err := ts.Verify(header)
+	if err != nil && healthzRoute(r) && mw.OperatorTokenStore != nil {
+		// For /healthz, also try the operator token store
+		tokenID, err = mw.OperatorTokenStore.Verify(header)
+	}
 	if err != nil {
 		return auth.Principal{}, err
 	}
@@ -381,6 +391,19 @@ func (mw *Middleware) authenticate(r *http.Request) (auth.Principal, error) {
 func (mw *Middleware) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if publicRoute(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// For /healthz, try to authenticate but don't reject unauthenticated requests
+		if healthzRoute(r) {
+			p, err := mw.authenticate(r)
+			if err == nil {
+				// Authentication succeeded, store principal in context
+				next.ServeHTTP(w, r.WithContext(handlers.WithPrincipal(r.Context(), p)))
+				return
+			}
+			// Authentication failed, but /healthz allows unauthenticated requests
+			// Just pass through without a principal
 			next.ServeHTTP(w, r)
 			return
 		}
