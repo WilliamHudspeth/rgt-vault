@@ -10,7 +10,9 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
@@ -195,8 +197,15 @@ func TestInitServeFileProviderExplicitPath(t *testing.T) {
 	if st.Vault.KeyEpoch() != epoch+1 {
 		t.Fatalf("epoch %d after rotation, want %d", st.Vault.KeyEpoch(), epoch+1)
 	}
-	if ents, _ := os.ReadDir(filepath.Dir(keyPath)); len(ents) != 1 {
-		t.Fatalf("temp files left in the key dir: %v", ents)
+	// No temp file and no .prev left: the rotation was confirmed; the key is
+	// bound to this vault.
+	var names []string
+	ents, _ := os.ReadDir(filepath.Dir(keyPath))
+	for _, e := range ents {
+		names = append(names, e.Name())
+	}
+	if strings.Join(names, ",") != "master.key,master.key.vault-id" {
+		t.Fatalf("key dir holds %v, want master.key and master.key.vault-id", names)
 	}
 }
 
@@ -312,8 +321,8 @@ func assertRemedy(t *testing.T, stderr string) {
 			t.Fatalf("%q is suggested before --provider file:\n%s", other, stderr)
 		}
 	}
-	if !strings.Contains(stderr, "No files were created.") {
-		t.Fatalf("no 'No files were created.':\n%s", stderr)
+	if !strings.Contains(stderr, "No files were created.") && !strings.Contains(stderr, "No vault or key files were left behind.") {
+		t.Fatalf("no 'No files were created.' / 'left behind':\n%s", stderr)
 	}
 }
 
@@ -470,4 +479,276 @@ type staticProvider struct{ secret []byte }
 
 func (s *staticProvider) GetMasterSecret() ([]byte, error) {
 	return append([]byte(nil), s.secret...), nil
+}
+
+// openFileStack opens the vault at db with the file provider on keyPath.
+func openFileStack(t *testing.T, db, keyPath, policy string) (*server.Stack, vault.MasterProvider, error) {
+	t.Helper()
+	prov, err := server.NewProviderWith(server.ProviderFile, server.ProviderOptions{MasterKeyFile: keyPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := server.OpenStack(context.Background(), server.StackOptions{DBPath: db, PolicyFile: policy, MasterProvider: prov, KDFParams: kdfParams})
+	return st, prov, err
+}
+
+func writePolicy(t *testing.T, dir string) string {
+	t.Helper()
+	p := filepath.Join(dir, "policy.yaml")
+	if err := os.WriteFile(p, []byte(allowAllPolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func leaseValue(t *testing.T, st *server.Stack) string {
+	t.Helper()
+	var got string
+	if err := st.Vault.Lease(context.Background(), vault.LeaseRequest{Name: "k", Namespace: "n", Agent: "system", Purpose: "t"},
+		func(b []byte) error { got = string(b); return nil }); err != nil {
+		t.Fatalf("lease: %v", err)
+	}
+	return got
+}
+
+// Review H1: a crash after the provider switched to the new key but before
+// the re-wrapped keychain reached disk must not lose the vault: the old key
+// is in <key>.prev, the open error says so, and restoring it opens the vault.
+func TestRotationCrashKeepsPreviousKey(t *testing.T) {
+	e := newFileEnv(t)
+	keyPath := filepath.Join(e.home, "keys", "master.key")
+	e.mustInit("--master-key-file", keyPath)
+	policy := writePolicy(t, e.home)
+	st, prov, err := openFileStack(t, e.db, keyPath, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Vault.SetSecret(context.Background(), vault.SetSecretRequest{Name: "k", Namespace: "n", Agent: "system", Purpose: "t", Value: []byte("v")}); err != nil {
+		t.Fatal(err)
+	}
+	// The provider step of RotateMaster, then "kill -9": no re-wrap, no commit.
+	newKey, err := prov.(vault.Rotator).RotateMasterSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers.Wipe(newKey)
+	_ = st.Close()
+
+	prev := providers.PrevPath(keyPath)
+	if _, err := os.Stat(prev); err != nil {
+		t.Fatalf("no %s after the provider step: %v", prev, err)
+	}
+	_, _, err = openFileStack(t, e.db, keyPath, policy)
+	if err == nil || !strings.Contains(err.Error(), prev) || !strings.Contains(err.Error(), "PREVIOUS master secret") {
+		t.Fatalf("re-open after the crash: %v", err)
+	}
+	if _, err := os.Stat(prev); err != nil {
+		t.Fatal("a failed open removed .prev")
+	}
+	// The documented recovery.
+	if err := os.Rename(prev, keyPath); err != nil {
+		t.Fatal(err)
+	}
+	st, _, err = openFileStack(t, e.db, keyPath, policy)
+	if err != nil {
+		t.Fatalf("open with the restored key: %v", err)
+	}
+	defer st.Close()
+	if leaseValue(t, st) != "v" {
+		t.Fatal("secret lost")
+	}
+	// A completed rotation removes .prev.
+	if err := st.Vault.RotateMaster(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(prev); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf(".prev kept after a completed rotation: %v", err)
+	}
+}
+
+// Review L5: seal file --force over a live key keeps it as .prev.
+func TestSealForceKeepsPreviousKey(t *testing.T) {
+	e := newFileEnv(t)
+	keyPath := filepath.Join(e.home, "keys", "master.key")
+	e.mustInit("--master-key-file", keyPath)
+	before := assertKeyFile(t, keyPath)
+	if code, out, stderr := runCLI(t, "", "provider", "seal", "file", "--generate", "--force", "--out", keyPath); code != 0 || !strings.Contains(out, ".prev") {
+		t.Fatalf("seal --force: %d %q %q", code, out, stderr)
+	}
+	if got, _ := os.ReadFile(providers.PrevPath(keyPath)); !bytes.Equal(got, before) {
+		t.Fatal(".prev does not hold the replaced key")
+	}
+	// A second --force must not overwrite the only copy of the old key.
+	if code, _, stderr := runCLI(t, "", "provider", "seal", "file", "--generate", "--force", "--out", keyPath); code == 0 || !strings.Contains(stderr, ".prev") {
+		t.Fatalf("second --force: %d %q", code, stderr)
+	}
+	_, _, err := openFileStack(t, e.db, keyPath, "")
+	if err == nil || !strings.Contains(err.Error(), "mv "+providers.PrevPath(keyPath)) {
+		t.Fatalf("open with the replaced key: %v", err)
+	}
+}
+
+// Review L3: a key that does not match names the source and the vault.
+func TestWrongKeyMessage(t *testing.T) {
+	e := newFileEnv(t)
+	keyPath := filepath.Join(e.home, "keys", "master.key")
+	_, id := e.mustInit("--master-key-file", keyPath)
+	if err := os.Remove(keyPath); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, stderr := runCLI(t, "", "provider", "seal", "file", "--generate", "--out", keyPath); code != 0 {
+		t.Fatal(stderr)
+	}
+	_, _, err := openFileStack(t, e.db, keyPath, "")
+	if err == nil || !strings.Contains(err.Error(), keyPath) || !strings.Contains(err.Error(), "does not match this vault") || !strings.Contains(err.Error(), id) {
+		t.Fatalf("wrong key: %v", err)
+	}
+}
+
+// Review H2: a key file bound to one vault is refused for another.
+func TestSharedKeyFileRefused(t *testing.T) {
+	e := newFileEnv(t)
+	keyPath := filepath.Join(e.home, "keys", "master.key")
+	_, idA := e.mustInit("--master-key-file", keyPath)
+	if b, err := os.ReadFile(providers.VaultIDPath(keyPath)); err != nil || strings.TrimSpace(string(b)) != idA {
+		t.Fatalf("binding %q, %v", b, err)
+	}
+	dbB := filepath.Join(e.home, "vault-b", "vault.db")
+	code, _, stderr := runCLI(t, "", "--db", dbB, "--provider", "file", "--master-key-file", keyPath, "init")
+	if code == 0 || !strings.Contains(stderr, "belongs to vault "+idA) {
+		t.Fatalf("second vault on the same key: %d %q", code, stderr)
+	}
+	assertNoVaultFiles(t, dbB)
+	st, _, err := openFileStack(t, e.db, keyPath, "")
+	if err != nil {
+		t.Fatalf("vault A no longer opens: %v", err)
+	}
+	_ = st.Close()
+}
+
+// Review M2: under systemd without the credential, no silent plaintext key.
+func TestCredentialsDirWithoutCredentialRefused(t *testing.T) {
+	e := newFileEnv(t)
+	credDir := filepath.Join(e.home, "creds")
+	if err := os.Mkdir(credDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(providers.EnvCredentialsDirectory, credDir)
+	code, _, stderr := e.run("--provider", "file", "init")
+	if code == 0 || !strings.Contains(stderr, "rgt-vault-master") || !strings.Contains(stderr, credDir) {
+		t.Fatalf("init: %d %q", code, stderr)
+	}
+	assertNoVaultFiles(t, e.db)
+	if _, err := os.Stat(filepath.Join(e.home, ".config", "rgt-vault", "keys")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a default key dir was created")
+	}
+	// An explicit key file is the documented override.
+	e.mustInit("--master-key-file", filepath.Join(e.home, "k", "master.key"))
+}
+
+// bootstrapThenFail creates a key file in Bootstrap and then cannot read it
+// (like a file provider whose run fails after bootstrapping).
+type bootstrapThenFail struct{ path string }
+
+func (b *bootstrapThenFail) BootstrapMasterSecret() error {
+	return os.WriteFile(b.path, []byte("x"), 0o600)
+}
+func (b *bootstrapThenFail) GetMasterSecret() ([]byte, error) { return nil, errors.New("boom") }
+func (b *bootstrapThenFail) CreatedFiles() []string           { return []string{b.path} }
+
+// Review L1: a key bootstrapped by a failing init is removed too, and the
+// file provider's probe creates nothing.
+func TestInitCleansBootstrappedKey(t *testing.T) {
+	e := newFileEnv(t)
+	key := filepath.Join(e.home, "boot.key")
+	useProvider(t, &bootstrapThenFail{path: key})
+	if code, _, stderr := e.run("init"); code == 0 || !strings.Contains(stderr, "No vault or key files were left behind") {
+		t.Fatalf("init: %d %q", code, stderr)
+	}
+	if _, err := os.Stat(key); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("bootstrapped key left behind")
+	}
+	assertNoVaultFiles(t, e.db)
+
+	prov, err := server.NewProviderWith(server.ProviderFile, server.ProviderOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prov.(interface{ Probe() error }).Probe(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(e.home, ".config")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("Probe created directories")
+	}
+}
+
+// slowFailingFirst fails the first bootstrap after holding it until release
+// is closed; later bootstraps succeed (an in-memory key).
+type slowFailingFirst struct {
+	mu       sync.Mutex
+	calls    int
+	entered  chan struct{}
+	release  chan struct{}
+	secret   []byte
+	hasValue bool
+}
+
+func (s *slowFailingFirst) BootstrapMasterSecret() error {
+	s.mu.Lock()
+	s.calls++
+	first := s.calls == 1
+	s.mu.Unlock()
+	if first {
+		close(s.entered)
+		<-s.release
+		return errors.New("first init fails")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.hasValue {
+		s.secret, s.hasValue = bytes.Repeat([]byte{3}, 32), true
+	}
+	return nil
+}
+
+func (s *slowFailingFirst) GetMasterSecret() ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.hasValue {
+		return nil, errors.New("no secret")
+	}
+	return append([]byte(nil), s.secret...), nil
+}
+
+// Review M1: two inits race; the one that fails must not remove the vault
+// the other created. Without the init lock, B completes while A is parked
+// in its bootstrap, then A fails and deletes B's vault.
+func TestConcurrentInitKeepsVault(t *testing.T) {
+	e := newFileEnv(t)
+	prov := &slowFailingFirst{entered: make(chan struct{}), release: make(chan struct{})}
+	useProvider(t, prov)
+	args := []string{"--db", e.db, "init", "--operator-token-file", "-"}
+	aDone := make(chan int, 1)
+	go func() { c, _, _ := runCLI(t, "", args...); aDone <- c }()
+	<-prov.entered
+	bDone := make(chan int, 1)
+	go func() { c, _, _ := runCLI(t, "", args...); bDone <- c }()
+	bCode := -1
+	select {
+	case bCode = <-bDone: // only possible without the lock
+	case <-time.After(500 * time.Millisecond):
+	}
+	close(prov.release)
+	if c := <-aDone; c == 0 {
+		t.Fatal("A should fail")
+	}
+	if bCode == -1 {
+		bCode = <-bDone
+	}
+	if bCode != 0 {
+		t.Fatalf("B exited %d", bCode)
+	}
+	if !vaultFileExists(e.db) {
+		t.Fatal("the vault B created was removed by A's cleanup")
+	}
 }

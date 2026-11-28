@@ -360,12 +360,12 @@ func vaultFiles(db string) []string {
 // is probed before vault.db is created; if opening fails, the vault files
 // created by this run (and only those) are removed.
 func initVault(ctx context.Context, res servecmd.Resolved) ([]string, error) {
-	existed := vaultFileExists(res.DB)
 	prov, err := initProvider(res)
 	if err != nil {
 		return nil, err
 	}
-	if !existed {
+	// The probe has no side effects, so it runs before anything exists.
+	if !vaultFileExists(res.DB) {
 		if p, ok := prov.(prober); ok {
 			if err := p.Probe(); err != nil {
 				if providers.IsKeyringUnavailable(err) {
@@ -375,22 +375,48 @@ func initVault(ctx context.Context, res servecmd.Resolved) ([]string, error) {
 			}
 		}
 	}
+
+	// Serialise concurrent inits of the same vault (review M1): without the
+	// lock, a failing init could remove the vault another init has just
+	// created. The lock file is never removed (removing a lock file is racy).
+	if err := os.MkdirAll(filepath.Dir(res.DB), 0o700); err != nil {
+		return nil, fmt.Errorf("vault directory: %w", err)
+	}
+	unlock, err := lockInit(res.DB + ".init.lock")
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
+	existed := vaultFileExists(res.DB) // under the lock
 	var created []string
-	for _, f := range vaultFiles(res.DB) {
-		if _, err := os.Lstat(f); errors.Is(err, os.ErrNotExist) {
-			created = append(created, f)
+	if !existed {
+		for _, f := range vaultFiles(res.DB) {
+			if _, err := os.Lstat(f); errors.Is(err, os.ErrNotExist) {
+				created = append(created, f)
+			}
 		}
 	}
 	stack, err := server.OpenStack(ctx, server.StackOptions{DBPath: res.DB, PolicyFile: res.Policy, MasterProvider: prov, KDFParams: kdfParams})
 	if err != nil {
+		if existed { // never touch the files of a vault that was already there
+			return nil, fmt.Errorf("opening vault %s: %w", res.DB, servecmd.WithKeyringRemedy(err))
+		}
+		if c, ok := prov.(interface{ CreatedFiles() []string }); ok {
+			created = append(created, c.CreatedFiles()...) // a key file bootstrapped in this run (review L1)
+		}
 		left := removeCreated(created)
-		if providers.IsKeyringUnavailable(err) && !existed {
-			return nil, &exitError{code: 1, msg: (&servecmd.KeyringRemedyError{Init: true, NothingCreated: len(left) == 0, Cause: err}).Error()}
+		if providers.IsKeyringUnavailable(err) {
+			msg := (&servecmd.KeyringRemedyError{Init: true, Cause: err}).Error()
+			if len(left) == 0 {
+				msg += "\n\nNo vault or key files were left behind."
+			}
+			return nil, &exitError{code: 1, msg: msg}
 		}
-		if !existed && len(left) == 0 {
-			return nil, fmt.Errorf("opening vault %s: %w\nNo vault files were left behind", res.DB, err)
+		if len(left) == 0 {
+			return nil, fmt.Errorf("opening vault %s: %w\nNo vault or key files were left behind", res.DB, err)
 		}
-		return nil, fmt.Errorf("opening vault %s: %w", res.DB, servecmd.WithKeyringRemedy(err))
+		return nil, fmt.Errorf("opening vault %s: %w (could not remove %v)", res.DB, servecmd.WithKeyringRemedy(err), left)
 	}
 	id, epoch := stack.Vault.VaultID(), stack.Vault.KeyEpoch()
 	if err := stack.Close(); err != nil {

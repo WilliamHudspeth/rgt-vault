@@ -41,6 +41,7 @@ func TestDecodeKeyFile(t *testing.T) {
 		{"crlf", []byte(url + "\r\n"), true},
 		{"32 raw bytes", raw, true},
 		{"31 raw bytes", raw[:31], false},
+		{"32 printable characters (a passphrase)", []byte("correct horse battery staple 123"), false},
 		{"33 raw bytes", append(append([]byte(nil), raw...), 1), false},
 		{"base64 of 31 bytes", []byte(base64.URLEncoding.EncodeToString(raw[:31])), false},
 		{"base64 of 33 bytes", []byte(base64.URLEncoding.EncodeToString(append(raw, 1))), false},
@@ -104,10 +105,20 @@ func TestFileProviderSources(t *testing.T) {
 	if loc := p.(*CredentialProvider).Location(); loc != filepath.Join(cred, DefaultMasterCredential) {
 		t.Fatalf("location %q", loc)
 	}
-	// $CREDENTIALS_DIRECTORY without our credential falls through to 3.
+	// $CREDENTIALS_DIRECTORY without our credential is refused (review M2)
+	// instead of silently creating a plaintext default key; an explicit path
+	// still works.
 	other := filepath.Join(dir, "other-creds")
 	_ = os.Mkdir(other, 0o700)
-	p, err = NewFileProvider(FileOptions{KeysDir: keys, Getenv: env(map[string]string{EnvCredentialsDirectory: other})})
+	_, err = NewFileProvider(FileOptions{KeysDir: keys, Getenv: env(map[string]string{EnvCredentialsDirectory: other})})
+	if !errors.Is(err, ErrMasterSecretUnavailable) || !strings.Contains(err.Error(), other) || !strings.Contains(err.Error(), "--master-key-file") {
+		t.Fatalf("credentials dir without the credential: %v", err)
+	}
+	p, err = NewFileProvider(FileOptions{Path: filepath.Join(dir, "x.key"), Getenv: env(map[string]string{EnvCredentialsDirectory: other})})
+	if _, ok := p.(*FileProvider); err != nil || !ok {
+		t.Fatalf("explicit path under systemd: %T %v", p, err)
+	}
+	p, err = NewFileProvider(FileOptions{KeysDir: keys, Getenv: env(nil)})
 	if fp, ok := p.(*FileProvider); err != nil || !ok || fp.keysDir != keys {
 		t.Fatalf("default: %T %v", p, err)
 	}
@@ -154,7 +165,7 @@ func TestFileProviderLifecycle(t *testing.T) {
 	if _, err := p.RotateMasterSecret(); err == nil {
 		t.Fatal("Rotate before BindVault")
 	}
-	if err := p.Probe(); err != nil { // creates the keys dir
+	if err := p.Probe(); err != nil {
 		t.Fatalf("Probe: %v", err)
 	}
 	for _, bad := range []string{"", "../x", "a/b", ".hidden", strings.Repeat("a", 129)} {
@@ -237,8 +248,8 @@ func TestFileProviderExplicit(t *testing.T) {
 	if err := p.Probe(); err != nil {
 		t.Fatal(err)
 	}
-	if fi, err := os.Stat(filepath.Dir(path)); err != nil || !fi.IsDir() {
-		t.Fatal("Probe did not create the key directory")
+	if _, err := os.Stat(filepath.Dir(path)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("Probe created the key directory (it must have no side effects)")
 	}
 	if err := p.BootstrapMasterSecret(); err != nil {
 		t.Fatal(err)
@@ -301,5 +312,94 @@ func TestKeyringUnavailable(t *testing.T) {
 	}
 	if !strings.Contains(p.Location(), KeyringBackendName()) {
 		t.Fatalf("location %q", p.Location())
+	}
+}
+
+// Review H1: rotation keeps the old key in .prev until it is confirmed.
+func TestFileProviderRotationKeepsPrev(t *testing.T) {
+	d := secureDir(t)
+	path := filepath.Join(d, "master.key")
+	mp, _ := NewFileProvider(FileOptions{Path: path, Getenv: env(nil)})
+	p := mp.(*FileProvider)
+	if err := p.BindVault("vault-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.BootstrapMasterSecret(); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.CreatedFiles(); len(got) != 1 || got[0] != path {
+		t.Fatalf("CreatedFiles = %v", got)
+	}
+	old, _ := p.GetMasterSecret()
+	if _, err := p.PreviousMasterSecret(); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("previous before any rotation: %v", err)
+	}
+	newKey, err := p.RotateMasterSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev, err := p.PreviousMasterSecret()
+	if err != nil || !bytes.Equal(prev, old) {
+		t.Fatalf(".prev = %v (equal %v)", err, bytes.Equal(prev, old))
+	}
+	if cur, _ := p.GetMasterSecret(); !bytes.Equal(cur, newKey) {
+		t.Fatal("the key file does not hold the new key")
+	}
+	// An unconfirmed rotation blocks the next one (never overwrite .prev).
+	if _, err := p.RotateMasterSecret(); err == nil || !strings.Contains(err.Error(), ".prev") {
+		t.Fatalf("second rotation with .prev present: %v", err)
+	}
+	if !strings.Contains(p.RecoveryHint(), "mv "+PrevPath(path)+" "+path) {
+		t.Fatalf("hint %q", p.RecoveryHint())
+	}
+	if err := p.ConfirmMasterSecret("vault-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(PrevPath(path)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("confirm kept .prev")
+	}
+	if _, err := p.RotateMasterSecret(); err != nil {
+		t.Fatalf("rotation after confirm: %v", err)
+	}
+}
+
+// Review H2: the key is bound to one vault.
+func TestFileProviderVaultBinding(t *testing.T) {
+	d := secureDir(t)
+	path := filepath.Join(d, "master.key")
+	newP := func() *FileProvider {
+		mp, _ := NewFileProvider(FileOptions{Path: path, Getenv: env(nil)})
+		return mp.(*FileProvider)
+	}
+	a := newP()
+	if err := a.BindVault("vault-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.BootstrapMasterSecret(); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ConfirmMasterSecret("vault-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ConfirmMasterSecret("vault-a"); err != nil { // idempotent
+		t.Fatal(err)
+	}
+	b := newP()
+	if err := b.BindVault("vault-b"); !errors.Is(err, ErrMasterSecretUnavailable) || !strings.Contains(err.Error(), "belongs to vault vault-a") {
+		t.Fatalf("second vault bound: %v", err)
+	}
+	// Even if a caller skips BindVault's verdict, rotation and confirmation
+	// refuse a key bound elsewhere.
+	if _, err := b.RotateMasterSecret(); err == nil || !strings.Contains(err.Error(), "belongs to vault vault-a") {
+		t.Fatalf("rotate a key bound to another vault: %v", err)
+	}
+	if err := b.ConfirmMasterSecret("vault-b"); err == nil {
+		t.Fatal("confirm re-bound the key")
+	}
+	if got, _ := os.ReadFile(VaultIDPath(path)); strings.TrimSpace(string(got)) != "vault-a" {
+		t.Fatalf("binding changed to %q", got)
+	}
+	if err := a.BindVault("vault-b"); err == nil {
+		t.Fatal("re-bound a provider to another vault")
 	}
 }

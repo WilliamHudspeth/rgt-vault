@@ -76,8 +76,9 @@ Unix (Linux, macOS):
   never acceptable as the key's *own* directory, which must be owned by the euid or root and must not be
   group/world-writable. Then `open(resolved, O_RDONLY|O_NOFOLLOW|O_CLOEXEC)` and `fstat`:
   `S_ISREG`, `nlink == 1` (hard links refused), no setuid/setgid, owner == euid or root, `mode & 0o077 == 0`,
-  size ≤ 128. The explicit/default sources apply this. For `$CREDENTIALS_DIRECTORY`, systemd's ramfs (0400, owner
-  = service user, dir 0500) passes the same checks.
+  size ≤ 128. The explicit/default sources apply this. ~~For `$CREDENTIALS_DIRECTORY`, systemd's ramfs (0400, owner
+  = service user, dir 0500) passes the same checks.~~ *Corrected in implementation note 10: systemd 255 delivers
+  `root:root 0440` with a POSIX ACL, which needs a narrow exception.*
 - The error names the exact fix (`chmod 600 …`, `chown …`, "directory … is group-writable").
 
 Windows:
@@ -178,14 +179,15 @@ and darwin. `deploy/rgt-vault-go.service` gains a `file` variant using `LoadCred
    vault-side text this task does not own, so it names the type and says "re-seal out-of-band" rather than
    the exact `systemd-creds` recipe. The recipe is in `providers.CredentialRecipe`, the unit file and
    [providers.md](../guides/providers.md#systemd).
-2. **Which `$CREDENTIALS_DIRECTORY` case is an error.** If `$CREDENTIALS_DIRECTORY` is set but holds no
-   `rgt-vault-master`, the provider falls through to the default path (a unit may load other credentials).
-   It is an error only when `RGT_VAULT_MASTER_CREDENTIAL` names a credential explicitly and it is missing,
-   or when that variable is set outside a unit (no `$CREDENTIALS_DIRECTORY`). The error names
-   `LoadCredentialEncrypted=`.
+2. **Which `$CREDENTIALS_DIRECTORY` case is an error** (changed after review M2). Whenever
+   `$CREDENTIALS_DIRECTORY` is set and the credential (`rgt-vault-master` or `RGT_VAULT_MASTER_CREDENTIAL`) is
+   absent, the provider refuses, naming the credential, the directory and `LoadCredentialEncrypted=`. It does
+   not fall through to a plaintext default key. An explicit `--master-key-file` (source 1) is the override.
+   `RGT_VAULT_MASTER_CREDENTIAL` outside a unit is also an error.
 3. **Probe.** `init` probes through an optional `Probe() error` method (keyring: one read, where "not found"
-   is fine; file: an existing key file must pass every check, otherwise its directory is created 0700 and
-   checked; credential: one read). Only the key directory may be created by a probe.
+   is fine; file: an existing key file must pass every check, otherwise the key directory, or its nearest
+   existing ancestor, must pass `secfile.CheckCreatable`; credential: one read). A probe creates nothing
+   (review L1).
 4. **Unreachable-keyring detection** (`providers.IsKeyringUnavailable`) matches backend error text. The Linux
    cases are verified (go-keyring with no Secret Service, and with no bus socket). The Windows (error 1312)
    and macOS ("user interaction is not allowed") cases are UNVERIFIED on real hosts; the macOS backend
@@ -208,3 +210,38 @@ and darwin. `deploy/rgt-vault-go.service` gains a `file` variant using `LoadCred
    bytes); other `seal` targets keep sealing the exact bytes.
 9. **`docs/security/threat-model.md`** is not edited by this PR (not in the task's file list); the 5.5 table
    is in [providers.md](../guides/providers.md#threat-model).
+10. **systemd credentials (review H3).** systemd 255 delivers the credential as `root:root 0440` with a POSIX
+    ACL for the `User=` (the group bits show the ACL mask), in a `root:root 0550` directory on a read-only
+    tmpfs. For the credential source only (`secfile.Options.Credential`), a file that fails only the mode check
+    is accepted if it is owned by root, has mode at most 0440, sits in a root-owned directory that passes the
+    directory chain, and `fstatfs` reports tmpfs or ramfs mounted read-only. Elsewhere (no `fstatfs` result,
+    non-Linux) the exception does not apply. Verified live on systemd 255.4 with `sudo systemd-run --pipe
+    -p User=$USER -p LoadCredential=rgt-vault-master:KEY rgt-vault --provider file export`.
+11. **Rotation crash safety (review H1).** The provider renames the new key over the old one before
+    `vault/rotate.go` has written the re-wrapped `keychain.json.new`. To close that window,
+    `FileProvider.RotateMasterSecret` first keeps the current key as `<key>.prev` (O_EXCL; refused if one
+    exists). A new optional vault interface, `MasterRecovery` (`PreviousMasterSecret`, `ConfirmMasterSecret`,
+    `RecoveryHint`, in `vault/provider.go`), connects it to the vault:
+    - `Open` calls `ConfirmMasterSecret` after the current key has unwrapped the keychain. That removes
+      `.prev` and records the vault binding.
+    - `RotateMaster` calls it after installing the new keychain (3 lines in `vault/rotate.go`, a file RGT-535
+      edits later). Its "restore the previous master secret" error names `.prev`.
+    - When the final unwrap fails, `Open` tries `.prev` and, if it unwraps, reports that with the `mv`
+      command. It never switches keys itself.
+    - `RotateMaster` loads the current key before calling the provider, so the key saved as `.prev` is known
+      to be good.
+12. **One key file, one vault (review H2).** `<key>.vault-id` (0600) is written by `ConfirmMasterSecret` once
+    the key has opened that vault. `BindVault`, `RotateMasterSecret` and `ConfirmMasterSecret` refuse a key
+    bound to another vault id. There is no override. `provider seal file --force` removes the binding
+    together with the key it replaces (which it keeps as `.prev`).
+13. **Concurrent `init` (review M1).** `init` takes an exclusive `flock` (Windows: `LockFileEx`) on
+    `<db>.init.lock` from the existence check to the end of the vault step. It only cleans up when the vault
+    did not exist under the lock. Cleanup also removes a key file the provider bootstrapped in that run
+    (`CreatedFiles`). The lock file is never removed, because removing a lock file is racy.
+14. **Other review fixes.**
+    - L2: 32 printable ASCII bytes are refused as a raw key (likely a passphrase).
+    - L3: a key that does not unwrap the keychain is reported as "the master secret from <location> does not
+      match this vault <id>"; `serve` logs that error at startup. No audit row is added (audit text is frozen
+      for Python compatibility).
+    - L4: Windows directory checks are weaker; see providers.md.
+    - The `O_NOFOLLOW` open is a separate function with a deterministic test.

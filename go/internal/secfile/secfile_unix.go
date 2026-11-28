@@ -17,7 +17,7 @@ var geteuid = os.Geteuid
 // openChecked resolves path, checks its directories, opens it without
 // following a symlink and checks the opened handle. It returns the open file
 // and its size.
-func openChecked(path string, _ Options) (*os.File, int64, error) {
+func openChecked(path string, opts Options) (*os.File, int64, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, 0, err
@@ -32,13 +32,9 @@ func openChecked(path string, _ Options) (*os.File, int64, error) {
 	if err := checkDirChain(filepath.Dir(resolved)); err != nil {
 		return nil, 0, err
 	}
-	// O_NONBLOCK: opening a FIFO must not hang; it is refused below.
-	f, err := os.OpenFile(resolved, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	f, err := openNoFollow(resolved)
 	if err != nil {
-		if errors.Is(err, syscall.ELOOP) {
-			return nil, 0, insecure("%s became a symlink while it was opened", resolved)
-		}
-		return nil, 0, fmt.Errorf("open %s: %w", path, err)
+		return nil, 0, err
 	}
 	fi, err := f.Stat() // fstat on the handle
 	if err != nil {
@@ -46,10 +42,76 @@ func openChecked(path string, _ Options) (*os.File, int64, error) {
 		return nil, 0, fmt.Errorf("stat %s: %w", path, err)
 	}
 	if err := checkFileInfo(resolved, fi); err != nil {
-		_ = f.Close()
-		return nil, 0, err
+		// A systemd credential: root-owned, group-readable through an ACL
+		// mask, on a read-only in-memory filesystem (review H3).
+		if !opts.Credential || !errors.Is(err, errModeBits) {
+			_ = f.Close()
+			return nil, 0, err
+		}
+		if cerr := credentialCheck(resolved, fi, f); cerr != nil {
+			_ = f.Close()
+			return nil, 0, fmt.Errorf("%w (not accepted as a systemd credential either: %v)", err, cerr)
+		}
 	}
 	return f, fi.Size(), nil
+}
+
+// openNoFollow opens an already resolved path read-only without following a
+// symlink in its last component. O_NONBLOCK: opening a FIFO must not hang;
+// it is refused by the fstat checks.
+func openNoFollow(resolved string) (*os.File, error) {
+	f, err := os.OpenFile(resolved, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, insecure("%s became a symlink while it was opened", resolved)
+		}
+		return nil, fmt.Errorf("open %s: %w", resolved, err)
+	}
+	return f, nil
+}
+
+// credentialCheck is a seam for tests (a root-owned file cannot be made
+// without root).
+var credentialCheck = credentialException
+
+// errModeBits marks the group/other permission refusal, the only one the
+// systemd-credential exception may lift.
+var errModeBits = errors.New("group/other permission bits")
+
+// credentialException accepts a file the mode check refused when it looks
+// exactly like a credential systemd delivered with an ACL for the service
+// user: owned by root, at most 0440, in a root-owned directory (the
+// directory chain was already checked), on a read-only tmpfs/ramfs.
+func credentialException(path string, fi fs.FileInfo, f *os.File) error {
+	st, _ := fi.Sys().(*syscall.Stat_t)
+	di, err := os.Lstat(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	dst, _ := di.Sys().(*syscall.Stat_t)
+	inMem, ro, ferr := fsInfo(f)
+	return credentialRule(fi.Mode().Perm(), st, dst, inMem, ro, ferr)
+}
+
+// credentialRule is the testable core of credentialException.
+func credentialRule(perm fs.FileMode, file, dir *syscall.Stat_t, inMemory, readOnly bool, fsErr error) error {
+	switch {
+	case file == nil || dir == nil:
+		return errors.New("cannot read owners")
+	case file.Uid != 0:
+		return errors.New("the file is not owned by root")
+	case perm&^0o440 != 0:
+		return fmt.Errorf("mode %04o allows more than owner/group read", perm)
+	case dir.Uid != 0:
+		return errors.New("its directory is not owned by root")
+	case fsErr != nil:
+		return fmt.Errorf("filesystem not checked: %v", fsErr)
+	case !inMemory:
+		return errors.New("it is not on a tmpfs/ramfs")
+	case !readOnly:
+		return errors.New("its filesystem is not mounted read-only")
+	}
+	return nil
 }
 
 // checkFileInfo applies the file rules to an fstat result.
@@ -72,7 +134,8 @@ func checkFileInfo(path string, fi fs.FileInfo) error {
 		return insecure("%s is owned by uid %d, not by you (uid %d) or root: run chown %d %s", path, st.Uid, euid, euid, path)
 	}
 	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
-		return insecure("%s is accessible by group/other (mode %04o): run chmod 600 %s", path, perm, path)
+		return fmt.Errorf("%w: %w: %s is accessible by group/other (mode %04o): run chmod 600 %s",
+			ErrInsecure, errModeBits, path, perm, path)
 	}
 	return nil
 }

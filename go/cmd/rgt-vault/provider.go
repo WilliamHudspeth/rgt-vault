@@ -79,6 +79,22 @@ func newSealFileCmd(stdout io.Writer) *cobra.Command {
 			write := secfile.CreateSecret
 			if force {
 				write = secfile.ReplaceSecret
+				// The key being replaced may be a live vault's: keep it as
+				// <key>.prev (never over an existing .prev), and drop the
+				// vault binding so the new key can serve a new vault.
+				if old, err := secfile.OpenSecret(path, secfile.Options{MaxSize: providers.MaxKeyFileSize}); err == nil {
+					err = secfile.CreateSecret(providers.PrevPath(path), old)
+					providers.Wipe(old)
+					if err != nil {
+						return fmt.Errorf("keeping the replaced key as %s: %w (check and remove it first)", providers.PrevPath(path), err)
+					}
+					fmt.Fprintf(stdout, "The replaced key is kept in %s.\n", providers.PrevPath(path))
+				} else if !errors.Is(err, os.ErrNotExist) {
+					return fmt.Errorf("refusing to replace %s: %w", path, err)
+				}
+				if err := os.Remove(providers.VaultIDPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
+					return err
+				}
 			}
 			if err := write(path, text); err != nil {
 				return err

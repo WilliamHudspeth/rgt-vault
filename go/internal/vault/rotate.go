@@ -176,7 +176,7 @@ func (v *Vault) RotateMaster(ctx context.Context) error {
 				"committed; %s holds the DEK wrapped under the new master, re-open the vault to complete: %w", newPath, err))
 		default:
 			return v.failAfterCommit(fmt.Errorf("master secret rotated in the provider but the DEK could not be "+
-				"re-wrapped; restore the previous master secret in the provider: %w", err))
+				"re-wrapped; restore the previous master secret in the provider%s: %w", recoveryHint(v.provider), err))
 		}
 	}
 	if v.testBeforeSwap != nil {
@@ -191,6 +191,9 @@ func (v *Vault) RotateMaster(ctx context.Context) error {
 	keychain.Wipe(dek) // same DEK as v.dek
 	_ = v.km.Close()
 	v.km, v.keyEpoch = km, newEpoch
+	if r, ok := v.provider.(MasterRecovery); ok { // the new keychain is installed: drop the previous secret
+		_ = r.ConfirmMasterSecret(v.vaultID) // best effort: the next Open confirms again
+	}
 	return v.logAudit(ctx, "ROTATE", store.Name("MASTER_KEY"), "Master key rotated successfully")
 }
 
@@ -497,4 +500,13 @@ func (v *Vault) reencrypt(r rewriteRow, newDEK []byte) (ct []byte, ok bool, err 
 		return nil, false, err
 	}
 	return ct, true, nil
+}
+
+// recoveryHint is ": <hint>" for a provider that keeps the previous master
+// secret (MasterRecovery), else "".
+func recoveryHint(p MasterProvider) string {
+	if r, ok := p.(MasterRecovery); ok {
+		return " (" + r.RecoveryHint() + ")"
+	}
+	return ""
 }

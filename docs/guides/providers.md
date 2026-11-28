@@ -38,10 +38,20 @@ the file gets a protected owner + SYSTEM DACL at creation. An existing key file 
 is already there, `init` uses it (a pre-provisioned key). If the key file of an existing vault is missing,
 opening fails: rgt-vault never makes a new key for a vault that already has secrets.
 
-**Rotation.** `rgt-vault rotate --target master` writes the new key to a temp file in the same directory
-(same checks), then renames it over the old one. A crash in between is recovered by the vault's
-`keychain.json.new` logic. With a systemd credential, rotation is refused before anything changes: re-seal a
-new key (below) and restart.
+**One key, one vault.** Once a key has opened a vault, rgt-vault records that vault's id in
+`<key>.vault-id` (0600). A key file that belongs to another vault is refused (by `init`, by every open and by
+rotation): two vaults sharing a key would mean that rotating one locks the other out. Give every vault its
+own key file.
+
+**Rotation.** `rgt-vault rotate --target master` first keeps the current key as `<key>.prev` (0600, never
+over an existing `.prev`), then writes the new key to a temp file in the same directory (same checks) and
+renames it over the old one. `<key>.prev` is removed only once the vault has installed the re-wrapped
+keychain, or at the next open that works with the new key. If the process dies in between (the re-wrap takes
+seconds of Argon2id), the next open says that the new key does not open the vault but `<key>.prev` does, and
+how to restore it (`mv <key>.prev <key>`). rgt-vault never switches keys on its own. A rotation is refused
+while an unconfirmed `.prev` exists. `provider seal file --force` over an existing key also keeps it as
+`.prev`. With a systemd credential, rotation is refused before anything changes: re-seal a new key (below)
+and restart.
 
 ### Checks on every read
 
@@ -68,6 +78,17 @@ Windows:
   To fix a file: `icacls FILE /inheritance:r /grant:r "%USERNAME%:F" /grant:r SYSTEM:F`.
 - A DACL that cannot be read or parsed is refused. For diagnosis only, `RGT_VAULT_INSECURE_KEY_ACL=1` turns
   ACL refusals into a warning, printed on every start. Do not leave it set.
+- **The directory checks on Windows are weaker than on Unix:** only the key's own directory is checked, and
+  only for being a real directory (not a reparse point). The DACLs of directories are not checked; the
+  protection of a key under your profile is the profile directory's ACL. Keep key files under your profile
+  (the default) or in a directory whose ACL you control.
+
+systemd credentials (Linux): systemd 255 delivers `$CREDENTIALS_DIRECTORY/<name>` as `root:root 0440` with a
+POSIX ACL granting the service user read, in a `root:root 0550` directory on a read-only tmpfs. The mode
+check above would refuse it (group bits show the ACL mask), so **for the credential source only** rgt-vault
+accepts a file that is owned by root, has mode at most 0440, sits in a root-owned directory (and passes the
+directory chain checks) on a read-only tmpfs or ramfs (checked with `fstatfs`), and passes every other file
+check. Verified with systemd 255 (`systemd-run -p User=… -p LoadCredential=rgt-vault-master:…`).
 
 ### Provisioning and migration
 
@@ -97,7 +118,7 @@ sudo mkdir -p /etc/credstore.encrypted
 sudo systemd-creds encrypt --with-key=tpm2 --name=rgt-vault-master \
      /var/lib/rgt-vault/key.txt /etc/credstore.encrypted/rgt-vault-master
 # keep an offline backup of key.txt, then:
-sudo shred -u /var/lib/rgt-vault/key.txt
+sudo shred -u /var/lib/rgt-vault/key.txt; sudo rm -f /var/lib/rgt-vault/key.txt.vault-id
 ```
 
 In the unit:
@@ -112,16 +133,21 @@ rgt-vault reads `$CREDENTIALS_DIRECTORY/rgt-vault-master` there, with the checks
 its own for this. `--with-key=tpm2` seals the key to this machine's TPM. Add `--tpm2-pcrs=` to bind it to the
 boot state too; re-seal after firmware updates. `--with-key=host` uses `/var/lib/systemd/credential.secret`
 instead, which protects only against copying the credential file alone. To **rotate**, generate a new key,
-re-run `systemd-creds encrypt` and restart: `rotate --target master` is refused for a credential. (The
-ownership and mode systemd gives the credential files have not been checked on a real host by this project;
-the checks accept files owned by the service user or root, mode 0400.)
+re-run `systemd-creds encrypt` and restart: `rotate --target master` is refused for a credential.
+
+If `$CREDENTIALS_DIRECTORY` is set (rgt-vault runs inside a unit with credentials) but holds no
+`rgt-vault-master`, the provider refuses instead of falling back to a plaintext default key file. Pass
+`--master-key-file` to use a key file explicitly. The credential's ownership and mode under systemd 255 are
+described under the checks above.
 
 ## When the keyring is unreachable
 
-`rgt-vault init` checks the provider before it creates vault.db. With no Secret Service on the session D-Bus
+`rgt-vault init` checks the provider, without creating anything, before it creates vault.db. Concurrent
+`init`s of the same vault are serialised with a lock file (`vault.db.init.lock`, which stays). With no Secret Service on the session D-Bus
 (Linux), no logon session (Windows, error 1312) or a locked Keychain (macOS), it exits 1. It lists the
 options above, `--provider file` first, and creates no files. If vault.db was created in that run and opening
-then fails, `init` removes vault.db, -wal, -shm and keychain.json again (only the files it created).
+then fails, `init` removes vault.db, -wal, -shm, keychain.json and a key file bootstrapped in that run (only
+files it created, and never those of a vault that already existed).
 `serve` and the offline commands print how to reach the keyring or move the key to a file.
 
 ## Threat model

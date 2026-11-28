@@ -70,7 +70,7 @@ DeviceAllow=/dev/tpmrm0 rw
 #   sudo mkdir -p /etc/credstore.encrypted
 #   sudo systemd-creds encrypt --with-key=tpm2 --name=rgt-vault-master \
 #        /var/lib/rgt-vault/key.txt /etc/credstore.encrypted/rgt-vault-master
-#   sudo shred -u /var/lib/rgt-vault/key.txt
+#   sudo shred -u /var/lib/rgt-vault/key.txt; sudo rm -f /var/lib/rgt-vault/key.txt.vault-id
 # then, instead of the TPM lines above (Environment=VAULT_TPM_*,
 # SupplementaryGroups=tss, BindPaths=, DeviceAllow=), use
 #   LoadCredentialEncrypted=rgt-vault-master:/etc/credstore.encrypted/rgt-vault-master

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/secfile"
 )
@@ -66,13 +67,29 @@ type FileOptions struct {
 
 // FileProvider reads the master secret from a key file: an explicit path or
 // the per-vault default path. It implements [Rotator], [Bootstrapper],
-// VaultBinder and Probe.
+// VaultBinder, MasterRecovery and Probe.
+//
+// Beside the key file <key> it keeps:
+//   - <key>.vault-id: the id of the vault the key belongs to, written once the
+//     key has unwrapped that vault's keychain. A key bound to another vault is
+//     refused, so two vaults never share (and one never rotates away) a key.
+//   - <key>.prev: the key from before a master rotation, until the vault has
+//     opened with the new key. A crash in the middle of a rotation therefore
+//     never leaves the vault without a key that opens it.
 type FileProvider struct {
 	path     string // the key file; empty until BindVault for the default source
 	keysDir  string // non-empty for the default (per-vault) source
 	explicit bool
+	vaultID  string
+	created  []string // files this process created (init cleans them up on failure)
 	opts     secfile.Options
 }
+
+// PrevPath is where the key from before an unconfirmed rotation is kept.
+func PrevPath(keyPath string) string { return keyPath + ".prev" }
+
+// VaultIDPath is the sidecar that binds a key file to one vault.
+func VaultIDPath(keyPath string) string { return keyPath + ".vault-id" }
 
 // CredentialProvider reads the master secret from a systemd credential. It
 // is read-only: it does not implement [Rotator], so a master rotation is
@@ -125,13 +142,16 @@ func NewFileProvider(o FileOptions) (MasterProvider, error) {
 	case credDir != "":
 		p := filepath.Join(credDir, name)
 		if _, err := os.Lstat(p); err == nil {
-			return &CredentialProvider{path: p, opts: opts}, nil
+			copts := opts
+			copts.Credential = true
+			return &CredentialProvider{path: p, opts: copts}, nil
 		}
-		if named {
-			return nil, fmt.Errorf("%w: systemd credential %q not found in $%s (%s): add "+
-				"LoadCredentialEncrypted=%s:/etc/credstore.encrypted/%s (or LoadCredential=) to the unit",
-				ErrMasterSecretUnavailable, name, EnvCredentialsDirectory, credDir, name, name)
-		}
+		// Running under systemd without the credential: never fall back to a
+		// plaintext default key file silently (review M2).
+		return nil, fmt.Errorf("%w: systemd credential %q not found in $%s (%s): add "+
+			"LoadCredentialEncrypted=%s:/etc/credstore.encrypted/%s (or LoadCredential=) to the unit, "+
+			"or pass --master-key-file PATH to use a key file explicitly",
+			ErrMasterSecretUnavailable, name, EnvCredentialsDirectory, credDir, name, name)
 	case named:
 		return nil, fmt.Errorf("%w: %s is set but $%s is not: the credential exists only inside a systemd unit "+
 			"with LoadCredentialEncrypted=%s:/etc/credstore.encrypted/%s",
@@ -156,22 +176,42 @@ func DefaultKeyPath(keysDir, vaultID string) string {
 
 var vaultIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 
-// BindVault sets the per-vault default path. The vault calls it once, after
-// reading the vault id and before Bootstrap/GetMasterSecret. It is a no-op
-// for an explicit path.
+// BindVault sets the per-vault default path and refuses a key file that is
+// bound to another vault (<key>.vault-id). The vault calls it once, after
+// reading the vault id and before Bootstrap/GetMasterSecret.
 func (p *FileProvider) BindVault(vaultID string) error {
-	if p.explicit {
-		return nil
-	}
 	if !vaultIDPattern.MatchString(vaultID) || len(vaultID) > 128 {
 		return fmt.Errorf("file provider: vault id %q cannot name a key file", vaultID)
 	}
-	path := DefaultKeyPath(p.keysDir, vaultID)
-	if p.path != "" && p.path != path {
-		return fmt.Errorf("file provider: already bound to %s", p.path)
+	if p.vaultID != "" && p.vaultID != vaultID {
+		return fmt.Errorf("file provider: already bound to vault %s", p.vaultID)
 	}
-	p.path = path
+	if !p.explicit {
+		p.path = DefaultKeyPath(p.keysDir, vaultID)
+	}
+	p.vaultID = vaultID
+	owner, err := p.boundVault()
+	if err != nil {
+		return err
+	}
+	if owner != "" && owner != vaultID {
+		return fmt.Errorf("%w: master key file %s belongs to vault %s, not to this vault (%s): two vaults must not "+
+			"share a key file (rotating one would lock the other out). Give this vault its own key file",
+			ErrMasterSecretUnavailable, p.path, owner, vaultID)
+	}
 	return nil
+}
+
+// boundVault returns the vault id recorded in <key>.vault-id, or "".
+func (p *FileProvider) boundVault() (string, error) {
+	b, err := secfile.OpenSecret(VaultIDPath(p.path), secfile.Options{MaxSize: 256, InsecureACL: p.opts.InsecureACL, Warn: p.opts.Warn})
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("vault binding of the master key file: %w", err)
+	}
+	return strings.TrimSpace(string(b)), nil
 }
 
 // Location describes where the key is (for messages; never the key).
@@ -182,9 +222,10 @@ func (p *FileProvider) Location() string {
 	return filepath.Join(p.keysDir, "<vault-id>.key")
 }
 
-// Probe checks that the provider can work before a vault is created: an
-// existing explicit key file must pass every check; otherwise its directory
-// must be creatable and safe.
+// Probe checks, without creating anything, that the provider can work
+// before a vault is created: an existing explicit key file must pass every
+// check; otherwise its directory (or the nearest existing ancestor) must be
+// safe.
 func (p *FileProvider) Probe() error {
 	if p.path != "" {
 		if _, err := os.Lstat(p.path); err == nil {
@@ -192,10 +233,14 @@ func (p *FileProvider) Probe() error {
 			Wipe(secret)
 			return err
 		}
-		return secfile.EnsureDir(filepath.Dir(p.path))
+		return secfile.CheckCreatable(filepath.Dir(p.path))
 	}
-	return secfile.EnsureDir(p.keysDir)
+	return secfile.CheckCreatable(p.keysDir)
 }
+
+// CreatedFiles are the files this provider created in this process (for
+// init's cleanup after a failure).
+func (p *FileProvider) CreatedFiles() []string { return append([]string(nil), p.created...) }
 
 func (p *FileProvider) bound() error {
 	if p.path == "" {
@@ -231,14 +276,43 @@ func (p *FileProvider) BootstrapMasterSecret() error {
 	if err := secfile.EnsureDir(filepath.Dir(p.path)); err != nil {
 		return fmt.Errorf("master key directory: %w", err)
 	}
-	return writeNewKey(p.path)
+	created, err := writeNewKey(p.path)
+	if created {
+		p.created = append(p.created, p.path)
+	}
+	return err
 }
 
-// RotateMasterSecret writes a new key to a temp file beside the old one and
-// renames it over it.
+// RotateMasterSecret keeps the current key as <key>.prev, then writes a new
+// key to a temp file beside the old one and renames it over it. <key>.prev
+// is removed only once the vault has installed (or opened with) the new key
+// (ConfirmMasterSecret), so a crash before the re-wrapped keychain is on
+// disk leaves the old key available.
+//
+// The vault calls it only after the current key has unwrapped the keychain
+// (vault.RotateMaster loads it first), so the key saved as .prev is good.
 func (p *FileProvider) RotateMasterSecret() ([]byte, error) {
 	if err := p.bound(); err != nil {
 		return nil, err
+	}
+	if owner, err := p.boundVault(); err != nil {
+		return nil, err
+	} else if owner != "" && owner != p.vaultID {
+		return nil, fmt.Errorf("file provider: refusing to rotate %s: it belongs to vault %s", p.path, owner)
+	}
+	prev := PrevPath(p.path)
+	if _, err := os.Lstat(prev); err == nil {
+		return nil, fmt.Errorf("file provider: refusing to rotate: %s exists from an earlier rotation that was not "+
+			"confirmed. Re-open the vault once (that removes it when the current key works), or check it and remove it", prev)
+	}
+	old, err := secfile.OpenSecret(p.path, p.opts)
+	if err != nil {
+		return nil, fmt.Errorf("read the current master key file: %w", err)
+	}
+	err = secfile.CreateSecret(prev, old)
+	Wipe(old)
+	if err != nil {
+		return nil, fmt.Errorf("keep the previous master key: %w", err)
 	}
 	raw, err := newMasterSecret()
 	if err != nil {
@@ -248,27 +322,80 @@ func (p *FileProvider) RotateMasterSecret() ([]byte, error) {
 	defer Wipe(text)
 	if err := secfile.ReplaceSecret(p.path, text); err != nil {
 		Wipe(raw)
+		_ = os.Remove(prev) // the old key is still in place
 		return nil, fmt.Errorf("write master key file: %w", err)
 	}
 	return raw, nil
 }
 
-// writeNewKey creates path, exclusively, with a fresh key.
-func writeNewKey(path string) error {
-	raw, err := newMasterSecret()
+// PreviousMasterSecret returns the key kept in <key>.prev.
+func (p *FileProvider) PreviousMasterSecret() ([]byte, error) {
+	if err := p.bound(); err != nil {
+		return nil, err
+	}
+	return readKeyFile(PrevPath(p.path), p.opts, func() error {
+		return fmt.Errorf("no previous master key: %w", fs.ErrNotExist)
+	})
+}
+
+// ConfirmMasterSecret is called once the current key has unwrapped the
+// keychain of vaultID: it removes <key>.prev and records the binding in
+// <key>.vault-id (once).
+func (p *FileProvider) ConfirmMasterSecret(vaultID string) error {
+	if err := p.bound(); err != nil {
+		return err
+	}
+	if err := os.Remove(PrevPath(p.path)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if p.opts.Warn != nil {
+			p.opts.Warn("WARNING: could not remove the previous master key " + PrevPath(p.path) + ": " + err.Error())
+		}
+	}
+	owner, err := p.boundVault()
 	if err != nil {
 		return err
+	}
+	if owner == "" {
+		err := secfile.CreateSecret(VaultIDPath(p.path), []byte(vaultID+"\n"))
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("record the vault of the master key file: %w", err)
+		}
+		if owner, err = p.boundVault(); err != nil { // another process wrote it first
+			return err
+		}
+	}
+	if owner == vaultID {
+		return nil
+	}
+	return fmt.Errorf("%w: master key file %s is bound to vault %s, not %s", ErrMasterSecretUnavailable, p.path, owner, vaultID)
+}
+
+// RecoveryHint says how to roll back to the previous key.
+func (p *FileProvider) RecoveryHint() string {
+	prev := PrevPath(p.Location())
+	return fmt.Sprintf("the previous master key is kept in %s; to go back to it, replace the key file with it "+
+		"(mv %s %s) and open the vault again", prev, prev, p.Location())
+}
+
+// writeNewKey creates path, exclusively, with a fresh key. created is false
+// when another process created it first (that file is used).
+func writeNewKey(path string) (created bool, err error) {
+	raw, err := newMasterSecret()
+	if err != nil {
+		return false, err
 	}
 	defer Wipe(raw)
 	text := EncodeKeyFile(raw)
 	defer Wipe(text)
 	if err := secfile.CreateSecret(path, text); err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			return nil // lost a race with another init: use that file
+			return false, nil // lost a race with another init: use that file
 		}
-		return fmt.Errorf("create master key file: %w", err)
+		return false, fmt.Errorf("create master key file: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 // Location is the credential file.
@@ -318,6 +445,18 @@ func EncodeKeyFile(raw []byte) []byte {
 // errKeyFormat never includes the file's content.
 var errKeyFormat = errors.New("not a master key: expected urlsafe-base64 of 32 bytes (44 characters) or exactly 32 raw bytes")
 
+var errPrintableKey = errors.New("not a master key: 32 printable characters look like a passphrase, not 32 random bytes; " +
+	"generate a key with `rgt-vault provider seal file --generate`")
+
+func printableASCII(b []byte) bool {
+	for _, c := range b {
+		if c < 0x20 || c > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
 // DecodeKeyFile accepts the base64 text form (padded or not, either
 // alphabet, surrounding whitespace ignored) or exactly 32 raw bytes.
 func DecodeKeyFile(b []byte) ([]byte, error) {
@@ -325,6 +464,11 @@ func DecodeKeyFile(b []byte) ([]byte, error) {
 		return nil, errKeyFormat
 	}
 	if len(b) == MasterSecretSize {
+		if printableASCII(b) {
+			// 32 random bytes are all printable with probability ~1e-14:
+			// this is a passphrase or a truncated text key, not a key.
+			return nil, errPrintableKey
+		}
 		return append([]byte(nil), b...), nil
 	}
 	raw, err := decodeKeyringSecret(string(b))

@@ -374,3 +374,112 @@ func TestUnreadableFile(t *testing.T) {
 		t.Fatalf("OpenSecret(mode 000) = %v", err)
 	}
 }
+
+// Review H3: the systemd-credential exception, one row per condition.
+func TestCredentialRule(t *testing.T) {
+	root := &syscall.Stat_t{Uid: 0}
+	user := &syscall.Stat_t{Uid: 1000}
+	cases := []struct {
+		name      string
+		perm      fs.FileMode
+		file, dir *syscall.Stat_t
+		mem, ro   bool
+		fsErr     error
+		ok        bool
+	}{
+		{"systemd 255: root 0440 on ro tmpfs", 0o440, root, root, true, true, nil, true},
+		{"root 0400", 0o400, root, root, true, true, nil, true},
+		{"file not root", 0o440, user, root, true, true, nil, false},
+		{"group writable", 0o460, root, root, true, true, nil, false},
+		{"other readable", 0o444, root, root, true, true, nil, false},
+		{"dir not root", 0o440, root, user, true, true, nil, false},
+		{"not in memory", 0o440, root, root, false, true, nil, false},
+		{"not read-only", 0o440, root, root, true, false, nil, false},
+		{"statfs failed", 0o440, root, root, true, true, errors.New("x"), false},
+		{"no owner info", 0o440, nil, root, true, true, nil, false},
+	}
+	for _, c := range cases {
+		if err := credentialRule(c.perm, c.file, c.dir, c.mem, c.ro, c.fsErr); (err == nil) != c.ok {
+			t.Errorf("%s: err = %v, want ok=%v", c.name, err, c.ok)
+		}
+	}
+}
+
+// The exception is used only with Options.Credential, only for the mode
+// check, and a non-root file is still refused.
+func TestCredentialOptionOnRealFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("needs a non-root owner")
+	}
+	d := keyDir(t)
+	p := filepath.Join(d, "rgt-vault-master")
+	writeKey(t, p, 0o440)
+	old := fsInfo
+	t.Cleanup(func() { fsInfo = old })
+	fsInfo = func(*os.File) (bool, bool, error) { return true, true, nil }
+	for _, o := range []Options{{}, {Credential: true}} {
+		_, err := OpenSecret(p, o)
+		if !errors.Is(err, ErrInsecure) || !strings.Contains(err.Error(), "chmod 600") {
+			t.Fatalf("Credential=%v: err = %v", o.Credential, err)
+		}
+	}
+	if _, err := OpenSecret(p, Options{Credential: true}); !strings.Contains(err.Error(), "not owned by root") {
+		t.Fatalf("reason not given: %v", err)
+	}
+	// With a file that satisfies the rule, only Options.Credential lifts the
+	// mode refusal, and never any other refusal (here: a hard link).
+	oldCheck := credentialCheck
+	t.Cleanup(func() { credentialCheck = oldCheck })
+	credentialCheck = func(string, fs.FileInfo, *os.File) error { return nil }
+	if _, err := OpenSecret(p, Options{}); !errors.Is(err, ErrInsecure) {
+		t.Fatalf("exception applied without Options.Credential: %v", err)
+	}
+	if _, err := OpenSecret(p, Options{Credential: true}); err != nil {
+		t.Fatalf("credential-shaped file refused: %v", err)
+	}
+	if err := os.Link(p, p+".2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenSecret(p, Options{Credential: true}); !errors.Is(err, ErrInsecure) || !strings.Contains(err.Error(), "hard links") {
+		t.Fatalf("hard-linked credential accepted: %v", err)
+	}
+}
+
+func TestOpenNoFollow(t *testing.T) {
+	d := keyDir(t)
+	real := filepath.Join(d, "k")
+	writeKey(t, real, 0o600)
+	link := filepath.Join(d, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	// What a swap between EvalSymlinks and open would present.
+	if _, err := openNoFollow(link); !errors.Is(err, ErrInsecure) || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("openNoFollow(symlink) = %v", err)
+	}
+	f, err := openNoFollow(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+}
+
+func TestCheckCreatable(t *testing.T) {
+	base := secureTemp(t)
+	deep := filepath.Join(base, "a", "b", "c")
+	if err := CheckCreatable(deep); err != nil {
+		t.Fatalf("CheckCreatable: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "a")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal("CheckCreatable created a directory")
+	}
+	chmod(t, base, 0o777)
+	if err := CheckCreatable(deep); !errors.Is(err, ErrInsecure) {
+		t.Fatalf("under a world-writable dir: %v", err)
+	}
+	f := filepath.Join(keyDir(t), "file")
+	writeKey(t, f, 0o600)
+	if err := CheckCreatable(filepath.Join(f, "x")); err == nil {
+		t.Fatal("CheckCreatable under a regular file succeeded")
+	}
+}

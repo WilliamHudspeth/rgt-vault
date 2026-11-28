@@ -66,6 +66,11 @@ type Options struct {
 	InsecureACL bool
 	// Warn receives the warning that replaces a refusal under InsecureACL.
 	Warn func(msg string)
+	// Credential (Linux) also accepts a systemd credential that is owned by
+	// root and group-readable through a POSIX ACL mask (mode at most 0440),
+	// in a root-owned directory, on a read-only tmpfs/ramfs. Every other
+	// check still applies.
+	Credential bool
 }
 
 func (o Options) maxSize() int64 {
@@ -121,6 +126,28 @@ func CheckDir(dir string) error {
 		return fmt.Errorf("directory %s: %w", dir, err)
 	}
 	return checkDirChain(resolved)
+}
+
+// CheckCreatable checks, without creating anything, that dir could be made
+// by [EnsureDir]: dir itself if it exists, otherwise its nearest existing
+// ancestor, must pass [CheckDir].
+func CheckCreatable(dir string) error {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	for d := abs; ; {
+		if _, err := os.Lstat(d); err == nil {
+			return CheckDir(d)
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("directory %s: %w", d, err)
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return fmt.Errorf("directory %s: no existing ancestor", dir)
+		}
+		d = parent
+	}
 }
 
 // EnsureDir creates dir (and its parents) with mode 0700 if it is missing,
