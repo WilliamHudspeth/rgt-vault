@@ -219,8 +219,9 @@ func TestErrorStatusMapping(t *testing.T) {
 			if code != c.status || m["error"] != c.errTyp {
 				t.Fatalf("got %d %s, want %d %s", code, rec.Body.String(), c.status, c.errTyp)
 			}
-			if code != 401 && m["incident_id"] == "" {
-				t.Errorf("no incident_id: %v", m)
+			// RGT-418/419: EVERY error answer carries an incident id, 401 too.
+			if id, _ := m["incident_id"].(string); len(id) != 16 {
+				t.Errorf("no incident_id on %d: %v", code, m)
 			}
 		})
 	}
