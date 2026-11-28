@@ -53,8 +53,10 @@ SupplementaryGroups=tss
 BindPaths=-/dev/tpmrm0
 DeviceAllow=/dev/tpmrm0 rw
 
-# Production mode (RGT-427, ASVS 14.3): APP_ENV=production keeps the build
-# version out of the unauthenticated /healthz answer. Error responses are
+# Production mode (RGT-427, ASVS 14.3): APP_ENV=production marks the unit as
+# a production deployment. The unauthenticated /healthz answer is always just
+# {"status":"ok"} (the build version is only shown to audit/operator tokens),
+# so the variable no longer changes it. Error responses are
 # generic in every mode (a short message plus an incident_id; panics and
 # internal errors are logged server-side under that id, never sent to the
 # client). scripts/lint_systemd_units.sh fails if a unit running

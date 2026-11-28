@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/buildinfo"
 )
 
 // newTestServer returns an MCP Server pointed at the given httptest server.
@@ -82,6 +84,10 @@ func TestHandle_Initialize(t *testing.T) {
 	}
 	if si["name"] != "rgt-vault-mcp" {
 		t.Errorf("serverInfo.name = %q, want rgt-vault-mcp", si["name"])
+	}
+	// serverInfo.version is the build's version (RGT-531), not a literal.
+	if si["version"] != buildinfo.Version() || si["version"] == "" || si["version"] == "0.3.0" {
+		t.Errorf("serverInfo.version = %q, want buildinfo.Version() %q", si["version"], buildinfo.Version())
 	}
 }
 

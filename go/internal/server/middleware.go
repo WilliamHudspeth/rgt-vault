@@ -9,8 +9,8 @@
 //     for allowed origins
 //  5. Method allow-list - unknown verbs and TRACE get 405 before authentication
 //  6. Strict path check - "..", "//", "\\" and control characters get 400
-//  7. Bearer token authentication (skipped for /healthz and the XML policy
-//     stubs) against the per-agent token store, then the route's scope
+//  7. Bearer token authentication (skipped for the XML policy stubs; optional
+//     for /healthz, see AuthMiddleware) against the per-agent token store, then the route's scope
 //     (authz.go). Failures are audited (AUTH_FAILED / AUTHZ_DENIED) and
 //     repeated failures from one source are rate-limited (429). With the
 //     deprecated legacy shared token, /v1/requests* takes the operator token
@@ -342,7 +342,12 @@ func operatorPath(path string) bool {
 
 func publicRoute(r *http.Request) bool {
 	return r.Method == http.MethodGet &&
-		(r.URL.Path == "/healthz" || r.URL.Path == "/crossdomain.xml" || r.URL.Path == "/clientaccesspolicy.xml")
+		(r.URL.Path == "/crossdomain.xml" || r.URL.Path == "/clientaccesspolicy.xml")
+}
+
+// healthzRoute reports whether the request is GET /healthz.
+func healthzRoute(r *http.Request) bool {
+	return r.Method == http.MethodGet && handlers.RoutePath(r) == "/healthz"
 }
 
 // authenticate identifies the caller of r.
@@ -350,6 +355,9 @@ func (mw *Middleware) authenticate(r *http.Request) (auth.Principal, error) {
 	header := r.Header.Get("Authorization")
 	if mw.Tokens != nil {
 		return mw.Tokens.Authenticate(header)
+	}
+	if healthzRoute(r) {
+		return mw.authenticateLegacyHealthz(header)
 	}
 	// Legacy shared token files: the route picks the file, as before H1.
 	ts := mw.TokenStore
@@ -366,8 +374,71 @@ func (mw *Middleware) authenticate(r *http.Request) (auth.Principal, error) {
 	return auth.Principal{TokenID: tokenID, Legacy: true, Scopes: append([]auth.Scope(nil), auth.AllScopes...)}, nil
 }
 
-// AuthMiddleware authenticates every route except the public ones and
-// enforces the route's scope (authz.go). It does NOT exempt OPTIONS: a
+// authenticateLegacyHealthz identifies a /healthz caller in legacy
+// shared-token mode, where /healthz has no route-to-file rule of its own. It
+// accepts either file, because the detailed body is for the operator: a token
+// from the operator file holds every scope (as it does on /v1/requests*),
+// while one from the agent file holds the audit scope only when
+// LegacyPrivilegedRoutes already lets that shared token read the audit log,
+// so /healthz never shows an agent token more than /v1/audit would.
+func (mw *Middleware) authenticateLegacyHealthz(header string) (auth.Principal, error) {
+	all := func(id string) auth.Principal {
+		return auth.Principal{TokenID: id, Legacy: true, Scopes: append([]auth.Scope(nil), auth.AllScopes...)}
+	}
+	var firstErr error
+	if mw.OperatorTokenStore != nil {
+		id, err := mw.OperatorTokenStore.Verify(header)
+		if err == nil {
+			return all(id), nil
+		}
+		firstErr = err
+	}
+	if mw.TokenStore != nil {
+		id, err := mw.TokenStore.Verify(header)
+		if err == nil {
+			p := all(id)
+			if !mw.LegacyPrivilegedRoutes {
+				p.Scopes = []auth.Scope{auth.ScopeAgent}
+			}
+			return p, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr == nil {
+		firstErr = errors.New("no token store configured")
+	}
+	return auth.Principal{}, firstErr
+}
+
+// serveHealthz runs /healthz authentication, which is optional: a valid
+// token attaches its principal (so the handler can add detail for audit and
+// operator scopes), and anything else (no header, malformed, unknown,
+// expired, revoked) simply proceeds without one and gets the minimal body.
+//
+// By design this path does not feed the failed-authentication limiter, write
+// AUTH_FAILED rows, or enforce the route table: /healthz is a public
+// liveness probe, so a monitor or scanner hitting it with junk can neither
+// lock out real agents sharing the source address nor flood the audit log,
+// and every caller sees the same status and body whatever the token state.
+// A token-store fault is logged under an incident id and never changes the
+// response.
+func (mw *Middleware) serveHealthz(next http.Handler, w http.ResponseWriter, r *http.Request) {
+	p, err := mw.authenticate(r)
+	if err == nil {
+		next.ServeHTTP(w, r.WithContext(handlers.WithPrincipal(r.Context(), p)))
+		return
+	}
+	if status, _, _ := authFailure(err); status != http.StatusUnauthorized {
+		log.Printf("ERROR incident=%s status=%d token verification unavailable on /healthz: %s",
+			handlers.NewIncidentID(), status, handlers.LogSafe(err.Error()))
+	}
+	next.ServeHTTP(w, r)
+}
+
+// AuthMiddleware authenticates every route except the public ones (and
+// /healthz, whose authentication is optional: serveHealthz) and enforces the route's scope (authz.go). It does NOT exempt OPTIONS: a
 // legitimate preflight is answered earlier by CORSMiddleware, and any other
 // OPTIONS request must authenticate like everything else.
 //
@@ -382,6 +453,10 @@ func (mw *Middleware) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if publicRoute(r) {
 			next.ServeHTTP(w, r)
+			return
+		}
+		if healthzRoute(r) {
+			mw.serveHealthz(next, w, r)
 			return
 		}
 		p, err := mw.authenticate(r)

@@ -26,21 +26,29 @@ func durationSeconds(n int) time.Duration { return time.Duration(n) * time.Secon
 // --- health, auth ---------------------------------------------------------
 
 func TestHealthCheck(t *testing.T) {
-	e := newEnv(t, envOpts{})
-	code, m, rec := e.call("GET", "/healthz", "", nil)
-	if code != 200 || m["status"] != "ok" || m["vault_id"] != e.stack.Vault.VaultID() {
-		t.Fatalf("healthz: %d %s", code, rec.Body.String())
+	e := newEnv(t, envOpts{operator: true})
+
+	// Unauthenticated: exactly {"status":"ok"}, nothing about the vault.
+	code, _, rec := e.call("GET", "/healthz", "", nil)
+	if code != 200 || rec.Body.String() != minimalHealthBody {
+		t.Fatalf("unauthenticated healthz: %d %q, want 200 %q", code, rec.Body.String(), minimalHealthBody)
 	}
-	if m["key_epoch"].(float64) != float64(e.stack.Vault.KeyEpoch()) {
-		t.Errorf("key_epoch = %v", m["key_epoch"])
+
+	// With the operator token: the full detailed body, version included.
+	var names []string
+	for _, s := range e.stack.Actions.List() {
+		names = append(names, s.Name)
 	}
-	if !strings.Contains(fmt.Sprint(m["actions"]), "echo") {
-		t.Errorf("actions = %v", m["actions"])
-	}
+	want := &healthWant{vaultID: e.stack.Vault.VaultID(), keyEpoch: int(e.stack.Vault.KeyEpoch()), actions: names}
+	_, _, rec = e.call("GET", "/healthz", e.opTok, nil)
+	wantDetailed(t, "operator token", rec, want)
+
+	// APP_ENV=production has no extra effect any more: same two answers.
 	t.Setenv("APP_ENV", "production")
-	if _, m, _ = e.call("GET", "/healthz", "", nil); m["version"] != "" {
-		t.Errorf("production version = %v", m["version"])
-	}
+	_, _, rec = e.call("GET", "/healthz", "", nil)
+	wantMinimal(t, "production, unauthenticated", rec)
+	_, _, rec = e.call("GET", "/healthz", e.opTok, nil)
+	wantDetailed(t, "production, operator token", rec, want)
 }
 
 func TestAuthRejectsMissingAndWrongTokens(t *testing.T) {

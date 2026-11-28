@@ -409,9 +409,11 @@ func TestRouterRecoversHandlerPanic(t *testing.T) {
 	log.SetOutput(io.Discard)
 	ts := auth.NewTokenStore(filepath.Join(t.TempDir(), "t"))
 	_ = ts.Write("tok")
-	// A nil Vault makes /healthz panic (nil deref) -> proves the router wires recover.
+	// A nil Vault makes an authenticated vault route panic (nil deref) -> proves
+	// the router wires recover. (/healthz no longer touches the vault when
+	// unauthenticated, so it cannot be the trigger.)
 	h := NewRouter(&handlers.Handlers{}, NewMiddleware(ts))
-	rec := do(h, "GET", "/healthz", "", nil, "")
+	rec := do(h, "GET", "/v1/secrets", "tok", nil, "")
 	if rec.Code != 500 || mustJSONError(t, rec)["incident_id"] == "" {
 		t.Errorf("router did not recover: %d %s", rec.Code, rec.Body.String())
 	}
