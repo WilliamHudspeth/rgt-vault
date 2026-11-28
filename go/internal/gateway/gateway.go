@@ -29,6 +29,7 @@ import (
 	"sync/atomic"
 
 	"rgt-vault-server/internal/auth"
+	"rgt-vault-server/internal/logging"
 )
 
 // adminPrefix is the path prefix reserved for the gateway's admin API.
@@ -61,13 +62,24 @@ func (g *Gateway) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
 	}
 	id, err := ts.Verify(r.Header.Get("Authorization"))
 	if err != nil {
-		// Never echo the presented token; log only the failure class.
-		log.Printf("gateway: admin auth failed for %s %s from %s: %v", r.Method, r.URL.Path, r.RemoteAddr, authFailure(err))
+		// Never echo the presented token; log only the failure class and sanitize
+		// request-derived fields so CR/LF/control bytes cannot forge log lines.
+		log.Printf("gateway: admin auth failed for %s %s from %s: %s",
+			logging.SanitizeText(r.Method),
+			logging.SanitizeText(r.URL.Path),
+			logging.SanitizeText(r.RemoteAddr),
+			authFailure(err),
+		)
 		w.Header().Set("WWW-Authenticate", `Bearer realm="rgt-vault-gateway"`)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "operator token required"})
 		return false
 	}
-	log.Printf("gateway: admin %s %s go=%q by token %s", r.Method, path.Clean(r.URL.Path), r.URL.Query().Get("go"), id)
+	log.Printf("gateway: admin %s %s go=%q by token %s",
+		logging.SanitizeText(r.Method),
+		logging.SanitizeText(path.Clean(r.URL.Path)),
+		r.URL.Query().Get("go"),
+		logging.SanitizeText(id),
+	)
 	return true
 }
 
@@ -116,7 +128,11 @@ func NewGateway(pythonURL, goURL string, goPercent int) (*Gateway, error) {
 	// ensuring it always references the live pythonProxy — never a nil or stale copy.
 	g.goProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		g.goFails.Add(1)
-		log.Printf("gateway: Go backend failure: %v; falling back to Python backend", err)
+		errMsg := "<nil>"
+		if err != nil {
+			errMsg = logging.SanitizeText(err.Error())
+		}
+		log.Printf("gateway: Go backend failure: %s; falling back to Python backend", errMsg)
 		g.pythonProxy.ServeHTTP(w, r)
 	}
 

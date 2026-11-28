@@ -3,6 +3,7 @@ package logging
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,6 +62,7 @@ func TestJSONStructureLevelsAndUTCTimestamp(t *testing.T) {
 	var buf bytes.Buffer
 	fixedLocal := time.FixedZone("EST-5", -5*3600)
 	fixedTime := time.Date(2026, 11, 26, 15, 4, 5, 123456000, fixedLocal)
+	attrLocal := time.Date(2026, 11, 27, 12, 0, 0, 0, time.FixedZone("UTC+2", 2*3600))
 
 	lvl := new(slog.LevelVar)
 	lvl.Set(slog.LevelInfo)
@@ -77,23 +79,30 @@ func TestJSONStructureLevelsAndUTCTimestamp(t *testing.T) {
 	}
 	defer func() { _ = closer.Close() }()
 
-	// Below threshold -> suppressed.
 	logger.Debug("debug suppressed")
 	if buf.Len() != 0 {
 		t.Fatalf("debug message emitted at INFO level: %s", buf.String())
 	}
 
-	// Dynamic level change to DEBUG.
 	lvl.Set(slog.LevelDebug)
 	logger.Info("vault ready",
 		slog.String(FieldEvent, "SERVER_START"),
 		slog.String(FieldTokenID, "a1b2c3d4"),
 		slog.String(FieldSecretName, "prod-db"),
+		slog.Time("checked_at", attrLocal),
+		slog.Any("any_time", attrLocal),
 	)
 
 	m := parseJSONLine(t, buf.String())
 	if m[FieldTime] != "2026-11-26T20:04:05.123456Z" {
 		t.Errorf("time = %v, want UTC 2026-11-26T20:04:05.123456Z", m[FieldTime])
+	}
+	// Mutant check (#14): dropping .UTC() on slog.KindTime or time.Time in scrubAny must fail.
+	if m["checked_at"] != "2026-11-27T10:00:00Z" {
+		t.Errorf("checked_at = %v, want UTC 2026-11-27T10:00:00Z", m["checked_at"])
+	}
+	if m["any_time"] != "2026-11-27T10:00:00Z" {
+		t.Errorf("any_time = %v, want UTC 2026-11-27T10:00:00Z", m["any_time"])
 	}
 	if m[FieldLevel] != "INFO" {
 		t.Errorf("level = %v, want INFO", m[FieldLevel])
@@ -113,12 +122,47 @@ func TestJSONStructureLevelsAndUTCTimestamp(t *testing.T) {
 	if m[FieldSource] == nil {
 		t.Error("expected source object when WithAddSource(true)")
 	}
+
+	// Mutant check (#14): direct ReplaceAttr usage without sanitizingHandler
+	// still normalizes top-level record timestamps to UTC, scrubs msg, preserves
+	// level/source, and scrubs sensitive attributes.
+	var rawBuf bytes.Buffer
+	rawHandler := slog.NewJSONHandler(&rawBuf, &slog.HandlerOptions{
+		AddSource:   true,
+		ReplaceAttr: NewRedactor().ReplaceAttr,
+	})
+	rec := slog.NewRecord(fixedTime, slog.LevelInfo, "direct Bearer TOP_SECRET_DIRECT_TOK", 0)
+	rec.AddAttrs(slog.String("password", "DIRECT_PW_99"), slog.String("region", "us-west-2"), slog.Attr{})
+	if err := rawHandler.Handle(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rawBuf.String(), "TOP_SECRET_DIRECT_TOK") || strings.Contains(rawBuf.String(), "DIRECT_PW_99") {
+		t.Fatalf("ReplaceAttr direct leaked secret: %s", rawBuf.String())
+	}
+	rm := parseJSONLine(t, rawBuf.String())
+	if rm[FieldTime] != "2026-11-26T20:04:05.123456Z" {
+		t.Errorf("ReplaceAttr direct time = %v, want UTC", rm[FieldTime])
+	}
+	if rm["region"] != "us-west-2" {
+		t.Errorf("ReplaceAttr direct region = %v, want us-west-2", rm["region"])
+	}
+	if Default() == nil {
+		t.Error("Default() returned nil")
+	}
 }
 
+// sampleCredStruct exercises:
+//   - sensitive Go struct field name with non-sensitive json tag (MasterKey `json:"mk"`),
+//   - non-sensitive Go field name with sensitive json tag (Opaque `json:"client_secret"`),
+//   - untagged CamelCase fields (PrivateKey, WrappedDEK, PublicLabel),
+//   - json:"-" and unexported fields (#4, #14).
 type sampleCredStruct struct {
 	Agent         string `json:"agent"`
-	BearerToken   string `json:"bearer_token"`
-	SecretValue   string `json:"value"`
+	MasterKey     string `json:"mk"`
+	Opaque        string `json:"client_secret"`
+	PrivateKey    string
+	WrappedDEK    string
+	PublicLabel   string
 	InternalNotes string `json:"-"`
 	unexported    string
 }
@@ -135,11 +179,43 @@ func (c customLogValuer) LogValue() slog.Value {
 	)
 }
 
+type stringTokenValuer struct{ line string }
+
+func (s stringTokenValuer) LogValue() slog.Value {
+	return slog.StringValue(s.line)
+}
+
 type recursiveValuer struct{}
 
 func (recursiveValuer) LogValue() slog.Value {
 	return slog.AnyValue(recursiveValuer{})
 }
+
+type panickingValuer struct{ secret string }
+
+func (p panickingValuer) LogValue() slog.Value {
+	panic("valuer boom " + p.secret)
+}
+
+type typedNilError struct{ msg string }
+
+func (e *typedNilError) Error() string { return e.msg } // dereferences nil if called on (*typedNilError)(nil)
+
+type panickingError struct{ secret string }
+
+func (p panickingError) Error() string { panic("error boom " + p.secret) }
+
+type panickingStringer struct{ secret string }
+
+func (p panickingStringer) String() string { panic("stringer boom " + p.secret) }
+
+type timeLogValuer struct{ t time.Time }
+
+func (tv timeLogValuer) LogValue() slog.Value { return slog.TimeValue(tv.t) }
+
+type intLogValuer struct{ n int }
+
+func (iv intLogValuer) LogValue() slog.Value { return slog.IntValue(iv.n) }
 
 type cyclicNode struct {
 	Name string
@@ -167,7 +243,7 @@ func TestRedactionAcrossTypesAndNesting(t *testing.T) {
 
 	hdr := http.Header{
 		"Authorization": {"Bearer " + rawBearer},
-		"Cookie":        {"session=" + rawSecret},
+		"Cookie":        {"a=1; sid=" + rawSecret},
 		"X-Request-Id":  {"req-123"},
 		"Accept":        {"application/json", "text/plain"},
 	}
@@ -176,24 +252,32 @@ func TestRedactionAcrossTypesAndNesting(t *testing.T) {
 		"level1": map[string]any{
 			"password":    rawSecret,
 			"totp_code":   rawTOTP,
-			"wrapped_dek": rawDEK,
-			"safe_list":   []any{"ok", map[string]string{"api_key": rawSecret, "code": rawTOTP, "region": "us-east-1"}},
+			"wrappedDek":  rawDEK,
+			"SigningKey":  rawSecret,
+			"HarnessKey":  rawSecret,
+			"AccessKey":   rawSecret,
+			"safe_list":   []any{"ok", map[string]string{"api_key": rawSecret, "code": rawTOTP, "pin": "7391", "region": "us-east-1"}},
+			rawBearer:     "secret-used-as-map-key",
+			"Bearer " + rawSecret: "bearer-map-key",
 		},
 		"raw_bytes": []byte(rawSecret),
 	}
 
 	cs := &sampleCredStruct{
 		Agent:         "agent-alpha",
-		BearerToken:   rawBearer,
-		SecretValue:   rawSecret,
+		MasterKey:     rawSecret,
+		Opaque:        rawSecret,
+		PrivateKey:    rawSecret,
+		WrappedDEK:    rawDEK,
+		PublicLabel:   "public-metadata-ok",
 		InternalNotes: rawSecret,
 		unexported:    rawSecret,
 	}
 
 	child := logger.
-		With(slog.String("operator_token", rawBearer), slog.Int("code", 200), slog.String("code", rawTOTP)).
+		With(slog.String("operator_token", rawBearer), slog.Int("code", 200), slog.Int("pin", 7), slog.String("code", rawTOTP)).
 		WithGroup("").
-		WithGroup("auth_ctx")
+		WithGroup("req_ctx")
 
 	var nilStructPtr *sampleCredStruct
 	var nilCustomMap map[int]string
@@ -201,9 +285,10 @@ func TestRedactionAcrossTypesAndNesting(t *testing.T) {
 	cyc := &cyclicNode{Name: "cycle"}
 	cyc.Next = cyc
 
+	errVal := errors.New("connect postgres://admin:" + rawSecret + "@db.internal:5432/vault failed")
+
 	child.Info("operation failed: Authorization: Bearer "+rawBearer,
 		slog.String("empty", ""),
-		slog.Time("checked_at", time.Date(2026, 11, 27, 12, 0, 0, 0, time.FixedZone("UTC+2", 7200))),
 		slog.Bool("flag", true),
 		slog.Float64("ratio", 0.5),
 		slog.Duration("elapsed", 5*time.Millisecond),
@@ -224,31 +309,247 @@ func TestRedactionAcrossTypesAndNesting(t *testing.T) {
 			slog.Any("int_map", customMap),
 			slog.Any("int_slice", []int{10, 20}),
 			slog.Any("str_slice", []string{"Bearer " + rawBearer, "plain"}),
-			slog.Any("time_any", time.Now()),
 			slog.Any("valuer", customLogValuer{token: rawBearer, agent: "bot-1"}),
+			slog.Any("str_valuer", stringTokenValuer{line: "token=" + rawBearer}),
 			slog.Any("loop_valuer", recursiveValuer{}),
-			slog.Any("err", errors.New("connect postgres://admin:"+rawSecret+"@db.internal:5432/vault failed")),
+			slog.Any("err", errVal),
 		),
 	)
 
 	out := buf.String()
-	for _, forbidden := range []string{rawBearer, rawSecret, rawTOTP, rawDEK, rawCustom} {
+	for _, forbidden := range []string{rawBearer, rawSecret, rawTOTP, rawDEK, rawCustom, "7391"} {
 		if strings.Contains(out, forbidden) {
 			t.Errorf("log output leaked sensitive value %q:\n%s", forbidden, out)
 		}
 	}
 
-	// Positive assertions: non-sensitive metadata and integer status code remain intact.
-	for _, expected := range []string{"agent-alpha", "req-123", "us-east-1", "bot-1", `"code":200`, RedactedPlaceholder} {
+	// Positive assertions including mutant checks (#14):
+	//   - non-sensitive struct field PublicLabel stays intact while mk, client_secret,
+	//     PrivateKey, and WrappedDEK are redacted;
+	//   - integer code=200 and pin=7 stay intact;
+	//   - case error: produces the scrubbed error string (not an empty struct {}).
+	for _, expected := range []string{
+		"agent-alpha",
+		"public-metadata-ok",
+		"req-123",
+		"us-east-1",
+		"bot-1",
+		`"code":200`,
+		`"pin":7`,
+		`"mk":"[REDACTED]"`,
+		`"client_secret":"[REDACTED]"`,
+		`"PrivateKey":"[REDACTED]"`,
+		`"WrappedDEK":"[REDACTED]"`,
+		`connect postgres://admin:[REDACTED]@db.internal:5432/vault failed`,
+	} {
 		if !strings.Contains(out, expected) {
-			t.Errorf("log output missing expected safe value %q:\n%s", expected, out)
+			t.Errorf("log output missing expected output %q:\n%s", expected, out)
 		}
 	}
 }
 
+// TestReviewerLeakProbesAndEdgeCases covers every leak vector identified in the
+// security review (#3, #4, #5, #6, #7, #10, #12, #14).
+func TestReviewerLeakProbesAndEdgeCases(t *testing.T) {
+	// Real 43-char RawURLEncoding and 44-char URLEncoding 32-byte tokens.
+	raw32 := []byte("0123456789abcdef0123456789ABCDEF")
+	bareTok43 := base64.RawURLEncoding.EncodeToString(raw32) // 43 chars, no '='
+	bareTok44 := base64.URLEncoding.EncodeToString(raw32)    // 44 chars, trailing '='
+	basicUserPass := base64.StdEncoding.EncodeToString([]byte("admin:s3cr3tPass!"))
+
+	t.Run("camelCase_and_expanded_sensitive_keys", func(t *testing.T) {
+		r := NewRedactor()
+		mustSensitive := []string{
+			"PrivateKey", "MasterKey", "AccessKey", "SigningKey", "HarnessKey",
+			"WrappedDEK", "wrappedDek", "HMACKey", "hmac_key", "APIKey",
+			"pass", "auth", "session", "jwt", "dek", "kek",
+			"recovery_code", "otp_seed", "verification_code",
+			"session_token", "authorization",
+		}
+		for _, k := range mustSensitive {
+			if !r.IsSensitiveKey(k) {
+				t.Errorf("IsSensitiveKey(%q) = false, want true (normalized=%q)", k, normalizeKey(k))
+			}
+		}
+		mustSafe := []string{"secret_name", "SecretName", "token_id", "TokenID", "public_key", "PublicKey", "secret_len"}
+		for _, k := range mustSafe {
+			if r.IsSensitiveKey(k) {
+				t.Errorf("IsSensitiveKey(%q) = true, want false", k)
+			}
+		}
+
+		// Conditional string keys: "pin" (string redacted, int kept) and "safe" keys
+		// carrying real tokens/keys in their values (#4).
+		var buf bytes.Buffer
+		l, _ := New(WithWriter(&buf))
+		l.Info("safe-key-value-scan",
+			slog.String("pin", "0451"),
+			slog.Int("pin_num", 4),
+			slog.String("token_id", bareTok43),
+			slog.String("valid_v1_token_id", "ok"),
+			slog.Any("map_with_bare_token_key", map[string]string{bareTok43: "val1", bareTok44: "val2"}),
+			slog.String("secret_len", "Bearer "+bareTok43),
+			slog.String("public_key", "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC\n-----END PRIVATE KEY-----"),
+		)
+		out := buf.String()
+		for _, bad := range []string{"0451", bareTok43, bareTok44, "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC"} {
+			if strings.Contains(out, bad) {
+				t.Errorf("leaked %q under conditional/safe key:\n%s", bad, out)
+			}
+		}
+
+		// Legitimate 8-hex, 16-hex, tok_<hex>, and 32-hex v1 token_id values stay unredacted.
+		buf.Reset()
+		l.Info("safe-token-ids",
+			slog.String("token_id", "550e8400e29b41d4a716446655440000"),
+			slog.String("msg_kv", "token_id=tok_0123456789abcdef"),
+		)
+		if !strings.Contains(buf.String(), "550e8400e29b41d4a716446655440000") || !strings.Contains(buf.String(), "tok_0123456789abcdef") {
+			t.Errorf("falsely redacted legitimate token_id:\n%s", buf.String())
+		}
+
+		// ScrubString idempotence check: double-scrubbing never mangles [REDACTED].
+		for _, sample := range []string{
+			"Authorization: Bearer " + bareTok43,
+			"Bearer " + bareTok43,
+			"Basic " + basicUserPass,
+			"token=" + bareTok43,
+			"Cookie: a=1; sid=secret",
+		} {
+			once := r.ScrubString(sample)
+			twice := r.ScrubString(once)
+			if once != twice {
+				t.Errorf("ScrubString not idempotent for %q: once=%q twice=%q", sample, once, twice)
+			}
+		}
+	})
+
+	t.Run("inline_token_kv_and_bare_43_44_char_tokens", func(t *testing.T) {
+		var buf bytes.Buffer
+		l, _ := New(WithWriter(&buf))
+		errText := fmt.Errorf("bad token %s or %s", bareTok43, bareTok44)
+		l.Error("auth probe ?token="+bareTok43+"&session_token=sess_secret_999 authorization=raw_auth_999 token: inline_tok_999",
+			slog.Any("err", errText),
+			slog.Any("valuer", stringTokenValuer{line: "failed with " + bareTok43}),
+			slog.String("token_id", "a1b2c3d4"),
+			slog.String("func_name", "TestVaultBoundaryRejectsHostileNamesAndAgen"), // 43-char CamelCase, no digits -> must NOT false-positive
+		)
+		out := buf.String()
+		for _, bad := range []string{bareTok43, bareTok44, "sess_secret_999", "raw_auth_999", "inline_tok_999"} {
+			if strings.Contains(out, bad) {
+				t.Errorf("leaked %q:\n%s", bad, out)
+			}
+		}
+		for _, keep := range []string{"a1b2c3d4", "TestVaultBoundaryRejectsHostileNamesAndAgen"} {
+			if !strings.Contains(out, keep) {
+				t.Errorf("falsely redacted %q:\n%s", keep, out)
+			}
+		}
+	})
+
+	t.Run("cookie_semicolon_header_and_auth_header_mutant", func(t *testing.T) {
+		// Mutant check (#5, #14): neither Digest, X-Api-Key, nor multi-cookie values
+		// match Bearer/Basic/reKnownTokens; only reAuthHeader catches them.
+		var buf bytes.Buffer
+		l, _ := New(WithWriter(&buf))
+		l.Warn("headers\nCookie: a=1; sid=COOKIE_SID_SECRET_77; theme=dark\nAuthorization: Digest username=\"op\", response=\"DIGEST_RESP_88\"\nX-Api-Key: XAPI_RAW_99")
+		out := buf.String()
+		for _, bad := range []string{"COOKIE_SID_SECRET_77", "theme=dark", "DIGEST_RESP_88", "XAPI_RAW_99"} {
+			if strings.Contains(out, bad) {
+				t.Errorf("header value leaked %q:\n%s", bad, out)
+			}
+		}
+	})
+
+	t.Run("basic_prose_preserved_nbsp_bearer_and_complex_url_passwords", func(t *testing.T) {
+		var buf bytes.Buffer
+		l, _ := New(WithWriter(&buf))
+		l.Info("loaded basic configuration and Basic configuration",
+			slog.String("auth1", "Basic "+basicUserPass),
+			slog.String("auth2", "Bearer\u00a0NBSP_SECRET_TOK"),
+			slog.String("redis_empty_user", "redis://:REDIS_PW_123@cache.internal:6379/0"),
+			slog.String("pw_with_at", "postgres://vault:p@ss@w0rd!@db.internal:5432/vault"),
+		)
+		out := buf.String()
+		for _, bad := range []string{basicUserPass, "NBSP_SECRET_TOK", "REDIS_PW_123", "p@ss", "w0rd!"} {
+			if strings.Contains(out, bad) {
+				t.Errorf("leaked %q:\n%s", bad, out)
+			}
+		}
+		for _, keep := range []string{"basic configuration", "Basic configuration", "@cache.internal:6379", "@db.internal:5432"} {
+			if !strings.Contains(out, keep) {
+				t.Errorf("unexpectedly mangled %q:\n%s", keep, out)
+			}
+		}
+	})
+
+	t.Run("panicking_logvaluer_and_typed_nil_error_never_panic", func(t *testing.T) {
+		var buf bytes.Buffer
+		l, _ := New(WithWriter(&buf))
+		var nilTypedErr error = (*typedNilError)(nil)
+		var nilValuer slog.LogValuer = (*panickingValuer)(nil)
+
+		l.Error("resilience check",
+			slog.Any("panic_attr", panickingValuer{secret: "PANIC_SECRET_1"}),
+			slog.Any("panic_any", []any{panickingValuer{secret: "PANIC_SECRET_2"}}),
+			slog.Any("typed_nil_err", nilTypedErr),
+			slog.Any("panic_err", panickingError{secret: "PANIC_SECRET_3"}),
+			slog.Any("nil_valuer", nilValuer),
+			slog.Any("func_val", func() {}),
+			slog.Any("map_panic_key", map[any]string{panickingStringer{secret: "PANIC_SECRET_4"}: "v"}),
+			slog.Any("time_valuer", []any{timeLogValuer{t: time.Date(2026, 11, 27, 12, 0, 0, 0, time.FixedZone("UTC+3", 3*3600))}, intLogValuer{n: 42}}),
+		)
+		out := buf.String()
+		for _, bad := range []string{"PANIC_SECRET_1", "PANIC_SECRET_2", "PANIC_SECRET_3", "PANIC_SECRET_4"} {
+			if strings.Contains(out, bad) {
+				t.Errorf("panic value leaked %q:\n%s", bad, out)
+			}
+		}
+		if !strings.Contains(out, RedactedPanicPlaceholder) {
+			t.Errorf("expected %q placeholder in %s", RedactedPanicPlaceholder, out)
+		}
+	})
+
+	t.Run("breadth_cycle_map_finishes_fast_and_bounded", func(t *testing.T) {
+		// Exact reviewer DoS probe: 4 self-edges at depth 16 = 4^16 nodes without a node budget.
+		m := map[string]any{}
+		for i := 0; i < 4; i++ {
+			m[fmt.Sprintf("k_%d", i)] = m
+		}
+
+		var buf bytes.Buffer
+		l, _ := New(WithWriter(&buf))
+		start := time.Now()
+		l.Info(" cyclic-breadth-dos", slog.Any("graph", m))
+		elapsed := time.Since(start)
+
+		if elapsed > 2*time.Second {
+			t.Fatalf("breadth DoS took %s (want < 2s)", elapsed)
+		}
+		if buf.Len() > 2*1024*1024 {
+			t.Fatalf("output size = %d bytes, want bounded (< 2 MiB)", buf.Len())
+		}
+		if !strings.Contains(buf.String(), TruncatedPlaceholder) {
+			t.Errorf("expected %q marker in truncated graph output", TruncatedPlaceholder)
+		}
+	})
+
+	t.Run("lrm_rlm_and_bidi_controls_encoded", func(t *testing.T) {
+		got := SanitizeText("safe\u200elrm\u200frlm\u061calm\u200bzwsp\ufeffbom")
+		for _, raw := range []string{"\u200e", "\u200f", "\u061c", "\u200b", "\ufeff"} {
+			if strings.Contains(got, raw) {
+				t.Errorf("SanitizeText left raw Unicode control %+q in %q", raw, got)
+			}
+		}
+		for _, want := range []string{`\u200e`, `\u200f`, `\u061c`, `\u200b`, `\ufeff`} {
+			if !strings.Contains(got, want) {
+				t.Errorf("SanitizeText missing %q in %q", want, got)
+			}
+		}
+	})
+}
+
 func TestHostileInputsNoSecretAndInjectionEncoded(t *testing.T) {
-	// Sentinel values are synthetic strings that never match real credentials
-	// while exercising every redaction and injection vector.
 	const sentinel = "SENTINEL_CRED_8842_NEVER_APPEAR"
 
 	cases := []struct {
@@ -278,8 +579,8 @@ func TestHostileInputsNoSecretAndInjectionEncoded(t *testing.T) {
 		},
 		{
 			name:      "bearer_and_basic_schemes_in_free_text",
-			msg:       "upstream rejected Bearer " + sentinel + " and Basic " + sentinel,
-			forbidden: []string{sentinel},
+			msg:       "upstream rejected Bearer " + sentinel + " and Basic " + base64.StdEncoding.EncodeToString([]byte("u:"+sentinel)),
+			forbidden: []string{sentinel, base64.StdEncoding.EncodeToString([]byte("u:" + sentinel))},
 			mustHave:  []string{"Bearer [REDACTED]", "Basic [REDACTED]"},
 		},
 		{
@@ -330,15 +631,12 @@ func TestHostileInputsNoSecretAndInjectionEncoded(t *testing.T) {
 			logger.LogAttrs(context.Background(), slog.LevelWarn, tc.msg, tc.attrs...)
 
 			raw := buf.String()
-			// Must be exactly one newline-terminated JSON object (no injected lines).
 			trimmed := strings.TrimSuffix(raw, "\n")
 			if strings.ContainsRune(trimmed, '\n') || strings.ContainsRune(trimmed, '\r') {
 				t.Fatalf("log output contains unencoded CR/LF across lines: %q", raw)
 			}
 			m := parseJSONLine(t, raw)
 
-			// Decoded JSON strings must also contain no raw control/newline chars,
-			// so downstream consumers that extract .msg cannot be tricked.
 			decodedMsg, _ := m[FieldMessage].(string)
 			if strings.ContainsAny(decodedMsg, "\r\n\t\x1b\x00\x7f") {
 				t.Errorf("decoded msg still contains raw control characters: %q", decodedMsg)
@@ -358,12 +656,15 @@ func TestHostileInputsNoSecretAndInjectionEncoded(t *testing.T) {
 	}
 }
 
-func TestFileWriterLifecyclePermissionsAndReopen(t *testing.T) {
+func TestFileWriterLifecyclePermissionsSymlinkAndReopen(t *testing.T) {
 	if _, _, err := NewWithCloser(WithFile("   ")); err == nil {
 		t.Fatal("expected error for blank file path")
 	}
 
-	logPath := filepath.Join(t.TempDir(), "sub", "vault.log")
+	base := t.TempDir()
+	logDir := filepath.Join(base, "sub")
+	logPath := filepath.Join(logDir, "vault.log")
+
 	logger, closer, err := NewWithCloser(WithFile(logPath), WithComponent("daemon"))
 	if err != nil {
 		t.Fatalf("NewWithCloser(WithFile): %v", err)
@@ -380,6 +681,14 @@ func TestFileWriterLifecyclePermissionsAndReopen(t *testing.T) {
 	logger.Info("before rotate", slog.String("secret", "TOP_SECRET_1"))
 
 	if runtime.GOOS != "windows" {
+		// Mutant check (#13, #14): new directory MUST be 0700 (not 0755) and file 0600.
+		dInfo, err := os.Stat(logDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if dMode := dInfo.Mode().Perm(); dMode != 0o700 {
+			t.Errorf("new log dir mode = %04o, want 0700", dMode)
+		}
 		info, err := os.Stat(logPath)
 		if err != nil {
 			t.Fatal(err)
@@ -389,7 +698,6 @@ func TestFileWriterLifecyclePermissionsAndReopen(t *testing.T) {
 		}
 	}
 
-	// Simulate logrotate moving the active file and signaling Reopen.
 	rotatedPath := logPath + ".1"
 	if runtime.GOOS != "windows" {
 		if err := os.Rename(logPath, rotatedPath); err != nil {
@@ -404,7 +712,6 @@ func TestFileWriterLifecyclePermissionsAndReopen(t *testing.T) {
 	if err := fw.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	// Idempotent Close; Write/Reopen after Close fail cleanly.
 	if err := fw.Close(); err != nil {
 		t.Errorf("second Close: %v", err)
 	}
@@ -422,6 +729,7 @@ func TestFileWriterLifecyclePermissionsAndReopen(t *testing.T) {
 	if !strings.Contains(string(activeBytes), "after rotate") || strings.Contains(string(activeBytes), "TOP_SECRET_2") {
 		t.Errorf("unexpected active log contents: %s", string(activeBytes))
 	}
+
 	if runtime.GOOS != "windows" {
 		rotBytes, err := os.ReadFile(rotatedPath)
 		if err != nil {
@@ -429,6 +737,63 @@ func TestFileWriterLifecyclePermissionsAndReopen(t *testing.T) {
 		}
 		if !strings.Contains(string(rotBytes), "before rotate") || strings.Contains(string(rotBytes), "TOP_SECRET_1") {
 			t.Errorf("unexpected rotated log contents: %s", string(rotBytes))
+		}
+
+		// Mutant check (#13, #14): pre-existing loose dir (0755) and loose file
+		// (0644 / 0640) MUST be tightened to 0700 and 0600 on open, and symlinks
+		// MUST be refused (O_NOFOLLOW).
+		looseDir := filepath.Join(base, "loosedir")
+		if err := os.MkdirAll(looseDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(looseDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		looseFile := filepath.Join(looseDir, "existing.log")
+		if err := os.WriteFile(looseFile, []byte{}, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(looseFile, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		fwLoose, err := OpenFileWriter(looseFile)
+		if err != nil {
+			t.Fatalf("OpenFileWriter on loose file: %v", err)
+		}
+		_ = fwLoose.Close()
+
+		if dInfo, err := os.Stat(looseDir); err != nil || dInfo.Mode().Perm() != 0o700 {
+			t.Errorf("tightened dir mode = %04o (err=%v), want 0700", dInfo.Mode().Perm(), err)
+		}
+		if fInfo, err := os.Stat(looseFile); err != nil || fInfo.Mode().Perm() != 0o600 {
+			t.Errorf("tightened file mode = %04o (err=%v), want 0600", fInfo.Mode().Perm(), err)
+		}
+
+		// Symlink target refusal (O_NOFOLLOW) and symlink dir refusal.
+		symFile := filepath.Join(base, "symlink.log")
+		if err := os.Symlink(looseFile, symFile); err != nil {
+			t.Fatal(err)
+		}
+		if badFW, err := OpenFileWriter(symFile); err == nil {
+			_ = badFW.Close()
+			t.Fatal("OpenFileWriter followed a file symlink, want error")
+		}
+
+		symDir := filepath.Join(base, "symdir")
+		if err := os.Symlink(looseDir, symDir); err != nil {
+			t.Fatal(err)
+		}
+		if badFW, err := OpenFileWriter(filepath.Join(symDir, "inner.log")); err == nil {
+			_ = badFW.Close()
+			t.Fatal("OpenFileWriter accepted a symlinked parent directory, want error")
+		}
+		if badFW, err := OpenFileWriter(looseDir); err == nil {
+			_ = badFW.Close()
+			t.Fatal("OpenFileWriter accepted a directory target, want error")
+		}
+		if badFW, err := OpenFileWriter(filepath.Join(looseFile, "child.log")); err == nil {
+			_ = badFW.Close()
+			t.Fatal("OpenFileWriter accepted a non-directory parent, want error")
 		}
 	}
 }

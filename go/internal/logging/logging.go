@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -86,9 +85,11 @@ func WithStdout() Option { return WithWriter(os.Stdout) }
 // WithStderr directs JSON log output to os.Stderr.
 func WithStderr() Option { return WithWriter(os.Stderr) }
 
-// WithFile directs JSON log output to path, creating parent directories with
-// mode 0700 and the log file with mode 0600 on POSIX platforms. Use
-// NewWithCloser so the caller can close or reopen the underlying FileWriter.
+// WithFile directs JSON log output to path. On POSIX platforms, parent
+// directories are created/tightened to mode 0700 (when owned by the process),
+// symlinks and non-regular files are refused (O_NOFOLLOW), and the log file
+// is created or tightened to mode 0600. Use NewWithCloser so the caller can
+// close or reopen the underlying FileWriter.
 func WithFile(path string) Option {
 	return func(c *config) {
 		c.filePath = path
@@ -157,7 +158,7 @@ func New(opts ...Option) (*slog.Logger, error) {
 // NewWithCloser constructs a hardened JSON *slog.Logger and returns an
 // io.Closer for any file opened via WithFile (a no-op closer for writer/stdout
 // targets). When WithFile is used, the returned closer is a *FileWriter that
-// also supports Reopen() on logrotate signals.
+// also supports Reopen() once a caller wires a rotation signal handler.
 func NewWithCloser(opts ...Option) (*slog.Logger, io.Closer, error) {
 	cfg := config{
 		writer: os.Stdout,
@@ -186,10 +187,14 @@ func NewWithCloser(opts ...Option) (*slog.Logger, io.Closer, error) {
 	}
 
 	redactor := NewRedactor(cfg.sensitiveKeys...)
+	// sanitizingHandler scrubs record messages, normalizes timestamps to UTC, and
+	// scrubs every attribute under a per-record node budget before delegating to
+	// slog.JSONHandler. Leaving ReplaceAttr nil here avoids redundant double-pass
+	// scrubbing on every attribute; Redactor.ReplaceAttr remains available for
+	// callers constructing a standalone slog.HandlerOptions.
 	jsonHandler := slog.NewJSONHandler(out, &slog.HandlerOptions{
-		AddSource:   cfg.addSource,
-		Level:       cfg.level,
-		ReplaceAttr: redactor.ReplaceAttr,
+		AddSource: cfg.addSource,
+		Level:     cfg.level,
 	})
 
 	var h slog.Handler = &sanitizingHandler{
@@ -214,10 +219,10 @@ type nopCloser struct{}
 
 func (nopCloser) Close() error { return nil }
 
-// sanitizingHandler wraps slog.JSONHandler so record timestamps are always
-// normalized to UTC (even if a custom clock or caller supplies a local zone),
-// record messages are scrubbed and control-char encoded, and dynamically added
-// WithAttrs / WithGroup values pass through the redactor consistently.
+// sanitizingHandler wraps slog.JSONHandler so record timestamps are normalized
+// to UTC, record messages are scrubbed and control-char encoded, and every
+// record gets a bounded node budget (maxScrubNodes) to prevent breadth/cycle
+// resource exhaustion.
 type sanitizingHandler struct {
 	next     slog.Handler
 	redactor *Redactor
@@ -240,18 +245,20 @@ func (h *sanitizingHandler) Handle(ctx context.Context, r slog.Record) error {
 		t = time.Now().UTC()
 	}
 
+	st := newScrubState()
 	clean := slog.NewRecord(t, r.Level, h.redactor.ScrubString(r.Message), r.PC)
 	r.Attrs(func(a slog.Attr) bool {
-		clean.AddAttrs(h.redactor.scrubAttr(h.groups, a, 0))
+		clean.AddAttrs(h.redactor.scrubAttr(st, h.groups, a, 0))
 		return true
 	})
 	return h.next.Handle(ctx, clean)
 }
 
 func (h *sanitizingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	st := newScrubState()
 	scrubbed := make([]slog.Attr, len(attrs))
 	for i, a := range attrs {
-		scrubbed[i] = h.redactor.scrubAttr(h.groups, a, 0)
+		scrubbed[i] = h.redactor.scrubAttr(st, h.groups, a, 0)
 	}
 	return &sanitizingHandler{
 		next:     h.next.WithAttrs(scrubbed),
@@ -265,7 +272,7 @@ func (h *sanitizingHandler) WithGroup(name string) slog.Handler {
 	if name == "" {
 		return h
 	}
-	cleanName := SanitizeText(name)
+	cleanName := h.redactor.ScrubString(name)
 	nextGroups := make([]string, len(h.groups)+1)
 	copy(nextGroups, h.groups)
 	nextGroups[len(h.groups)] = cleanName
@@ -277,9 +284,9 @@ func (h *sanitizingHandler) WithGroup(name string) slog.Handler {
 	}
 }
 
-// FileWriter is a concurrency-safe append-only log file writer that creates
-// files with 0600 permissions (in a 0700 parent directory on POSIX) and
-// supports atomic Reopen for external log rotation (e.g. logrotate SIGHUP).
+// FileWriter is a concurrency-safe append-only log file writer that enforces
+// 0600 file permissions (in a 0700 directory, refusing symlinks via O_NOFOLLOW
+// on POSIX) and supports atomic Reopen for external log rotation once wired.
 type FileWriter struct {
 	path   string
 	mu     sync.Mutex
@@ -289,38 +296,16 @@ type FileWriter struct {
 
 // OpenFileWriter opens or creates path for append-only logging.
 func OpenFileWriter(path string) (*FileWriter, error) {
-	clean := strings.TrimSpace(path)
-	if clean == "" {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
 		return nil, errors.New("logging: empty log file path")
 	}
-	f, err := openLogFile(clean)
+	clean := filepath.Clean(trimmed)
+	f, err := openLogFileOS(clean)
 	if err != nil {
 		return nil, err
 	}
 	return &FileWriter{path: clean, file: f}, nil
-}
-
-func openLogFile(path string) (*os.File, error) {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("logging: create log directory: %w", err)
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("logging: open log file: %w", err)
-	}
-	if runtime.GOOS != "windows" {
-		// Ensure an existing file with looser permissions is tightened to
-		// remove any world access while preserving group read if 0640 was set
-		// by an operator/logrotate; newly created files start at 0600.
-		if info, statErr := f.Stat(); statErr == nil {
-			mode := info.Mode().Perm()
-			if mode&0o137 != 0 {
-				_ = f.Chmod(mode & 0o640)
-			}
-		}
-	}
-	return f, nil
 }
 
 // Path returns the configured file path.
@@ -336,15 +321,14 @@ func (fw *FileWriter) Write(p []byte) (int, error) {
 	return fw.file.Write(p)
 }
 
-// Reopen opens a fresh file handle at Path and closes the previous descriptor
-// so external rotation tools (logrotate) can move the old file without restart.
+// Reopen opens a fresh file handle at Path and closes the previous descriptor.
 func (fw *FileWriter) Reopen() error {
 	fw.mu.Lock()
 	defer fw.mu.Unlock()
 	if fw.closed {
 		return os.ErrClosed
 	}
-	next, err := openLogFile(fw.path)
+	next, err := openLogFileOS(fw.path)
 	if err != nil {
 		return err
 	}

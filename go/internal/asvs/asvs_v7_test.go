@@ -20,7 +20,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -899,54 +901,249 @@ func TestRealServerAuthAuthzSeparationInjectionAndErrorSanitization(t *testing.T
 	}
 }
 
-// TestDeployLogRotationAndJournaldConfigs pins the retention, compression,
-// disk-space bounds, and archive permission settings in deploy/ (RGT-430).
+// TestDeployLogRotationAndJournaldConfigs parses the INI sections and logrotate
+// directives in deploy/ (rather than substring matching) to pin exact
+// ReadWritePaths sets, journald retention/size caps, and copytruncate/mode
+// invariants without SIGHUP hazards (Refs RGT-429, RGT-430, RGT-512).
 func TestDeployLogRotationAndJournaldConfigs(t *testing.T) {
+	// Self-check on parser helpers (#8): prove `ReadWritePaths=/var/lib/rgt-vault /var/log`
+	// and multi-line `ReadWritePaths=` are distinguished from `/var/lib/rgt-vault` alone.
+	badINI := parseINI("[Service]\nProtectSystem=strict\nReadWritePaths=/var/lib/rgt-vault /var/log\n")
+	if got := extractSystemdPaths(badINI["Service"]["ReadWritePaths"]); reflect.DeepEqual(got, []string{"/var/lib/rgt-vault"}) {
+		t.Fatalf("INI parser failed to catch extra /var/log token in ReadWritePaths: %v", got)
+	}
+
 	deployDir := filepath.Join("..", "..", "..", "deploy")
 
-	logrotateRaw, err := os.ReadFile(filepath.Join(deployDir, "logrotate.d", "rgt-vault"))
-	if err != nil {
-		t.Fatalf("read logrotate config: %v", err)
-	}
-	lr := string(logrotateRaw)
-	for _, want := range []string{
-		"/var/log/rgt-vault/*.log",
-		"daily",
-		"rotate 90",
-		"compress",
-		"create 0640 rgtvault adm",
-		"chown root:adm",
-		"chmod 0440",
-	} {
-		if !strings.Contains(lr, want) {
-			t.Errorf("deploy/logrotate.d/rgt-vault missing %q", want)
-		}
-	}
-
-	journaldRaw, err := os.ReadFile(filepath.Join(deployDir, "journald.conf.d", "rgt-vault.conf"))
-	if err != nil {
-		t.Fatalf("read journald drop-in: %v", err)
-	}
-	jd := string(journaldRaw)
-	for _, want := range []string{
-		"[Journal]",
-		"Storage=persistent",
-		"Compress=yes",
-		"MaxRetentionSec=90day",
-		"SystemMaxUse=",
-		"SystemKeepFree=",
-	} {
-		if !strings.Contains(jd, want) {
-			t.Errorf("deploy/journald.conf.d/rgt-vault.conf missing %q", want)
-		}
-	}
-
+	// 1. Parse deploy/rgt-vault-go.service as structured INI.
 	unitRaw, err := os.ReadFile(filepath.Join(deployDir, "rgt-vault-go.service"))
 	if err != nil {
 		t.Fatalf("read rgt-vault-go.service: %v", err)
 	}
-	unit := string(unitRaw)
-	if !strings.Contains(unit, "ProtectSystem=strict") || strings.Contains(unit, "ReadWritePaths=/var/log") {
-		t.Errorf("rgt-vault-go.service must keep /var/log read-only under ProtectSystem=strict")
+	unitINI := parseINI(string(unitRaw))
+	svc := unitINI["Service"]
+	if svc == nil {
+		t.Fatal("rgt-vault-go.service missing [Service] section")
 	}
+	wantServiceExact := map[string][]string{
+		"User":               {"rgtvault"},
+		"Group":              {"rgtvault"},
+		"StateDirectoryMode": {"0700"},
+		"UMask":              {"0077"},
+		"ProtectSystem":      {"strict"},
+	}
+	for k, want := range wantServiceExact {
+		if got := svc[k]; !reflect.DeepEqual(got, want) {
+			t.Errorf("rgt-vault-go.service [Service] %s = %v, want %v", k, got, want)
+		}
+	}
+	if rwPaths := extractSystemdPaths(svc["ReadWritePaths"]); !reflect.DeepEqual(rwPaths, []string{"/var/lib/rgt-vault"}) {
+		t.Errorf("rgt-vault-go.service ReadWritePaths = %v, want exact [/var/lib/rgt-vault]", rwPaths)
+	}
+
+	// 2. Parse deploy/journald.conf.d/rgt-vault.conf as structured INI.
+	journaldRaw, err := os.ReadFile(filepath.Join(deployDir, "journald.conf.d", "rgt-vault.conf"))
+	if err != nil {
+		t.Fatalf("read journald drop-in: %v", err)
+	}
+	jdINI := parseINI(string(journaldRaw))
+	jSec := jdINI["Journal"]
+	if jSec == nil {
+		t.Fatal("journald drop-in missing [Journal] section")
+	}
+	wantJournalExact := map[string][]string{
+		"Storage":              {"persistent"},
+		"Compress":             {"yes"},
+		"Seal":                 {"yes"},
+		"MaxFileSec":           {"1day"},
+		"MaxRetentionSec":      {"90day"},
+		"SystemMaxUse":         {"1G"},
+		"SystemKeepFree":       {"2G"},
+		"RateLimitIntervalSec": {"30s"},
+		"RateLimitBurst":       {"10000"},
+	}
+	for k, want := range wantJournalExact {
+		if got := jSec[k]; !reflect.DeepEqual(got, want) {
+			t.Errorf("journald [Journal] %s = %v, want %v", k, got, want)
+		}
+	}
+
+	// 3. Parse deploy/logrotate.d/rgt-vault stanza directives and scripts.
+	logrotateRaw, err := os.ReadFile(filepath.Join(deployDir, "logrotate.d", "rgt-vault"))
+	if err != nil {
+		t.Fatalf("read logrotate config: %v", err)
+	}
+	targets, directives, scripts, err := parseLogrotateStanza(string(logrotateRaw))
+	if err != nil {
+		t.Fatalf("parse logrotate config: %v", err)
+	}
+	if !reflect.DeepEqual(targets, []string{"/var/log/rgt-vault/*.log"}) {
+		t.Errorf("logrotate targets = %v, want [/var/log/rgt-vault/*.log]", targets)
+	}
+	for _, flagDir := range []string{"daily", "compress", "delaycompress", "copytruncate", "missingok", "notifempty"} {
+		if vals, ok := directives[flagDir]; !ok || !reflect.DeepEqual(vals, []string{""}) {
+			t.Errorf("logrotate directive %q = %v (present=%v), want bare directive", flagDir, vals, ok)
+		}
+	}
+	if !reflect.DeepEqual(directives["rotate"], []string{"90"}) {
+		t.Errorf("logrotate rotate = %v, want [90]", directives["rotate"])
+	}
+	if !reflect.DeepEqual(directives["maxage"], []string{"90"}) {
+		t.Errorf("logrotate maxage = %v, want [90]", directives["maxage"])
+	}
+	if !reflect.DeepEqual(directives["su"], []string{"root adm"}) {
+		t.Errorf("logrotate su = %v, want [root adm]", directives["su"])
+	}
+
+	createVals := directives["create"]
+	if len(createVals) != 1 {
+		t.Fatalf("logrotate create = %v, want single directive", createVals)
+	}
+	createFields := strings.Fields(createVals[0])
+	if len(createFields) != 3 || createFields[1] != "rgtvault" || createFields[2] != "adm" {
+		t.Fatalf("logrotate create fields = %v, want [<mode> rgtvault adm]", createFields)
+	}
+	createMode, err := strconv.ParseUint(createFields[0], 8, 32)
+	if err != nil || createMode != 0o640 || createMode&0o027 != 0 {
+		t.Errorf("logrotate create mode = %q (%04o, err=%v), want 0640 (no group-write or world bits)", createFields[0], createMode, err)
+	}
+
+	postLines := scripts["postrotate"]
+	if len(postLines) == 0 {
+		t.Fatal("logrotate missing postrotate script")
+	}
+	var sawChown, sawChmod bool
+	for _, ln := range postLines {
+		fields := strings.Fields(ln)
+		if len(fields) >= 2 && fields[0] == "chown" && fields[1] == "root:adm" {
+			sawChown = true
+		}
+		if len(fields) >= 2 && fields[0] == "chmod" {
+			m, merr := strconv.ParseUint(fields[1], 8, 32)
+			if merr != nil || m != 0o440 || m&0o227 != 0 {
+				t.Errorf("postrotate chmod mode = %q (%04o, err=%v), want 0440 read-only", fields[1], m, merr)
+			}
+			sawChmod = true
+		}
+		upper := strings.ToUpper(ln)
+		if strings.Contains(upper, "HUP") || strings.Contains(strings.ToLower(ln), "systemctl kill") {
+			t.Errorf("logrotate postrotate must not signal SIGHUP before RGT-512 lands: %q", ln)
+		}
+	}
+	if !sawChown || !sawChmod {
+		t.Errorf("postrotate script missing chown root:adm (%v) or chmod 0440 (%v): %v", sawChown, sawChmod, postLines)
+	}
+}
+
+// parseINI parses systemd-style INI files (supporting `#`/`;` comment lines,
+// trailing `\` line continuations, and repeated keys per section).
+func parseINI(raw string) map[string]map[string][]string {
+	sections := map[string]map[string][]string{}
+	curSection := ""
+	var continued strings.Builder
+
+	flushLine := func(line string) {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			return
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			curSection = strings.TrimSpace(line[1 : len(line)-1])
+			if sections[curSection] == nil {
+				sections[curSection] = map[string][]string{}
+			}
+			return
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			return
+		}
+		if sections[curSection] == nil {
+			sections[curSection] = map[string][]string{}
+		}
+		sections[curSection][strings.TrimSpace(k)] = append(sections[curSection][strings.TrimSpace(k)], strings.TrimSpace(v))
+	}
+
+	for _, rawLine := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimSpace(rawLine)
+		if continued.Len() == 0 && (trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";")) {
+			continue
+		}
+		if strings.HasSuffix(trimmed, `\`) {
+			continued.WriteString(strings.TrimSuffix(trimmed, `\`))
+			continued.WriteByte(' ')
+			continue
+		}
+		if continued.Len() > 0 {
+			continued.WriteString(trimmed)
+			flushLine(continued.String())
+			continued.Reset()
+			continue
+		}
+		flushLine(trimmed)
+	}
+	if continued.Len() > 0 {
+		flushLine(continued.String())
+	}
+	return sections
+}
+
+func extractSystemdPaths(values []string) []string {
+	var out []string
+	for _, v := range values {
+		for _, tok := range strings.Fields(v) {
+			out = append(out, strings.TrimPrefix(tok, "-"))
+		}
+	}
+	return out
+}
+
+func parseLogrotateStanza(raw string) (targets []string, directives map[string][]string, scripts map[string][]string, err error) {
+	directives = map[string][]string{}
+	scripts = map[string][]string{}
+
+	inStanza := false
+	inScript := ""
+	closed := false
+
+	for _, rawLine := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !inStanza {
+			header, _, ok := strings.Cut(line, "{")
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("unexpected line outside stanza: %q", line)
+			}
+			targets = strings.Fields(header)
+			inStanza = true
+			continue
+		}
+		if inScript != "" {
+			if line == "endscript" {
+				inScript = ""
+				continue
+			}
+			scripts[inScript] = append(scripts[inScript], line)
+			continue
+		}
+		if line == "}" {
+			closed = true
+			inStanza = false
+			continue
+		}
+		if line == "postrotate" || line == "prerotate" || line == "firstaction" || line == "lastaction" {
+			inScript = line
+			continue
+		}
+		fields := strings.Fields(line)
+		key := fields[0]
+		rest := strings.TrimSpace(strings.TrimPrefix(line, key))
+		directives[key] = append(directives[key], rest)
+	}
+	if !closed || len(targets) == 0 {
+		return nil, nil, nil, errors.New("incomplete logrotate stanza")
+	}
+	return targets, directives, scripts, nil
 }
