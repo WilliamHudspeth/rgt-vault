@@ -26,7 +26,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -36,6 +35,7 @@ import (
 	"rgt-vault-server/internal/auth"
 	"rgt-vault-server/internal/capabilities"
 	"rgt-vault-server/internal/captoken"
+	"rgt-vault-server/internal/cryptopolicy"
 	"rgt-vault-server/internal/kdf"
 	"rgt-vault-server/internal/netguard"
 	"rgt-vault-server/internal/policy"
@@ -47,19 +47,24 @@ import (
 	"rgt-vault-server/internal/vault"
 )
 
-// goRoot returns the absolute path to the go/ module root in a portable way
-// across Linux, macOS, and Windows.
+// goRoot walks upward from os.Getwd() to locate the go/ module root
+// (containing go.mod), so it works under -trimpath across Linux, macOS, and Windows.
 func goRoot(t *testing.T) string {
 	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller(0) failed")
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
 	}
-	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		t.Fatalf("go.mod not found at %s: %v", root, err)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("go.mod not found walking upward from working directory")
+		}
+		dir = parent
 	}
-	return root
 }
 
 // walkGoFiles parses every .go file under go/ and calls fn with the slash-normalized
@@ -238,8 +243,10 @@ func TestASVS_V5_SQLInjectionProbesOnStore(t *testing.T) {
 	}
 
 	// Verify store.Open rejects SQLite URI/DSN parameter injection (RGT-367, RGT-372).
+	// Using _pragma=foreign_keys(1) ensures the probe would otherwise succeed if the
+	// '?' guard in store.Open (store.go:102-105) were removed.
 	for _, badPath := range []string{
-		filepath.Join(t.TempDir(), "vault.db?_pragma=query_only(1)"),
+		filepath.Join(t.TempDir(), "vault.db?_pragma=foreign_keys(1)"),
 		"file:" + filepath.Join(t.TempDir(), "vault.db"),
 	} {
 		if badStore, err := store.Open(ctx, badPath); err == nil {
@@ -374,7 +381,9 @@ rules:
 		}
 	}
 
-	// 4. ABAC explicit-deny and default-deny enforcement in vault (RGT-238).
+	// 4. ABAC explicit-deny and default-deny enforcement on SetSecret (RGT-238;
+	// Lease/List/Revoke ABAC denials are covered by vault.TestPolicyDenials and
+	// server.TestAuthzIDORBetweenAgents).
 	if err := v.SetSecret(ctx, vault.SetSecretRequest{
 		Name:      "k",
 		Namespace: "app-restricted", // matches allow app-* AND explicit deny app-restricted -> deny wins
@@ -413,7 +422,7 @@ func TestASVS_V5_SourceScanNoShellExecAndAllowlistedImports(t *testing.T) {
 		"internal/providers/exec.go": true,
 		"internal/providers/tpm.go":  true,
 	}
-	// The single file in go/ permitted to import "unsafe" (G6 Windows DPAPI).
+	// The single first-party file in go/ permitted to import "unsafe" (G6 Windows DPAPI).
 	allowedUnsafe := map[string]bool{
 		"internal/providers/dpapi_windows.go": true,
 	}
@@ -425,18 +434,18 @@ func TestASVS_V5_SourceScanNoShellExecAndAllowlistedImports(t *testing.T) {
 		"internal/vault/capability.go":         true,
 		"internal/server/handlers/handlers.go": true,
 	}
-	// Forbidden imports across all of go/ (unsafe deserialization, dynamic code,
-	// templates, XML, mail, multipart uploads).
+	// Forbidden imports across all first-party go/ files. Strings are split so a
+	// plain grep over go/ does not match this test file itself.
 	forbiddenImports := map[string]string{
-		"C":               "cgo is forbidden (RGT-374)",
-		"encoding/gob":    "gob deserialization is forbidden (RGT-240/RGT-379)",
-		"encoding/xml":    "XML parsing is not used (RGT-373/RGT-378)",
-		"html/template":   "HTML templates are not used (RGT-356/RGT-360/RGT-434/RGT-435)",
-		"text/template":   "text templates are not used (RGT-360/RGT-363/RGT-434/RGT-435)",
-		"net/smtp":        "SMTP mail is not used (RGT-358)",
-		"net/mail":        "mail parsing is not used (RGT-358)",
-		"mime/multipart":  "multipart file uploads are not used (RGT-258)",
-		"plugin":          "dynamic Go plugin loading is forbidden (RGT-359)",
+		"C":                       "cgo is forbidden in first-party go/ (RGT-374)",
+		"encoding/" + "gob":       "gob deserialization is forbidden (RGT-240/RGT-379)",
+		"encoding/" + "xml":       "XML parsing is not used (RGT-373/RGT-378)",
+		"html/" + "template":      "HTML templates are not used (RGT-356/RGT-360/RGT-434/RGT-435)",
+		"text/" + "template":      "text templates are not used in first-party go/ (RGT-360/RGT-363/RGT-434/RGT-435)",
+		"net/" + "smtp":           "SMTP mail is not used (RGT-358)",
+		"net/" + "mail":           "mail parsing is not used (RGT-358)",
+		"mime/" + "multipart":     "multipart file uploads are not used (RGT-258)",
+		"plug" + "in":             "dynamic Go plugin loading is forbidden (RGT-359)",
 	}
 	shellNames := map[string]bool{
 		"sh": true, "/bin/sh": true, "bash": true, "/bin/bash": true, "zsh": true,
@@ -460,7 +469,7 @@ func TestASVS_V5_SourceScanNoShellExecAndAllowlistedImports(t *testing.T) {
 			if reason, bad := forbiddenImports[pkgPath]; bad {
 				t.Errorf("%s imports %q: %s", rel, pkgPath, reason)
 			}
-			if strings.Contains(strings.ToLower(pkgPath), "ldap") {
+			if strings.Contains(strings.ToLower(pkgPath), "ld"+"ap") {
 				t.Errorf("%s imports LDAP package %q (RGT-370)", rel, pkgPath)
 			}
 			if pkgPath == "unsafe" {
@@ -480,33 +489,19 @@ func TestASVS_V5_SourceScanNoShellExecAndAllowlistedImports(t *testing.T) {
 			}
 		}
 
-		// Inspect AST calls for shell execution, static file serving, cookies,
-		// non-constant format strings, and dynamic SQL formatting.
+		// Inspect AST calls across all files (including _test.go) for shell execution,
+		// static file serving, cookies, non-constant format strings, and dynamic SQL formatting.
 		for _, decl := range f.Decls {
 			fnDecl, _ := decl.(*ast.FuncDecl)
-			var formatParamNames map[string]bool
-			if fnDecl != nil && fnDecl.Type.Params != nil {
-				for _, field := range fnDecl.Type.Params.List {
-					if ident, ok := field.Type.(*ast.Ident); ok && ident.Name == "string" {
-						for _, name := range field.Names {
-							if name.Name == "format" || name.Name == "fmtStr" {
-								if formatParamNames == nil {
-									formatParamNames = map[string]bool{}
-								}
-								formatParamNames[name.Name] = true
-							}
-						}
-					}
-				}
-			}
-			inFormatWrapper := len(formatParamNames) > 0
+			inFormatWrapper := hasFormatParam(fnDecl)
 			ast.Inspect(decl, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
 				if !ok {
 					return true
 				}
+				inClosureWrapper := enclosingFuncLitHasFormatParam(decl, call)
 
-				// Check selector calls: pkg.Func(...)
+				// Check selector calls: recv.Method(...)
 				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
 					fnName := sel.Sel.Name
 					pkgIdent, _ := sel.X.(*ast.Ident)
@@ -541,13 +536,11 @@ func TestASVS_V5_SourceScanNoShellExecAndAllowlistedImports(t *testing.T) {
 						}
 					}
 
-					// 3. Format strings in production code must be constant (RGT-375).
-					if !isTest {
-						if fmtIdx, ok := formatArgIndex(pkgName, fnName); ok && fmtIdx < len(call.Args) {
-							if !isConstantFormatArg(call.Args[fmtIdx], inFormatWrapper) {
-								pos := fset.Position(call.Pos())
-								t.Errorf("%s:%d non-constant format string in %s.%s (RGT-375)", rel, pos.Line, pkgName, fnName)
-							}
+					// 3. Format strings across all files (production and tests) must be constant (RGT-375).
+					if fmtIdx, ok := formatArgIndex(fnName); ok && fmtIdx < len(call.Args) {
+						if !isConstantFormatArg(call.Args[fmtIdx], inFormatWrapper || inClosureWrapper) {
+							pos := fset.Position(call.Pos())
+							t.Errorf("%s:%d non-constant format string in .%s (RGT-375)", rel, pos.Line, fnName)
 						}
 					}
 
@@ -562,33 +555,37 @@ func TestASVS_V5_SourceScanNoShellExecAndAllowlistedImports(t *testing.T) {
 					}
 				}
 
-				// Check package-internal variadic format helper functions in production code:
-				// fail(format, a...), newValueError(format, a...), validationErr(format, a...),
-				// deniedErr(format, a...), newErr(..., format, a...).
-				if !isTest {
-					if ident, ok := call.Fun.(*ast.Ident); ok {
-						switch ident.Name {
-						case "fail", "newValueError", "validationErr", "deniedErr":
-							// In internal/hooks, validationErr(msg string) takes a single plain string
-							// rather than a format string; everywhere else (or when variadic args are
-							// passed) arg 0 is a format string.
-							if strings.HasPrefix(rel, "internal/hooks/") && len(call.Args) == 1 {
-								break
-							}
-							if len(call.Args) > 0 && !isConstantFormatArg(call.Args[0], inFormatWrapper) {
+				// Check package-internal variadic format helper functions:
+				// fail, newValueError, validationErr, deniedErr, execErr, payloadErr, newErr, newError.
+				if ident, ok := call.Fun.(*ast.Ident); ok {
+					switch ident.Name {
+					case "fail", "newValueError", "validationErr", "deniedErr", "execErr", "payloadErr":
+						// Single-arg helpers in internal/hooks (validationErr(msg)) and
+						// internal/mcp/sdk_e2e_test.go (fail(msg)) take a plain message, not a format string.
+						if len(call.Args) <= 1 && (strings.HasPrefix(rel, "internal/hooks/") || isTest) {
+							break
+						}
+						if len(call.Args) > 0 && !isConstantFormatArg(call.Args[0], inFormatWrapper || inClosureWrapper) {
+							pos := fset.Position(call.Pos())
+							t.Errorf("%s:%d non-constant format string in %s(...) (RGT-375)", rel, pos.Line, ident.Name)
+						}
+					case "newErr":
+						// captoken.newErr(kind, format, ...) has format at index 1;
+						// vault.newErr(kinds, cause, format, ...) has format at index 2.
+						fmtIdx := 1
+						if strings.HasPrefix(rel, "internal/vault/") {
+							fmtIdx = 2
+						}
+						if fmtIdx < len(call.Args) && !isConstantFormatArg(call.Args[fmtIdx], inFormatWrapper || inClosureWrapper) {
+							pos := fset.Position(call.Pos())
+							t.Errorf("%s:%d non-constant format string in newErr(...) (RGT-375)", rel, pos.Line)
+						}
+					case "newError":
+						// capabilities.newError(pyClass, cause, kinds, format, a...) has format at index 3.
+						if strings.HasPrefix(rel, "internal/capabilities/") && len(call.Args) > 3 {
+							if !isConstantFormatArg(call.Args[3], inFormatWrapper || inClosureWrapper) {
 								pos := fset.Position(call.Pos())
-								t.Errorf("%s:%d non-constant format string in %s(...) (RGT-375)", rel, pos.Line, ident.Name)
-							}
-						case "newErr":
-							// captoken.newErr(kind, format, ...) has format at index 1;
-							// vault.newErr(kinds, cause, format, ...) has format at index 2.
-							fmtIdx := 1
-							if strings.HasPrefix(rel, "internal/vault/") {
-								fmtIdx = 2
-							}
-							if fmtIdx < len(call.Args) && !isConstantFormatArg(call.Args[fmtIdx], inFormatWrapper) {
-								pos := fset.Position(call.Pos())
-								t.Errorf("%s:%d non-constant format string in newErr(...) (RGT-375)", rel, pos.Line)
+								t.Errorf("%s:%d non-constant format string in newError(...) (RGT-375)", rel, pos.Line)
 							}
 						}
 					}
@@ -606,19 +603,60 @@ func TestASVS_V5_SourceScanNoShellExecAndAllowlistedImports(t *testing.T) {
 	}
 }
 
-func formatArgIndex(pkg, fn string) (int, bool) {
-	switch pkg {
-	case "fmt", "log":
-		switch fn {
-		case "Printf", "Sprintf", "Errorf", "Fatalf", "Panicf":
-			return 0, true
-		case "Fprintf":
-			return 1, true
+func hasFormatParam(fnDecl *ast.FuncDecl) bool {
+	if fnDecl == nil || fnDecl.Type.Params == nil {
+		return false
+	}
+	return paramListHasFormat(fnDecl.Type.Params)
+}
+
+func paramListHasFormat(params *ast.FieldList) bool {
+	if params == nil {
+		return false
+	}
+	hasVariadic := false
+	for _, field := range params.List {
+		if _, ok := field.Type.(*ast.Ellipsis); ok {
+			hasVariadic = true
 		}
 	}
+	for _, field := range params.List {
+		if ident, ok := field.Type.(*ast.Ident); ok && ident.Name == "string" {
+			for _, name := range field.Names {
+				if name.Name == "format" || name.Name == "fmtStr" || (hasVariadic && name.Name == "f") {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func enclosingFuncLitHasFormatParam(root ast.Node, target *ast.CallExpr) bool {
+	found := false
+	ast.Inspect(root, func(n ast.Node) bool {
+		lit, ok := n.(*ast.FuncLit)
+		if !ok || !paramListHasFormat(lit.Type.Params) {
+			return true
+		}
+		if target.Pos() >= lit.Pos() && target.End() <= lit.End() {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// formatArgIndex returns the index of the format string argument for any method
+// or package function that takes a printf/scanf format specifier (including
+// fmt.*, log.*, testing.TB.*, cobra.Command.Printf, mcp.Server.logf, etc.).
+func formatArgIndex(fn string) (int, bool) {
 	switch fn {
-	case "Errorf", "Fatalf", "Logf", "Skipf":
+	case "Printf", "Sprintf", "Errorf", "Fatalf", "Panicf", "Logf", "Skipf", "Scanf", "logf":
 		return 0, true
+	case "Fprintf", "Fscanf", "Appendf", "Sscanf":
+		return 1, true
 	}
 	return 0, false
 }
@@ -634,11 +672,11 @@ func sqlQueryArgIndex(fn string) (int, bool) {
 }
 
 // isConstantFormatArg reports whether expr is a constant string literal (or
-// binary '+' concatenation thereof), or the forwarded 'format' parameter inside
-// one of the package-private format wrapper functions.
+// binary '+' concatenation thereof), or the forwarded 'format'/'fmtStr' parameter
+// inside a format wrapper function or test closure.
 func isConstantFormatArg(expr ast.Expr, inFormatWrapper bool) bool {
 	if inFormatWrapper {
-		if ident, ok := expr.(*ast.Ident); ok && ident.Name == "format" {
+		if ident, ok := expr.(*ast.Ident); ok && (ident.Name == "format" || ident.Name == "fmtStr" || ident.Name == "f") {
 			return true
 		}
 	}
@@ -788,6 +826,14 @@ func TestASVS_V5_SafeDeserializationGuards(t *testing.T) {
 		t.Errorf("YAML alias bomb err = %v, want policy.ErrInvalid", err)
 	}
 
+	// 3b. CryptoPolicy YAML parser enforces KnownFields(true) and single-document decoding.
+	if _, err := cryptopolicy.Parse([]byte("unknown_field: 123\n")); !errors.Is(err, cryptopolicy.ErrInvalidPolicy) {
+		t.Errorf("cryptopolicy.Parse unknown field err = %v, want ErrInvalidPolicy", err)
+	}
+	if _, err := cryptopolicy.Parse([]byte("cipher: AES-256-GCM\n---\ncipher: AES-256-GCM\n")); !errors.Is(err, cryptopolicy.ErrInvalidPolicy) {
+		t.Errorf("cryptopolicy.Parse multi-doc err = %v, want ErrInvalidPolicy", err)
+	}
+
 	// 4. Capability token verifier verifies HMAC before parsing JSON and rejects
 	// tampered or malformed payloads (RGT-240, RGT-354, RGT-379).
 	key := bytes.Repeat([]byte("k"), captoken.MinSecretLen)
@@ -803,6 +849,7 @@ func TestASVS_V5_SafeDeserializationGuards(t *testing.T) {
 	if _, err := verifier.Verify("eyJ2IjoyLCJhZ2VudF9pZCI6ImFkbWluIn0.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"); !errors.Is(err, captoken.ErrSignature) {
 		t.Errorf("forged token err = %v, want ErrSignature", err)
 	}
+
 	// 5. Capability payload schema validators (ParamList, JSONSchema, StructSchema)
 	// reject unknown fields and wrong types (RGT-354).
 	if err := (capabilities.ParamList{"url", "timeout"}).Validate("http.get", map[string]any{"url": "https://example.com", "evil": 1}); !errors.Is(err, vault.ErrValidation) {
@@ -943,9 +990,9 @@ func TestASVS_V5_HTTPStrictJSONAndBodyLimits(t *testing.T) {
 }
 
 func TestASVS_V5_HTTPDuplicateQueryParameterPrecedence(t *testing.T) {
-	// RGT-351: Go's net/url Values.Get returns the FIRST value for a repeated
-	// query parameter. Pin this behaviour across the server's query-taking routes
-	// (GET /v1/secrets?namespace=...&name=... and GET /v1/audit?limit=...).
+	// RGT-351: Go's net/url Values.Get and handlers.queryDefault return the FIRST
+	// value for a repeated query parameter. Pin this behaviour across the server's
+	// query-taking routes (GET /v1/secrets?namespace=... and GET /v1/audit?limit=...).
 	router, tok := newTestRouter(t, 0)
 
 	for _, tc := range []struct {
@@ -1064,7 +1111,7 @@ func TestASVS_V5_HTTPSecurityHeadersXMLPolicyAndOutputEscaping(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Validation: Trailing Newline, NFC Normalization, Int Bounds, Safe Regex,
+// 6. Validation: Trailing Newline, NFC Normalization, Int Bounds,
 //    Audit Sanitizer, TUI Markup, and Netguard Scheme/IP Guard
 //    (RGT-239, RGT-241, RGT-242, RGT-365, RGT-372)
 // ---------------------------------------------------------------------------
@@ -1135,9 +1182,6 @@ func TestASVS_V5_ValidationTrailingNewlineNFCAndOutputEncoding(t *testing.T) {
 
 	// 5. TUI output renders Rich-style markup tags literally (Lip Gloss does not
 	// interpret inline markup in secret names or audit details, RGT-242).
-	m := tui.New(&stubTUIClient{}, "default")
-	updated, _ := m.Update(tui.SecretInfo{Name: "[bold red]markup_name[/]", Fingerprint: "deadbeef"})
-	_ = updated
 	view := runTUIViewWithSecret("[bold red]markup_name[/]")
 	if !strings.Contains(view, "[bold red]markup_name[/]") {
 		t.Errorf("TUI view altered literal bracket text in secret name: %q", view)
@@ -1188,9 +1232,6 @@ func runTUIViewWithSecret(name string) string {
 	// the loaded flat-list dashboard.
 	val := reflect.ValueOf(initMsg)
 	if val.Kind() == reflect.Slice && val.Len() > 0 {
-		if fn, ok := val.Index(0).Interface().(func() any); ok {
-			_ = fn
-		}
 		out := val.Index(0).Call(nil)
 		if len(out) == 1 {
 			updated, _ := m.Update(out[0].Interface())
