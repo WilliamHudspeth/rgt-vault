@@ -79,6 +79,36 @@ func (h *Handlers) capabilityList() []*capabilities.Spec {
 	return reg.List()
 }
 
+// publicRequest reports whether r is one of the unauthenticated routes
+// (the auth middleware lets exactly these through without a principal).
+func publicRequest(r *http.Request) bool {
+	return r.Method == http.MethodGet &&
+		(r.URL.Path == "/healthz" || r.URL.Path == "/crossdomain.xml" || r.URL.Path == "/clientaccesspolicy.xml")
+}
+
+// requireScope is the handler's own authorization check, behind the auth
+// middleware's route table (defence in depth, RGT-345): no authenticated
+// principal is 401, a principal without ALL the scopes is 403 (and audited),
+// each with an incident id. A handler reached without the middleware, or a
+// route whose table entry went missing, therefore fails closed. The scopes
+// match what the middleware requires for the route today; a legacy shared
+// token holds every scope, so authenticated callers see no change.
+func (h *Handlers) requireScope(w http.ResponseWriter, r *http.Request, need ...auth.Scope) bool {
+	p, ok := PrincipalFromContext(r.Context())
+	if !ok {
+		writeError(w, r, newAppError(http.StatusUnauthorized, "ServerAuthError", "invalid credentials"))
+		return false
+	}
+	for _, sc := range need {
+		if !p.Has(sc) {
+			h.AuditDenied(r, p, "missing scope "+string(sc))
+			writeError(w, r, newAppError(http.StatusForbidden, "AuthorizationError", "insufficient scope for this route"))
+			return false
+		}
+	}
+	return true
+}
+
 // ---------------------------------------------------------------------------
 // HTTP audit row (set by the server's auth middleware)
 // ---------------------------------------------------------------------------
@@ -91,7 +121,18 @@ func (h *Handlers) capabilityList() []*capabilities.Spec {
 func (h *Handlers) AuditHTTP(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, ok := PrincipalFromContext(r.Context())
-		if !ok || h.Vault == nil {
+		if !ok {
+			// Only the public routes have no caller. Anything else reaching
+			// here without one means the auth middleware did not run: fail
+			// closed rather than serve it unaudited.
+			if publicRequest(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			writeError(w, r, newAppError(http.StatusUnauthorized, "ServerAuthError", "invalid credentials"))
+			return
+		}
+		if h.Vault == nil {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -277,14 +318,25 @@ func queryPage(r *http.Request, defLimit int) (limit, offset int, e *AppError) {
 // allow-list as the vault's own purpose check (NFC, no control or format
 // characters). The length is checked first so an oversized value is never
 // normalised. The error never quotes the value.
-func freeText(field, value string) *AppError {
+func freeText(field, value string) *AppError { return freeTextIn(field, value, false) }
+
+// multilineText is freeText for a field an operator writes by hand (the
+// denial reason): line breaks and tabs are allowed (Python never validated
+// the reason); every other control character is still refused.
+func multilineText(field, value string) *AppError { return freeTextIn(field, value, true) }
+
+func freeTextIn(field, value string, whitespace bool) *AppError {
 	if !utf8.ValidString(value) {
 		return badRequest("'" + field + "' must be valid UTF-8.")
 	}
 	if utf8.RuneCountInString(value) > maxTextField {
 		return badRequest("'" + field + "' exceeds the maximum allowed length of " + strconv.Itoa(maxTextField) + " characters.")
 	}
-	if _, err := validation.ValidateFreeText(value, maxTextField); err != nil {
+	check := value
+	if whitespace {
+		check = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(value)
+	}
+	if _, err := validation.ValidateFreeText(check, maxTextField); err != nil {
 		return badRequest("'" + field + "' contains characters that are not allowed.")
 	}
 	return nil
@@ -359,6 +411,9 @@ type SetSecretRequest struct {
 
 // SetSecret handles POST /v1/secrets.
 func (h *Handlers) SetSecret(w http.ResponseWriter, r *http.Request) {
+	if !h.requireScope(w, r, auth.ScopeAgent) {
+		return
+	}
 	var req SetSecretRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -425,6 +480,9 @@ func (h *Handlers) SetSecret(w http.ResponseWriter, r *http.Request) {
 // The transitional ?name= plaintext lookup (decision D5) is gone (RGT-504):
 // it answers 400 and points at the lease endpoint.
 func (h *Handlers) ListSecrets(w http.ResponseWriter, r *http.Request) {
+	if !h.requireScope(w, r, auth.ScopeAgent) {
+		return
+	}
 	q := r.URL.Query()
 	namespace := queryDefault(r, "namespace", vault.DefaultNamespace)
 	if _, ok := q["name"]; ok {
@@ -483,6 +541,9 @@ type LeaseRequest struct {
 //
 // A secret that does not exist (or was revoked) is a 404.
 func (h *Handlers) LeaseSecret(w http.ResponseWriter, r *http.Request) {
+	if !h.requireScope(w, r, auth.ScopeAgent, auth.ScopeLease) {
+		return
+	}
 	namespace, name := r.PathValue("namespace"), r.PathValue("name")
 	var req LeaseRequest
 	if !decodeOptionalJSON(w, r, &req) {
@@ -545,6 +606,9 @@ var errSecretNotFound = newAppError(http.StatusNotFound, "SecretNotFoundError", 
 // denial is audited (AUTHZ_DENIED). The legacy shared-token mode keeps
 // Python's ungated fingerprint.
 func (h *Handlers) GetSecret(w http.ResponseWriter, r *http.Request) {
+	if !h.requireScope(w, r, auth.ScopeAgent) {
+		return
+	}
 	namespace, name := r.PathValue("namespace"), r.PathValue("name")
 	version, e := queryInt(r, "version", 0)
 	if e == nil && r.URL.Query().Has("version") && version < 1 {
@@ -612,6 +676,9 @@ type UseSecretRequest struct {
 // secret server-side, run a registered action on it, return only the
 // action's result (python use_secret).
 func (h *Handlers) UseSecret(w http.ResponseWriter, r *http.Request) {
+	if !h.requireScope(w, r, auth.ScopeAgent) {
+		return
+	}
 	namespace, name := r.PathValue("namespace"), r.PathValue("name")
 	var req UseSecretRequest
 	if !decodeJSON(w, r, &req) {
@@ -670,6 +737,9 @@ func (h *Handlers) UseSecret(w http.ResponseWriter, r *http.Request) {
 // RevokeSecret handles POST /v1/secrets/{namespace}/{name}/revoke?agent=
 // (python revoke; agent defaults to "system"). Any request body is ignored.
 func (h *Handlers) RevokeSecret(w http.ResponseWriter, r *http.Request) {
+	if !h.requireScope(w, r, auth.ScopeAgent) {
+		return
+	}
 	namespace, name := r.PathValue("namespace"), r.PathValue("name")
 	agent, ok := h.querySubject(w, r, "agent", vault.SystemAgent, false)
 	if !ok {
@@ -703,6 +773,9 @@ type RotateRequest struct {
 
 // Rotate handles POST /v1/rotate (python rotate).
 func (h *Handlers) Rotate(w http.ResponseWriter, r *http.Request) {
+	if !h.requireScope(w, r, auth.ScopeOperator) {
+		return
+	}
 	var req RotateRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -793,8 +866,12 @@ func rowCapability(r store.AuditRow) (string, bool) {
 // Audit handles GET /v1/audit?limit=50[&capability=NAME], newest first
 // (python audit). capability= (RGT-166) keeps only the capability rows
 // that name that capability; limit then counts matching rows among the
-// newest MaxAuditScan rows.
+// newest MaxAuditScan rows; when that window is exhausted before limit
+// matches were found the answer adds "truncated": true and "scanned": N.
 func (h *Handlers) Audit(w http.ResponseWriter, r *http.Request) {
+	if !h.requireScope(w, r, auth.ScopeAudit) {
+		return
+	}
 	limit, e := queryInt(r, "limit", 50)
 	switch {
 	case e != nil:
@@ -840,11 +917,24 @@ func (h *Handlers) Audit(w http.ResponseWriter, r *http.Request) {
 		}
 		entries = append(entries, entryOf(row))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+	out := map[string]any{"entries": entries}
+	// A filtered read that examined its whole scan window and still found
+	// fewer than limit matches may have missed older rows: say so, so an
+	// empty answer is never mistaken for "no such event" (RGT-376). The
+	// fields are additive; Python's {"entries"} shape is unchanged
+	// otherwise.
+	if filtered && len(rows) >= fetch && len(entries) < limit {
+		out["truncated"] = true
+		out["scanned"] = len(rows)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // AuditVerify handles POST /v1/audit/verify.
 func (h *Handlers) AuditVerify(w http.ResponseWriter, r *http.Request) {
+	if !h.requireScope(w, r, auth.ScopeAudit) {
+		return
+	}
 	ok, err := h.Vault.VerifyAuditChain(r.Context())
 	if err != nil {
 		writeError(w, r, err)
@@ -868,6 +958,9 @@ type SimulateRequest struct {
 // PolicySimulate handles POST /v1/policy/simulate: the ABAC decision
 // {"allowed", "reason", "matched_rule"} (python simulate).
 func (h *Handlers) PolicySimulate(w http.ResponseWriter, r *http.Request) {
+	if !h.requireScope(w, r, auth.ScopeAgent) {
+		return
+	}
 	var req SimulateRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -901,7 +994,12 @@ func (h *Handlers) PolicySimulate(w http.ResponseWriter, r *http.Request) {
 // operator scope (defence in depth behind the auth middleware) and one made
 // while no broker is active (409, as in Python).
 func (h *Handlers) requireOperator(w http.ResponseWriter, r *http.Request) bool {
-	if p, ok := PrincipalFromContext(r.Context()); !ok || !p.Has(auth.ScopeOperator) {
+	p, ok := PrincipalFromContext(r.Context())
+	if !ok {
+		writeError(w, r, newAppError(http.StatusUnauthorized, "ServerAuthError", "invalid credentials"))
+		return false
+	}
+	if !p.Has(auth.ScopeOperator) {
 		writeError(w, r, newAppError(http.StatusForbidden, "ServerAuthError", "operator token required"))
 		return false
 	}
@@ -967,7 +1065,7 @@ func validateOperatorFields(operator, reason *string) *AppError {
 		}
 	}
 	if reason != nil {
-		return freeText("reason", *reason)
+		return multilineText("reason", *reason)
 	}
 	return nil
 }
@@ -1054,6 +1152,9 @@ type ExecuteCapabilityRequest struct {
 // a handler error, is a sanitized 500 so a handler's error text can never
 // leak a secret. A rate-limit refusal is 429 (Python: a sanitized 500).
 func (h *Handlers) ExecuteCapability(w http.ResponseWriter, r *http.Request) {
+	if !h.requireScope(w, r, auth.ScopeAgent) {
+		return
+	}
 	var req ExecuteCapabilityRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -1145,6 +1246,9 @@ func schemaKeys(s capabilities.Schema) []string {
 // ListCapabilities handles GET /v1/capabilities: every registered
 // capability and the versions it supports (no handler bodies, no secrets).
 func (h *Handlers) ListCapabilities(w http.ResponseWriter, r *http.Request) {
+	if !h.requireScope(w, r, auth.ScopeAgent) {
+		return
+	}
 	out := []capabilityView{}
 	for _, s := range h.capabilityList() {
 		out = append(out, viewOf(s))
@@ -1156,6 +1260,9 @@ func (h *Handlers) ListCapabilities(w http.ResponseWriter, r *http.Request) {
 // [&namespace=*][&purpose=*]: the capabilities the ABAC policy allows the
 // agent to execute (action = capability name).
 func (h *Handlers) ListAuthorizedCapabilities(w http.ResponseWriter, r *http.Request) {
+	if !h.requireScope(w, r, auth.ScopeAgent) {
+		return
+	}
 	q := r.URL.Query()
 	if p, _ := PrincipalFromContext(r.Context()); p.Legacy && !q.Has("agent") {
 		writeError(w, r, unprocessable("query parameter 'agent' is required"))
@@ -1197,6 +1304,9 @@ func (h *Handlers) ListAuthorizedCapabilities(w http.ResponseWriter, r *http.Req
 
 // ListActions handles GET /v1/actions: the registered actions for /use.
 func (h *Handlers) ListActions(w http.ResponseWriter, r *http.Request) {
+	if !h.requireScope(w, r, auth.ScopeAgent) {
+		return
+	}
 	out := []map[string]any{}
 	if h.Actions != nil {
 		for _, s := range h.Actions.List() {

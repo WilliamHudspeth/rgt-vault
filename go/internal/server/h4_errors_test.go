@@ -367,6 +367,30 @@ func TestAuditFilterScanIsBounded(t *testing.T) {
 	if len(out.Entries) > 1 {
 		t.Errorf("filtered scan returned %d rows; it must stop at the newest %d rows", len(out.Entries), 5)
 	}
+	// ... and the answer says the window was exhausted (RGT-376), so an
+	// empty result is not mistaken for "no such event".
+	var flags struct {
+		Truncated bool `json:"truncated"`
+		Scanned   int  `json:"scanned"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &flags)
+	if !flags.Truncated || flags.Scanned != 5 {
+		t.Errorf("truncated=%v scanned=%d, want true / 5: %s", flags.Truncated, flags.Scanned, rec.Body.String())
+	}
+	// A window that covers the whole log: no flag.
+	h.AuditScanLimit = 1000
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req("GET", "/v1/audit?capability=old&limit=100", e.auditor, "127.0.0.1:1", nil))
+	if strings.Contains(rec.Body.String(), "truncated") {
+		t.Errorf("complete scan flagged truncated: %s", rec.Body.String())
+	}
+	// Enough matches before the window ends: no flag either.
+	h.AuditScanLimit = 5
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req("GET", "/v1/audit?capability=new&limit=1", e.auditor, "127.0.0.1:1", nil))
+	if strings.Contains(rec.Body.String(), "truncated") || !strings.Contains(rec.Body.String(), "CAPABILITY_EXECUTED") {
+		t.Errorf("limit reached inside the window: %s", rec.Body.String())
+	}
 	// Unfiltered default: still honours limit.
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req("GET", "/v1/audit?limit=3", e.auditor, "127.0.0.1:1", nil))
@@ -413,6 +437,9 @@ func TestRequestFieldValidation(t *testing.T) {
 			{"deny operator", "/v1/requests/abc/deny", `{"operator":` + jsonStr(hv.value) + `}`},
 			{"approve operator", "/v1/requests/abc/approve", `{"operator":` + jsonStr(hv.value) + `}`},
 		} {
+			if hv.name == "newline" && p.name == "deny reason" {
+				continue // a denial reason may span lines (TestDenyReasonAllowsLineBreaksOnly)
+			}
 			if hv.name == "invalid utf-8" {
 				continue // encoding/json turns invalid bytes into U+FFFD: the handler never sees them
 			}
