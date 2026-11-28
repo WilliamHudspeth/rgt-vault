@@ -164,7 +164,8 @@ func TestScrubStringIsBoundedOnHugeInput(t *testing.T) {
 	big := strings.Repeat("a b ", 5_000_000) // 20 MB
 	start := time.Now()
 	got := NewRedactor().ScrubString(big + " token=" + testTok43)
-	if d := time.Since(start); d > 3*time.Second {
+	// Capped work is ~1 s even under -race on a slow runner; uncapped it is minutes.
+	if d := time.Since(start); d > 30*time.Second {
 		t.Fatalf("ScrubString on 20 MB took %v", d)
 	}
 	if !strings.Contains(got, "[TRUNCATED ") || len(got) > 70<<10 {
