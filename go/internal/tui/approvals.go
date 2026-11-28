@@ -133,6 +133,7 @@ func (m Model) updateRequestsMsg(msg tea.Msg) (Model, tea.Cmd, bool) {
 		m.reqErr = msg.err
 		if msg.err == nil {
 			m.requests = msg.reqs
+			m.pending, m.pendingKnown = len(msg.reqs), true // keep the badge fresh
 			m.clampRequestCursor()
 		}
 		return m, nil, true

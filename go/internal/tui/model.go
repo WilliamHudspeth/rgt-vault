@@ -307,6 +307,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.approver == nil {
 			return m, nil
 		}
+		if m.inRequests() {
+			// The requests view already polls; do not double the server calls.
+			return m, pendingTickCmd(m.requestPoll)
+		}
 		return m, m.loadPendingCmd()
 
 	case tea.KeyMsg:

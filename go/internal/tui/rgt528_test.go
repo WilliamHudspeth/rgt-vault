@@ -226,3 +226,38 @@ func TestRequestsHeaderSaysAllNamespaces(t *testing.T) {
 		t.Errorf("requests header still claims one namespace:\n%s", v)
 	}
 }
+
+type countingApprover struct {
+	*fakeApprover
+	calls int
+}
+
+func (c *countingApprover) ListRequests() ([]PendingRequest, error) {
+	c.calls++
+	return c.fakeApprover.ListRequests()
+}
+
+func TestPendingPollSkippedWhileInRequestsView(t *testing.T) {
+	c := &countingApprover{fakeApprover: &fakeApprover{reqs: twoRequests()}}
+	m := New(c, "prod").WithRequestPollInterval(time.Millisecond)
+	m, _ = step(m, loadedMsg{serverOK: true, auditValid: true})
+	m, _ = step(m, key("tab"))
+	if !m.inRequests() {
+		t.Fatal("not in requests view")
+	}
+	// The pending-badge tick must only re-arm itself: the requests view polls.
+	// tea.Tick blocks, so run the cmd in a goroutine and count calls instead.
+	_, cmd := step(m, pendingTickMsg{})
+	if cmd == nil {
+		t.Fatal("poll loop must keep ticking")
+	}
+	runCmd(t, cmd)
+	if c.calls != 0 {
+		t.Fatalf("ListRequests called %d times by the tick", c.calls)
+	}
+	// Loading the requests view refreshes the badge without a second call.
+	m, _ = step(m, requestsLoadedMsg{gen: m.reqGen, reqs: twoRequests()[:1]})
+	if m.pending != 1 {
+		t.Fatalf("pending = %d, want 1 from the requests view", m.pending)
+	}
+}
