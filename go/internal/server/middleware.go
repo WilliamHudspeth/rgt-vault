@@ -347,7 +347,7 @@ func publicRoute(r *http.Request) bool {
 
 // healthzRoute reports whether the request is GET /healthz.
 func healthzRoute(r *http.Request) bool {
-	return r.Method == http.MethodGet && r.URL.Path == "/healthz"
+	return r.Method == http.MethodGet && handlers.RoutePath(r) == "/healthz"
 }
 
 // authenticate identifies the caller of r.

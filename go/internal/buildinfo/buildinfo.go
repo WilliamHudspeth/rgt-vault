@@ -57,14 +57,26 @@ func vcsSetting(key string) (string, bool) {
 	return "", false
 }
 
+// trimV drops the "v" of a semantic-version tag ("v0.4.0" -> "0.4.0") so a
+// GoReleaser build ({{.Version}} has no prefix) and `go install ...@v0.4.0`
+// (Main.Version has one) report the same string. Other strings, such as
+// "(devel)", are left alone.
+func trimV(v string) string {
+	if len(v) > 1 && v[0] == 'v' && v[1] >= '0' && v[1] <= '9' {
+		return v[1:]
+	}
+	return v
+}
+
 // Version returns the ldflags version when set, else the module version from
-// the build info ("v0.4.0" for a `go install ...@v0.4.0`), else "(devel)".
+// the build info (`go install ...@v0.4.0` reports 0.4.0), else "(devel)".
+// A leading "v" is never part of the result.
 func Version() string {
 	if version != "" {
-		return version
+		return trimV(version)
 	}
 	if info := readBuildInfo(); info != nil && info.Main.Version != "" {
-		return info.Main.Version
+		return trimV(info.Main.Version)
 	}
 	return unknownVersion
 }

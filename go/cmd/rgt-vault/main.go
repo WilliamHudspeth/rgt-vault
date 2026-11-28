@@ -182,7 +182,7 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 	rootCmd.PersistentFlags().StringVar(&token, "token", "", "bearer token (overrides env RGT_VAULT_TOKEN and $RGT_VAULT_TOKEN_FILE; operator commands then fall back to ~/.config/rgt-vault/operator.token, all but mcp to the legacy server.token)")
 	tf.register(rootCmd)
 	var asOperator bool
-	rootCmd.PersistentFlags().BoolVar(&asOperator, "as-operator", false, "let an agent command (set, get, list, revoke, simulate, fingerprint) fall back to ~/.config/rgt-vault/operator.token")
+	rootCmd.PersistentFlags().BoolVar(&asOperator, "as-operator", false, "let an agent command (set, get, list, revoke, simulate, fingerprint, use, actions) fall back to ~/.config/rgt-vault/operator.token")
 
 	// --db / --policy / --provider select the vault for every subcommand that
 	// opens the vault files (Python's global options).
@@ -217,19 +217,22 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 	// -----------------------------------------------------------------------
 	// set  — write a secret (value from stdin or --value-file)
 	// -----------------------------------------------------------------------
-	var setNamespace, setAgent, setPurpose, setValueFile string
+	var setNamespace, setAgent, setPurpose, setValueFile, setNote string
+	var setRequire2FA bool
 	setCmd := &cobra.Command{
 		Use:   "set <name>",
 		Short: "Store a secret (pipe value via stdin or --value-file)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return newCLI().runSet(args[0], setNamespace, setAgent, setPurpose, setValueFile)
+			return newCLI().runSet(args[0], setNamespace, setAgent, setPurpose, setValueFile, setNote, setRequire2FA)
 		},
 	}
 	setCmd.Flags().StringVar(&setNamespace, "namespace", "default", "secret namespace")
 	setCmd.Flags().StringVar(&setAgent, "agent", "", "agent label: with per-agent tokens the server uses the token's agent and refuses a different one (only legacy shared-token servers use it)")
 	setCmd.Flags().StringVar(&setPurpose, "purpose", "", "purpose label")
 	setCmd.Flags().StringVar(&setValueFile, "value-file", "", "read secret from file instead of stdin")
+	setCmd.Flags().StringVar(&setNote, "note", "", "free-text note stored with the secret (never put a secret in it)")
+	setCmd.Flags().BoolVar(&setRequire2FA, "require-2fa", false, "every approval of this secret needs a TOTP code")
 
 	// -----------------------------------------------------------------------
 	// get  — retrieve / lease a secret
@@ -431,6 +434,7 @@ func newRootCmd(stdin io.Reader, stdout io.Writer) *cobra.Command {
 
 	rootCmd.AddCommand(setCmd, getCmd, listCmd, revokeCmd, simulateCmd,
 		fingerprintCmd, rotateCmd, verifyAuditCmd, auditCmd,
+		newUseCmd(newCLI), newActionsCmd(newCLI), newRequestsCmd(newOperatorCLI),
 		initCmd, serveCmd, statusCmd, mcpCmd, tuiCmd, newVersionCmd(),
 		newEnroll2FACmd(&vf, stdout), newExportCmd(&vf, stdout), newImportCmd(&vf, stdin, stdout),
 		newMigrateCmd(&vf, stdout), newProviderCmd(stdin, stdout),

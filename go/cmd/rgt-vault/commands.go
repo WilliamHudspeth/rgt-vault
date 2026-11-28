@@ -44,6 +44,17 @@ type cli struct {
 	stdin  io.Reader
 	stdout io.Writer
 	client *http.Client
+	// retryAfter is the Retry-After header of the last answer.
+	retryAfter string
+}
+
+// maxResponseBytes caps a server answer (16 MiB); a larger one is an error,
+// never a silently cut body.
+const maxResponseBytes = 16 << 20
+
+// apiErr is apiError plus the last answer's Retry-After header.
+func (c *cli) apiErr(command string, status int, body []byte) error {
+	return apiErrorRA(command, status, body, c.retryAfter)
 }
 
 // newHTTPClient is the client of the HTTP subcommands; rt is the TLS-policy
@@ -95,9 +106,13 @@ func (c *cli) do(method, reqURL string, body any) ([]byte, int, error) {
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	c.retryAfter = resp.Header.Get("Retry-After")
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return nil, resp.StatusCode, err
+	}
+	if len(respBody) > maxResponseBytes {
+		return nil, resp.StatusCode, fmt.Errorf("the server's response exceeds the %d MiB limit of this client", maxResponseBytes>>20)
 	}
 	return respBody, resp.StatusCode, nil
 }
@@ -106,7 +121,7 @@ func (c *cli) do(method, reqURL string, body any) ([]byte, int, error) {
 // Command implementations
 // ---------------------------------------------------------------------------
 
-func (c *cli) runSet(name, namespace, agent, purpose, valueFile string) error {
+func (c *cli) runSet(name, namespace, agent, purpose, valueFile, note string, require2FA bool) error {
 	var data []byte
 	var err error
 	if valueFile != "" {
@@ -126,19 +141,21 @@ func (c *cli) runSet(name, namespace, agent, purpose, valueFile string) error {
 	}
 
 	reqBody := struct {
-		Name      string `json:"name"`
-		Namespace string `json:"namespace"`
-		Value     string `json:"value"`
-		Agent     string `json:"agent,omitempty"`
-		Purpose   string `json:"purpose"`
-	}{Name: name, Namespace: namespace, Value: value, Agent: agent, Purpose: purpose}
+		Name       string `json:"name"`
+		Namespace  string `json:"namespace"`
+		Value      string `json:"value"`
+		Agent      string `json:"agent,omitempty"`
+		Purpose    string `json:"purpose"`
+		Note       string `json:"note,omitempty"`
+		Require2FA bool   `json:"require_2fa,omitempty"`
+	}{Name: name, Namespace: namespace, Value: value, Agent: agent, Purpose: purpose, Note: note, Require2FA: require2FA}
 
-	_, status, err := c.do(http.MethodPost, c.host+"/v1/secrets", reqBody)
+	body, status, err := c.do(http.MethodPost, c.host+"/v1/secrets", reqBody)
 	if err != nil {
 		return err
 	}
 	if status != http.StatusOK && status != http.StatusCreated {
-		return fmt.Errorf("set failed: HTTP %d", status)
+		return c.apiErr("set", status, body)
 	}
 	fmt.Fprintln(c.stdout, "Secret stored.")
 	return nil
@@ -162,8 +179,12 @@ func (c *cli) runGet(name, namespace, agent, purpose string) error {
 	if status == http.StatusNotFound {
 		return fmt.Errorf("secret %q not found in namespace %q", name, namespace)
 	}
+	if isScopeRefusal(status, body) {
+		return fmt.Errorf("%w; get needs a token with the agent and lease scopes (rgt-vault token mint --agent NAME --scope agent,lease), or use --offline as the operator",
+			c.apiErr("get", status, body))
+	}
 	if status != http.StatusOK {
-		return fmt.Errorf("get failed: HTTP %d", status)
+		return c.apiErr("get", status, body)
 	}
 	var resp struct {
 		Value *string `json:"value"`
@@ -193,7 +214,7 @@ func (c *cli) runList(namespace string) error {
 		return err
 	}
 	if status != http.StatusOK {
-		return fmt.Errorf("list failed: HTTP %d", status)
+		return c.apiErr("list", status, body)
 	}
 	var resp listResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -206,12 +227,12 @@ func (c *cli) runList(namespace string) error {
 }
 
 func (c *cli) runRevoke(name, namespace string) error {
-	_, status, err := c.do(http.MethodPost, c.secretURL(namespace, name, "revoke"), struct{}{})
+	body, status, err := c.do(http.MethodPost, c.secretURL(namespace, name, "revoke"), struct{}{})
 	if err != nil {
 		return err
 	}
 	if status != http.StatusOK && status != http.StatusNoContent {
-		return fmt.Errorf("revoke failed: HTTP %d", status)
+		return c.apiErr("revoke", status, body)
 	}
 	fmt.Fprintln(c.stdout, "Secret revoked.")
 	return nil
@@ -230,7 +251,7 @@ func (c *cli) runSimulate(agent, namespace, purpose, action string) error {
 		return err
 	}
 	if status != http.StatusOK {
-		return fmt.Errorf("simulate failed: HTTP %d", status)
+		return c.apiErr("simulate", status, body)
 	}
 	fmt.Fprintln(c.stdout, strings.TrimSpace(string(body)))
 	return nil
@@ -242,7 +263,7 @@ func (c *cli) runFingerprint(name, namespace string) error {
 		return err
 	}
 	if status != http.StatusOK {
-		return fmt.Errorf("fingerprint failed: HTTP %d", status)
+		return c.apiErr("fingerprint", status, body)
 	}
 	var resp struct {
 		Fingerprint string `json:"fingerprint"`
@@ -262,12 +283,12 @@ func (c *cli) runRotate(target string) error {
 		Target string `json:"target"`
 	}{Target: target}
 
-	_, status, err := c.do(http.MethodPost, c.host+"/v1/rotate", reqBody)
+	body, status, err := c.do(http.MethodPost, c.host+"/v1/rotate", reqBody)
 	if err != nil {
 		return err
 	}
 	if status != http.StatusOK && status != http.StatusNoContent {
-		return fmt.Errorf("rotate failed: HTTP %d", status)
+		return c.apiErr("rotate", status, body)
 	}
 	fmt.Fprintln(c.stdout, "Rotation complete.")
 	return nil
@@ -281,7 +302,7 @@ func (c *cli) runVerifyAudit() error {
 		return err
 	}
 	if status != http.StatusOK {
-		return fmt.Errorf("verify-audit failed: HTTP %d", status)
+		return c.apiErr("verify-audit", status, body)
 	}
 	var resp struct {
 		OK    *bool `json:"ok"`
@@ -311,7 +332,7 @@ func (c *cli) runAudit(limit int) error {
 		return err
 	}
 	if status != http.StatusOK {
-		return fmt.Errorf("audit failed: HTTP %d", status)
+		return c.apiErr("audit", status, body)
 	}
 	fmt.Fprintln(c.stdout, strings.TrimSpace(string(body)))
 	return nil

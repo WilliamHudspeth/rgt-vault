@@ -10,6 +10,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -391,4 +392,92 @@ func TestHealthzLegacyFallbackDoesNotWidenOtherRoutes(t *testing.T) {
 	if code, _, _ := e.call("GET", "/v1/requests", e.agentTok, nil); code != http.StatusUnauthorized {
 		t.Errorf("agent token on an operator route = %d, want 401", code)
 	}
+}
+
+// Only the exact GET /healthz is optionally authenticated. Every near miss
+// must be authenticated like any other route: 401 (or 400 from the strict
+// path check) without a token, and never the detailed body, whatever token
+// is sent.
+func TestHealthzRouteMatchIsExact(t *testing.T) {
+	e := newAuthzEnv(t, false)
+	captureLog(t)
+	for i, c := range []struct {
+		name, method, target string
+		audited              bool // reaches authentication: a bad token leaves an AUTH_FAILED row
+	}{
+		{"trailing slash", "GET", "/healthz/", true},
+		{"upper case", "GET", "/HEALTHZ", true},
+		{"mixed case", "GET", "/Healthz", true},
+		{"double slash", "GET", "//healthz", false},
+		{"percent-encoded letter", "GET", "/%68ealthz", false},
+		{"percent-encoded slash", "GET", "/healthz%2Fx", false},
+		{"path parameter", "GET", "/healthz;x", true},
+		{"longer name", "GET", "/healthzx", true},
+		{"sub path", "GET", "/healthz/detail", true},
+		{"prefix of a real path", "GET", "/healthz/../v1/secrets", false},
+		{"POST", "POST", "/healthz", true},
+		{"PUT", "PUT", "/healthz", false},
+		{"DELETE", "DELETE", "/healthz", false},
+		{"OPTIONS", "OPTIONS", "/healthz", true},
+		{"HEAD", "HEAD", "/healthz", false},
+		{"POST with query", "POST", "/healthz?token=x", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ip := fmt.Sprintf("10.7.7.%d:4000", i+1) // one source per case: the limiter must not interfere
+			noTok := httptest.NewRequest(c.method, c.target, nil)
+			noTok.RemoteAddr = ip
+			rec := httptest.NewRecorder()
+			e.h.ServeHTTP(rec, noTok)
+			// 401 from authentication, 400 from the strict path check, 405
+			// from the method allow-list: never served without credentials.
+			// (Verbs the allow-list refuses never reach authentication; POST
+			// and OPTIONS do, and must be refused as unauthenticated: a 405
+			// from the router would mean /healthz's optional auth let them by.)
+			// A near miss that reaches authentication with a bad token is a
+			// real failure: it is audited (and counted by the limiter), which
+			// is what tells it apart from the optional-auth /healthz probe
+			// (AuditHTTP would also answer 401, as a second line of defence).
+			if c.audited {
+				before := len(e.rows("AUTH_FAILED"))
+				bad := httptest.NewRequest(c.method, c.target, nil)
+				bad.RemoteAddr = ip
+				bad.Header.Set("Authorization", bearer("not-a-valid-token"))
+				brec := httptest.NewRecorder()
+				e.h.ServeHTTP(brec, bad)
+				if brec.Code != http.StatusUnauthorized {
+					t.Errorf("bad token: %d %q, want 401", brec.Code, brec.Body.String())
+				}
+				if n := len(e.rows("AUTH_FAILED")); n != before+1 {
+					t.Errorf("AUTH_FAILED rows %d -> %d, want one new row: it must be authenticated like any route", before, n)
+				}
+			}
+			refusedEarly := c.method == "PUT" || c.method == "DELETE" || c.method == "HEAD"
+			if c := rec.Code; c != http.StatusUnauthorized && c != http.StatusBadRequest && !(refusedEarly && c == http.StatusMethodNotAllowed) {
+				t.Errorf("no token: %d %q, want 401 (400 from the path check; 405 only for verbs refused before authentication)", rec.Code, rec.Body.String())
+			}
+			if rec.Body.String() == minimalHealthBody {
+				t.Errorf("no token: got the public /healthz body for a non-exact request")
+			}
+			for _, tok := range []string{e.auditor, e.operator} {
+				req := httptest.NewRequest(c.method, c.target, nil)
+				req.RemoteAddr = ip
+				req.Header.Set("Authorization", bearer(tok))
+				rec := httptest.NewRecorder()
+				e.h.ServeHTTP(rec, req)
+				for _, leak := range []string{"vault_id", "key_epoch", `"actions"`, `"version"`} {
+					if strings.Contains(rec.Body.String(), leak) {
+						t.Errorf("token request leaked %s from a non-exact route: %d %q", leak, rec.Code, rec.Body.String())
+					}
+				}
+			}
+		})
+	}
+
+	// Sanity: the exact route, with a query string, is still the probe.
+	wantMinimal(t, "exact with query", func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/healthz?token=x", nil)
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, req)
+		return rec
+	}())
 }

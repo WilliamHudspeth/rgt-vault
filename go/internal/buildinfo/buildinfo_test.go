@@ -58,7 +58,7 @@ func TestBuildInfoFallbackWhenLdflagsEmpty(t *testing.T) {
 		Main:     debug.Module{Version: "v0.4.0"},
 		Settings: vcs("vcs.revision", "deadbeef", "vcs.time", "2026-11-28T00:00:00Z", "vcs.modified", "true"),
 	})
-	if got := Version(); got != "v0.4.0" {
+	if got := Version(); got != "0.4.0" {
 		t.Errorf("Version = %q", got)
 	}
 	if got := Commit(); got != "deadbeef" {
@@ -70,7 +70,7 @@ func TestBuildInfoFallbackWhenLdflagsEmpty(t *testing.T) {
 	if !Dirty() {
 		t.Error("Dirty = false, want true from vcs.modified")
 	}
-	if got, want := String(), "v0.4.0 (commit deadbeef, built 2026-11-28T00:00:00Z, dirty)"; got != want {
+	if got, want := String(), "0.4.0 (commit deadbeef, built 2026-11-28T00:00:00Z, dirty)"; got != want {
 		t.Errorf("String = %q, want %q", got, want)
 	}
 }
@@ -177,5 +177,26 @@ func TestReadBuildInfoReturnsNilWhenUnavailable(t *testing.T) {
 	// only assert it never returns a non-nil info with an unusable shape.
 	if info := readBuildInfo(); info != nil && info.GoVersion == "" {
 		t.Errorf("build info without GoVersion: %+v", info)
+	}
+}
+
+// A release build ({{.Version}}, no prefix) and `go install ...@v0.4.0`
+// (Main.Version "v0.4.0") must read the same.
+func TestVersionLeadingVIsNormalised(t *testing.T) {
+	for _, c := range []struct{ ldflags, main, want string }{
+		{"0.4.0", "", "0.4.0"},
+		{"v0.4.0", "", "0.4.0"},
+		{"", "v0.4.0", "0.4.0"},
+		{"", "v1.2.3-rc.1+meta", "1.2.3-rc.1+meta"},
+		{"", "(devel)", "(devel)"},
+		{"dev", "", "dev"},
+		{"vault-build", "", "vault-build"},
+		{"v", "", "v"},
+	} {
+		setLdflags(t, c.ldflags, "", "", "")
+		setBuildInfo(t, &debug.BuildInfo{Main: debug.Module{Version: c.main}})
+		if got := Version(); got != c.want {
+			t.Errorf("ldflags %q main %q: Version = %q, want %q", c.ldflags, c.main, got, c.want)
+		}
 	}
 }
