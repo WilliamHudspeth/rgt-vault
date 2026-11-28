@@ -799,16 +799,62 @@ func (r *Redactor) ScrubString(s string) string {
 	}
 	if len(s) > maxScrubStringBytes {
 		// Bound the work per string (the regex passes are far from linear on
-		// adversarial 50 MB inputs). Only the scrubbed prefix is kept, so a
-		// credential cut by the limit can never leave a partial copy behind.
-		cut := maxScrubStringBytes
+		// adversarial 50 MB inputs). Only a prefix is kept, and the cut is moved
+		// back so that no credential can be half inside it: a scrubber cannot
+		// recognise "the first 20 characters of a token" or a PEM body whose
+		// END line was cut off.
+		kept := safeTruncationPrefix(s, maxScrubStringBytes)
+		omitted := len(s) - len(kept)
+		return SanitizeText(scrubInlineCredentials(kept)) + fmt.Sprintf("[TRUNCATED %d bytes]", omitted)
+	}
+	return SanitizeText(scrubInlineCredentials(s))
+}
+
+// truncationLookback is how far safeTruncationPrefix searches backwards for a
+// delimiter, and how much it drops when it finds none.
+const truncationLookback = 4096
+
+// safeTruncationPrefix returns a prefix of s of at most limit bytes that ends
+// at a whitespace or quote/comma delimiter (so any token or key=value pair is
+// either wholly inside it, where scrubbing sees it, or wholly outside). If no
+// delimiter occurs in the last truncationLookback bytes, those bytes are
+// dropped (an unbroken run can only be a credential or noise). A PEM private
+// key whose END line is not inside the prefix is dropped from its BEGIN line on.
+func safeTruncationPrefix(s string, limit int) string {
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	floor := cut - truncationLookback
+	if floor < 0 {
+		floor = 0
+	}
+	found := -1
+	for i := cut - 1; i >= floor; i-- {
+		switch s[i] {
+		case ' ', '\t', '\r', '\n', ',', ';', '"', '\'':
+			found = i + 1
+		}
+		if found >= 0 {
+			break
+		}
+	}
+	if found >= 0 {
+		cut = found
+	} else {
+		cut = floor
 		for cut > 0 && !utf8.RuneStart(s[cut]) {
 			cut--
 		}
-		omitted := len(s) - cut
-		return SanitizeText(scrubInlineCredentials(s[:cut])) + fmt.Sprintf("[TRUNCATED %d bytes]", omitted)
 	}
-	return SanitizeText(scrubInlineCredentials(s))
+	kept := s[:cut]
+	if i := strings.LastIndex(kept, "-----BEGIN "); i >= 0 {
+		tail := kept[i:]
+		if strings.Contains(tail, "PRIVATE KEY-----") && !strings.Contains(tail, "-----END ") {
+			kept = kept[:i]
+		}
+	}
+	return kept
 }
 
 func scrubInlineCredentials(s string) string {
@@ -1101,7 +1147,7 @@ func SanitizeText(s string) string {
 			continue
 		}
 		if isUnsafeUnicodeControl(r) {
-			fmt.Fprintf(&b, `\u%04x`, r)
+			b.WriteString(EncodeRune(r))
 		} else {
 			b.WriteRune(r)
 		}
@@ -1120,6 +1166,15 @@ func isCleanASCII(s string) bool {
 	return true
 }
 
+// EncodeRune renders r as \uXXXX (BMP) or \UXXXXXXXX (above U+FFFF), so the
+// escape is never ambiguous with a following hex digit.
+func EncodeRune(r rune) string {
+	if r > 0xffff {
+		return fmt.Sprintf(`\U%08x`, r)
+	}
+	return fmt.Sprintf(`\u%04x`, r)
+}
+
 // IsUnsafeRune reports whether r is a non-ASCII code point that SanitizeText
 // encodes as \uXXXX: C1 controls, invisible/format characters and BiDi
 // controls that can reorder or hide text in a terminal or log viewer. It is
@@ -1134,7 +1189,17 @@ func isUnsafeUnicodeControl(r rune) bool {
 		return true
 	case r == 0x061c: // Arabic Letter Mark
 		return true
-	case r == 0x180e: // Mongolian vowel separator
+	case r >= 0x180b && r <= 0x180e: // Mongolian free variation selectors, vowel separator
+		return true
+	case r == 0x034f: // combining grapheme joiner
+		return true
+	case r == 0x115f || r == 0x1160 || r == 0x3164 || r == 0xffa0: // Hangul fillers
+		return true
+	case r == 0xfe0f: // variation selector-16
+		return true
+	case r == 0xfffc: // object replacement character
+		return true
+	case r >= 0x1d173 && r <= 0x1d17a: // musical symbol formatting controls
 		return true
 	case r >= 0x200b && r <= 0x200f: // ZWSP, ZWNJ, ZWJ, LRM (U+200E), RLM (U+200F)
 		return true
@@ -1142,7 +1207,7 @@ func isUnsafeUnicodeControl(r rune) bool {
 		return true
 	case r >= 0x202a && r <= 0x202e: // BiDi embedding / override
 		return true
-	case r == 0x2060: // word joiner
+	case r >= 0x2060 && r <= 0x206f: // word joiner, invisible operators, deprecated format controls (incl. 2066-2069 isolates)
 		return true
 	case r >= 0x2066 && r <= 0x2069: // BiDi isolate controls
 		return true
@@ -1150,7 +1215,7 @@ func isUnsafeUnicodeControl(r rune) bool {
 		return true
 	case r >= 0xfff9 && r <= 0xfffb: // interlinear annotation anchors
 		return true
-	case r >= 0xe0000 && r <= 0xe007f: // tag characters
+	case r >= 0xe0000 && r <= 0xe01ef: // tag characters and variation selectors supplement
 		return true
 	case unicode.Is(unicode.Co, r): // private use areas
 		return true

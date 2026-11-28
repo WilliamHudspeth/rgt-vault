@@ -174,20 +174,75 @@ func TestScrubStringIsBoundedOnHugeInput(t *testing.T) {
 	if strings.Contains(got, testTok43) {
 		t.Error("token beyond the cap must not appear")
 	}
-	// A credential straddling the cap is never partially emitted.
-	edge := strings.Repeat("x ", (maxScrubStringBytes-10)/2) + "token=" + testTok43 + " tail"
-	if out := NewRedactor().ScrubString(edge); strings.Contains(out, testTok43[:12]) {
-		t.Errorf("credential cut by the cap leaked a prefix: %q", out[len(out)-60:])
+}
+
+// A credential that straddles the 64 KiB cap must not leave a prefix behind:
+// the scrubber cannot recognise half a token or a PEM body whose END line was
+// cut off. 30+ characters of each credential sit BEFORE the cap boundary.
+func TestScrubStringCapNeverLeavesCredentialPrefix(t *testing.T) {
+	const tail = " and then the rest of a very long message "
+	pemBody := strings.Repeat("MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC", 6)
+	filler := func(n int) string { return strings.Repeat("x ", n/2) }
+
+	shapes := []struct {
+		name, cred string
+		secret     string // the part whose prefix must never survive
+	}{
+		{"bare token after space", testTok43, testTok43},
+		{"token_id assignment", "token_id=" + testTok43, testTok43},
+		{"PEM body", "-----BEGIN PRIVATE KEY-----\n" + pemBody + "\n-----END PRIVATE KEY-----", pemBody},
+	}
+	for _, sh := range shapes {
+		for _, before := range []int{12, 25, 36, 60} { // credential chars inside the cap
+			if before >= len(sh.cred) {
+				continue
+			}
+			start := maxScrubStringBytes - before
+			in := filler(start) + sh.cred + tail + strings.Repeat("a b ", 1000)
+			if len(in) <= maxScrubStringBytes {
+				t.Fatalf("%s: input not larger than the cap", sh.name)
+			}
+			out := NewRedactor().ScrubString(in)
+			if !strings.Contains(out, "[TRUNCATED ") {
+				t.Fatalf("%s: not truncated", sh.name)
+			}
+			if run := longestSharedRun(out, sh.secret); run >= 8 {
+				t.Errorf("%s (%d chars before cap): %d-char credential prefix survived: ...%q",
+					sh.name, before, run, out[len(out)-120:])
+			}
+		}
 	}
 }
 
+// longestSharedRun returns the length of the longest substring of secret
+// (tried from every start) that occurs in out.
+func longestSharedRun(out, secret string) int {
+	best := 0
+	for i := 0; i < len(secret); i++ {
+		for n := best + 1; i+n <= len(secret); n++ {
+			if !strings.Contains(out, secret[i:i+n]) {
+				break
+			}
+			best = n
+		}
+	}
+	return best
+}
+
 func TestSanitizeTextEncodesInvisibleAndPrivateUseCodePoints(t *testing.T) {
-	for _, r := range []rune{0x00ad, 0x180e, 0x2060, 0xfff9, 0xfffa, 0xfffb, 0xe000, 0xf8ff, 0xe0041, 0xf0000, 0x2028, 0x200e} {
+	for _, r := range []rune{0x00ad, 0x034f, 0x115f, 0x1160, 0x3164, 0xffa0, 0x180b, 0x180c, 0x180d, 0x180e,
+		0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0x2065, 0x206a, 0x206f, 0xfe0f, 0xfffc, 0xfff9, 0xfffa, 0xfffb,
+		0xe000, 0xf8ff, 0x2028, 0x200e, 0x1d173, 0x1d17a, 0xe0041, 0xe0100, 0xe01ef, 0xf0000} {
 		in := "a" + string(r) + "b"
 		got := SanitizeText(in)
-		if strings.ContainsRune(got, r) || !strings.Contains(got, `\u`) {
-			t.Errorf("SanitizeText(U+%04X) = %q, want encoded", r, got)
+		want := "a" + EncodeRune(r) + "b"
+		if got != want || strings.ContainsRune(got, r) {
+			t.Errorf("SanitizeText(U+%04X) = %q, want %q", r, got, want)
 		}
+	}
+	// Above U+FFFF the escape is \\UXXXXXXXX, unambiguous before a hex digit.
+	if got := SanitizeText(string(rune(0xe0041)) + "1"); got != `\U000e00411` {
+		t.Errorf("supplementary escape ambiguous: %q", got)
 	}
 	if got := SanitizeText("café 世界 \U0001F600"); got != "café 世界 \U0001F600" {
 		t.Errorf("ordinary non-ASCII altered: %q", got)

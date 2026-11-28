@@ -17,6 +17,8 @@ func TestLogSafeEncodesLineSeparatorsBiDiAndInvisibles(t *testing.T) {
 		{"a\u00adb", "a\\u00adb"},
 		{"a\u2060b", "a\\u2060b"},
 		{"a\ue000b", "a\\ue000b"},
+		{"a\U000e0041" + "1b", "a\\U000e00411b"},
+		{"a\u034fb", "a\\u034fb"},
 		{"caf\u00e9 \u4e16\u754c", "caf\u00e9 \u4e16\u754c"}, // ordinary non-ASCII is untouched
 	} {
 		if got := LogSafe(tc.in); got != tc.want {

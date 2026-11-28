@@ -194,7 +194,7 @@ func LogSafe(s string) string {
 		case logging.IsUnsafeRune(r):
 			// U+2028/2029, BiDi marks/overrides, zero-width and private-use
 			// characters: the same set logging.SanitizeText encodes.
-			fmt.Fprintf(&b, `\u%04x`, r)
+			b.WriteString(logging.EncodeRune(r))
 		default:
 			b.WriteString(s[i : i+size])
 		}
