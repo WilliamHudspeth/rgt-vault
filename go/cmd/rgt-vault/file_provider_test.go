@@ -204,8 +204,8 @@ func TestInitServeFileProviderExplicitPath(t *testing.T) {
 	for _, e := range ents {
 		names = append(names, e.Name())
 	}
-	if strings.Join(names, ",") != "master.key,master.key.vault-id" {
-		t.Fatalf("key dir holds %v, want master.key and master.key.vault-id", names)
+	if strings.Join(names, ",") != "master.key,master.key.lock,master.key.vault-id" {
+		t.Fatalf("key dir holds %v, want master.key, its .lock and .vault-id", names)
 	}
 }
 
@@ -533,6 +533,7 @@ func TestRotationCrashKeepsPreviousKey(t *testing.T) {
 	}
 	providers.Wipe(newKey)
 	_ = st.Close()
+	_ = prov.(*providers.FileProvider).Close() // the process died: its lock is gone
 
 	prev := providers.PrevPath(keyPath)
 	if _, err := os.Stat(prev); err != nil {
@@ -566,26 +567,50 @@ func TestRotationCrashKeepsPreviousKey(t *testing.T) {
 	}
 }
 
-// Review L5: seal file --force over a live key keeps it as .prev.
-func TestSealForceKeepsPreviousKey(t *testing.T) {
+// Review L5 / MED-2: seal file --force over a live key keeps it under a
+// name nothing removes automatically, so a NEW vault created on the same
+// path (reviewer's repro) cannot delete vault A's only key.
+func TestSealForceKeepsReplacedKey(t *testing.T) {
 	e := newFileEnv(t)
 	keyPath := filepath.Join(e.home, "keys", "master.key")
 	e.mustInit("--master-key-file", keyPath)
 	before := assertKeyFile(t, keyPath)
-	if code, out, stderr := runCLI(t, "", "provider", "seal", "file", "--generate", "--force", "--out", keyPath); code != 0 || !strings.Contains(out, ".prev") {
+	code, out, stderr := runCLI(t, "", "provider", "seal", "file", "--generate", "--force", "--out", keyPath)
+	if code != 0 || !strings.Contains(out, ".replaced-") || !strings.Contains(out, "only key of the vault") {
 		t.Fatalf("seal --force: %d %q %q", code, out, stderr)
 	}
-	if got, _ := os.ReadFile(providers.PrevPath(keyPath)); !bytes.Equal(got, before) {
-		t.Fatal(".prev does not hold the replaced key")
+	kept, _ := filepath.Glob(keyPath + ".replaced-*")
+	if len(kept) != 1 {
+		t.Fatalf("kept files %v", kept)
 	}
-	// A second --force must not overwrite the only copy of the old key.
-	if code, _, stderr := runCLI(t, "", "provider", "seal", "file", "--generate", "--force", "--out", keyPath); code == 0 || !strings.Contains(stderr, ".prev") {
-		t.Fatalf("second --force: %d %q", code, stderr)
+	if got, _ := os.ReadFile(kept[0]); !bytes.Equal(got, before) {
+		t.Fatal("the kept file does not hold the replaced key")
 	}
-	_, _, err := openFileStack(t, e.db, keyPath, "")
-	if err == nil || !strings.Contains(err.Error(), "mv "+providers.PrevPath(keyPath)) {
-		t.Fatalf("open with the replaced key: %v", err)
+	if _, err := os.Stat(providers.PrevPath(keyPath)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("seal --force wrote a .prev (which a later open would remove)")
 	}
+	// Vault B on the same key path: it opens (binding was dropped) and its
+	// first open must not touch A's key.
+	dbB := filepath.Join(e.home, "vault-b", "vault.db")
+	if code, _, stderr := runCLI(t, "", "--db", dbB, "--provider", "file", "--master-key-file", keyPath, "init"); code != 0 {
+		t.Fatalf("init B: %s", stderr)
+	}
+	if got, err := os.ReadFile(kept[0]); err != nil || !bytes.Equal(got, before) {
+		t.Fatalf("vault A's key was removed or changed by vault B: %v", err)
+	}
+	// A still opens with its kept key.
+	restored := filepath.Join(e.home, "restore", "a.key")
+	if err := os.MkdirAll(filepath.Dir(restored), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(kept[0], restored); err != nil {
+		t.Fatal(err)
+	}
+	st, _, err := openFileStack(t, e.db, restored, "")
+	if err != nil {
+		t.Fatalf("vault A with its kept key: %v", err)
+	}
+	_ = st.Close()
 }
 
 // Review L3: a key that does not match names the source and the vault.
@@ -750,5 +775,23 @@ func TestConcurrentInitKeepsVault(t *testing.T) {
 	}
 	if !vaultFileExists(e.db) {
 		t.Fatal("the vault B created was removed by A's cleanup")
+	}
+}
+
+// Review LOW (M16): when init fails on a vault that already existed, it
+// removes nothing: not the vault files and not files a provider reports.
+func TestInitFailureOnExistingVaultRemovesNothing(t *testing.T) {
+	e := newFileEnv(t)
+	keyPath := filepath.Join(e.home, "keys", "master.key")
+	e.mustInit("--master-key-file", keyPath)
+	useProvider(t, &bootstrapThenFail{path: keyPath}) // GetMasterSecret fails; claims keyPath
+	if code, _, stderr := e.run("init", "--operator-token-file", "-"); code == 0 {
+		t.Fatalf("init succeeded: %s", stderr)
+	}
+	if !vaultFileExists(e.db) {
+		t.Fatal("init removed an existing vault")
+	}
+	if _, err := os.Stat(keyPath); err != nil {
+		t.Fatal("init removed the existing vault's key")
 	}
 }

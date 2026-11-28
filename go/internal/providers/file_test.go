@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // secureDir is a 0700 temp dir (t.TempDir() is group-writable under a
@@ -352,7 +353,7 @@ func TestFileProviderRotationKeepsPrev(t *testing.T) {
 	if !strings.Contains(p.RecoveryHint(), "mv "+PrevPath(path)+" "+path) {
 		t.Fatalf("hint %q", p.RecoveryHint())
 	}
-	if err := p.ConfirmMasterSecret("vault-1"); err != nil {
+	if err := p.ConfirmMasterSecret("vault-1", newKey); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(PrevPath(path)); !errors.Is(err, os.ErrNotExist) {
@@ -378,10 +379,11 @@ func TestFileProviderVaultBinding(t *testing.T) {
 	if err := a.BootstrapMasterSecret(); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.ConfirmMasterSecret("vault-a"); err != nil {
+	keyA, _ := a.GetMasterSecret()
+	if err := a.ConfirmMasterSecret("vault-a", keyA); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.ConfirmMasterSecret("vault-a"); err != nil { // idempotent
+	if err := a.ConfirmMasterSecret("vault-a", keyA); err != nil { // idempotent
 		t.Fatal(err)
 	}
 	b := newP()
@@ -393,7 +395,7 @@ func TestFileProviderVaultBinding(t *testing.T) {
 	if _, err := b.RotateMasterSecret(); err == nil || !strings.Contains(err.Error(), "belongs to vault vault-a") {
 		t.Fatalf("rotate a key bound to another vault: %v", err)
 	}
-	if err := b.ConfirmMasterSecret("vault-b"); err == nil {
+	if err := b.ConfirmMasterSecret("vault-b", keyA); err == nil {
 		t.Fatal("confirm re-bound the key")
 	}
 	if got, _ := os.ReadFile(VaultIDPath(path)); strings.TrimSpace(string(got)) != "vault-a" {
@@ -401,5 +403,195 @@ func TestFileProviderVaultBinding(t *testing.T) {
 	}
 	if err := a.BindVault("vault-b"); err == nil {
 		t.Fatal("re-bound a provider to another vault")
+	}
+}
+
+// boundPair returns two providers on the same key file, both bound to the
+// same vault and the key bootstrapped and confirmed: "A" (the serve that
+// rotates) and "B" (another process, e.g. an offline export).
+func boundPair(t *testing.T) (a, b *FileProvider, path string, oldKey []byte) {
+	t.Helper()
+	path = filepath.Join(secureDir(t), "master.key")
+	mk := func() *FileProvider {
+		mp, err := NewFileProvider(FileOptions{Path: path, Getenv: env(nil)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := mp.(*FileProvider)
+		if err := p.BindVault("vault-1"); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = p.Close() })
+		return p
+	}
+	a = mk()
+	if err := a.BootstrapMasterSecret(); err != nil {
+		t.Fatal(err)
+	}
+	oldKey, _ = a.GetMasterSecret()
+	if err := a.ConfirmMasterSecret("vault-1", oldKey); err != nil {
+		t.Fatal(err)
+	}
+	return a, mk(), path, oldKey
+}
+
+// Review MED-1 (a): B confirms with the OLD key; A starts rotating between
+// B's comparison and B's removal of .prev. The key lock makes A wait, so
+// A's .prev survives. Without the lock in ConfirmMasterSecret, B removes the
+// .prev A has just written.
+func TestConfirmCannotRemovePrevMidRotation(t *testing.T) {
+	a, b, path, oldKey := boundPair(t)
+	rotated := make(chan error, 1)
+	t.Cleanup(func() { confirmHook = nil })
+	confirmHook = func() {
+		confirmHook = nil
+		go func() { _, err := a.RotateMasterSecret(); rotated <- err }()
+		select {
+		case err := <-rotated: // only possible without B holding the lock
+			rotated <- err
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+	if err := b.ConfirmMasterSecret("vault-1", oldKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-rotated; err != nil {
+		t.Fatal(err)
+	}
+	// "kill -9" of A during its re-wrap: the old key must still be there.
+	_ = a.Close()
+	prev, err := b.PreviousMasterSecret()
+	if err != nil || !bytes.Equal(prev, oldKey) {
+		t.Fatalf("%s lost mid-rotation: %v", PrevPath(path), err)
+	}
+}
+
+// Review MED-1 (b): A rotated and died before re-wrapping (lock released);
+// B, which unwrapped with the OLD key, confirms afterwards. The key file no
+// longer holds B's secret, so .prev stays. Without the comparison, B
+// removes the only key that opens the vault.
+func TestConfirmKeepsPrevWhenKeyChanged(t *testing.T) {
+	a, b, path, oldKey := boundPair(t)
+	if _, err := a.RotateMasterSecret(); err != nil {
+		t.Fatal(err)
+	}
+	_ = a.Close() // the rotating process died
+	if err := b.ConfirmMasterSecret("vault-1", oldKey); err != nil {
+		t.Fatal(err)
+	}
+	if prev, err := b.PreviousMasterSecret(); err != nil || !bytes.Equal(prev, oldKey) {
+		t.Fatalf("%s removed by a confirm with a stale key: %v", PrevPath(path), err)
+	}
+	// While A still holds the lock (rotation in progress), B's confirm is
+	// skipped at once instead of waiting.
+	a2, _, _, _ := boundPair(t)
+	if _, err := a2.RotateMasterSecret(); err != nil {
+		t.Fatal(err)
+	}
+	other, _ := NewFileProvider(FileOptions{Path: a2.path, Getenv: env(nil), Warn: func(string) {}})
+	o := other.(*FileProvider)
+	_ = o.BindVault("vault-1")
+	cur, _ := o.GetMasterSecret()
+	start := time.Now()
+	if err := o.ConfirmMasterSecret("vault-1", cur); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatal("confirm waited for another process's rotation")
+	}
+	if _, err := os.Stat(PrevPath(a2.path)); err != nil {
+		t.Fatal("confirm during another process's rotation removed .prev")
+	}
+	// The rotating process itself confirms with the new key: .prev goes.
+	if err := a2.ConfirmMasterSecret("vault-1", cur); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(PrevPath(a2.path)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("rotating process's confirm kept .prev")
+	}
+}
+
+// Review MED-2: a .prev is only ever removed by the vault the key is bound to.
+func TestPrevRemovedOnlyByOwningVault(t *testing.T) {
+	a, _, path, _ := boundPair(t)
+	newKey, err := a.RotateMasterSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = a.Close()
+	mp, _ := NewFileProvider(FileOptions{Path: path, Getenv: env(nil)})
+	other := mp.(*FileProvider)
+	other.path, other.vaultID = path, "vault-2" // even if BindVault were bypassed
+	if err := other.ConfirmMasterSecret("vault-2", newKey); err == nil {
+		t.Fatal("another vault confirmed the key")
+	}
+	if _, err := os.Stat(PrevPath(path)); err != nil {
+		t.Fatal("another vault removed .prev")
+	}
+}
+
+// Review LOW (M18): when writing the new key fails, .prev is removed and the
+// key file is unchanged.
+func TestRotateWriteFailureCleansPrev(t *testing.T) {
+	a, _, path, oldKey := boundPair(t)
+	old := replaceSecret
+	t.Cleanup(func() { replaceSecret = old })
+	replaceSecret = func(string, []byte) error { return errors.New("disk full") }
+	if _, err := a.RotateMasterSecret(); err == nil {
+		t.Fatal("rotation succeeded")
+	}
+	if _, err := os.Stat(PrevPath(path)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(".prev left behind after a failed rotation")
+	}
+	if cur, _ := a.GetMasterSecret(); !bytes.Equal(cur, oldKey) {
+		t.Fatal("key file changed by a failed rotation")
+	}
+	// And the lock was released: the next rotation works at once.
+	replaceSecret = old
+	done := make(chan error, 1)
+	go func() { _, err := a.RotateMasterSecret(); done <- err }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("lock still held after a failed rotation")
+	}
+}
+
+// Review LOW (M08): a rotation is refused while an unconfirmed .prev exists,
+// with a message that says why, and .prev is left exactly as it was.
+func TestRotateRefusedWithPendingPrev(t *testing.T) {
+	a, _, path, oldKey := boundPair(t)
+	if _, err := a.RotateMasterSecret(); err != nil {
+		t.Fatal(err)
+	}
+	_, err := a.RotateMasterSecret()
+	if err == nil || !strings.Contains(err.Error(), "earlier rotation that was not confirmed") {
+		t.Fatalf("second rotation: %v", err)
+	}
+	if prev, _ := a.PreviousMasterSecret(); !bytes.Equal(prev, oldKey) {
+		t.Fatalf("%s changed", PrevPath(path))
+	}
+}
+
+// Review LOW (2): an unsafe key directory is reported as itself.
+func TestBindVaultReportsUnsafeDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix modes")
+	}
+	d := secureDir(t)
+	keys := filepath.Join(d, "keys")
+	if err := os.Mkdir(keys, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(keys, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	mp, _ := NewFileProvider(FileOptions{Path: filepath.Join(keys, "master.key"), Getenv: env(nil)})
+	err := mp.(*FileProvider).BindVault("vault-1")
+	if err == nil || strings.Contains(err.Error(), "vault binding") || !strings.Contains(err.Error(), "group-writable") {
+		t.Fatalf("err = %v", err)
 	}
 }

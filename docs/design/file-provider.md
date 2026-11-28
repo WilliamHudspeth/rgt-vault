@@ -222,18 +222,19 @@ and darwin. `deploy/rgt-vault-go.service` gains a `file` variant using `LoadCred
     `FileProvider.RotateMasterSecret` first keeps the current key as `<key>.prev` (O_EXCL; refused if one
     exists). A new optional vault interface, `MasterRecovery` (`PreviousMasterSecret`, `ConfirmMasterSecret`,
     `RecoveryHint`, in `vault/provider.go`), connects it to the vault:
-    - `Open` calls `ConfirmMasterSecret` after the current key has unwrapped the keychain. That removes
-      `.prev` and records the vault binding.
+    - `Open` calls `ConfirmMasterSecret(vaultID, master)` after `master` has unwrapped the keychain. That
+      records the vault binding and may remove `.prev` (see note 15 for when).
     - `RotateMaster` calls it after installing the new keychain (3 lines in `vault/rotate.go`, a file RGT-535
-      edits later). Its "restore the previous master secret" error names `.prev`.
+      edits later; +13/−1 lines). Its "restore the previous master secret" error names `.prev`.
     - When the final unwrap fails, `Open` tries `.prev` and, if it unwraps, reports that with the `mv`
       command. It never switches keys itself.
     - `RotateMaster` loads the current key before calling the provider, so the key saved as `.prev` is known
       to be good.
 12. **One key file, one vault (review H2).** `<key>.vault-id` (0600) is written by `ConfirmMasterSecret` once
     the key has opened that vault. `BindVault`, `RotateMasterSecret` and `ConfirmMasterSecret` refuse a key
-    bound to another vault id. There is no override. `provider seal file --force` removes the binding
-    together with the key it replaces (which it keeps as `.prev`).
+    bound to another vault id. There is no override. The refusal says that removing `<key>.vault-id` releases
+    the key, after checking that the old vault is really gone. `provider seal file --force` removes the
+    binding and keeps the replaced key as `<key>.replaced-<UTC timestamp>` (note 15).
 13. **Concurrent `init` (review M1).** `init` takes an exclusive `flock` (Windows: `LockFileEx`) on
     `<db>.init.lock` from the existence check to the end of the vault step. It only cleans up when the vault
     did not exist under the lock. Cleanup also removes a key file the provider bootstrapped in that run
@@ -245,3 +246,20 @@ and darwin. `deploy/rgt-vault-go.service` gains a `file` variant using `LoadCred
       for Python compatibility).
     - L4: Windows directory checks are weaker; see providers.md.
     - The `O_NOFOLLOW` open is a separate function with a deterministic test.
+15. **Second review: `.prev` deletion races (MED-1, MED-2).**
+    - A process that opened the vault with the old key could remove a concurrent rotation's `.prev`. Now
+      `RotateMasterSecret` takes `<key>.lock` (`secfile.Lock`: `flock` / `LockFileEx`) and keeps it until
+      `ConfirmMasterSecret` or process exit.
+    - `ConfirmMasterSecret` makes a single non-blocking attempt at the lock. When the lock is held it skips
+      (always safe: nothing is removed).
+    - Under the lock, Confirm removes `.prev` only when the key file still equals the secret that unwrapped
+      the keychain (constant-time compare) and the key is bound to the confirming vault.
+    - A rotation first records the binding if it is missing, so `.prev` always belongs to one vault.
+    - `seal --force` no longer writes `.prev`. It keeps the replaced key as `<key>.replaced-<UTC>`, which is
+      never removed automatically, so a new vault created on the same path can no longer delete the old
+      vault's key.
+    - `credentialRule` also requires gid 0 for the file and its directory.
+    - An unsafe key directory is reported as itself, not as a "vault binding" error.
+    - Deterministic tests: `TestConfirmCannotRemovePrevMidRotation` (the lock),
+      `TestConfirmKeepsPrevWhenKeyChanged` (the compare), `TestPrevRemovedOnlyByOwningVault`,
+      `TestSealForceKeepsReplacedKey` (the reviewer's repro).

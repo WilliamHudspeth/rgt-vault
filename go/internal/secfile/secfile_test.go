@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // keyDir returns a fresh 0700 directory under t.TempDir().
@@ -125,5 +126,53 @@ func TestOptionsWarn(t *testing.T) {
 	Options{}.warn("ignored") // nil Warn is fine
 	if got != "hi" {
 		t.Fatalf("warn = %q", got)
+	}
+}
+
+func TestLockAndTryLock(t *testing.T) {
+	p := filepath.Join(keyDir(t), "k.lock")
+	unlock, err := Lock(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A second handle (same process) cannot take it.
+	if _, err := TryLock(p, 0); !errors.Is(err, ErrLockTimeout) {
+		t.Fatalf("TryLock while held: %v", err)
+	}
+	start := time.Now()
+	if _, err := TryLock(p, 100*time.Millisecond); !errors.Is(err, ErrLockTimeout) || time.Since(start) < 100*time.Millisecond {
+		t.Fatalf("TryLock with a deadline: %v after %v", err, time.Since(start))
+	}
+	// Lock blocks until the holder releases.
+	got := make(chan func(), 1)
+	go func() {
+		u, err := Lock(p)
+		if err != nil {
+			t.Error(err)
+		}
+		got <- u
+	}()
+	select {
+	case <-got:
+		t.Fatal("Lock did not block")
+	case <-time.After(100 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case u := <-got:
+		u()
+	case <-time.After(5 * time.Second):
+		t.Fatal("Lock did not get the released lock")
+	}
+	u, err := TryLock(p, 0)
+	if err != nil {
+		t.Fatalf("TryLock of a free lock: %v", err)
+	}
+	u()
+	if _, err := Lock(filepath.Join(t.TempDir(), "missing", "x.lock")); err == nil {
+		t.Fatal("Lock in a missing directory succeeded")
+	}
+	if _, err := TryLock(filepath.Join(t.TempDir(), "missing", "x.lock"), 0); err == nil || errors.Is(err, ErrLockTimeout) {
+		t.Fatalf("TryLock in a missing directory: %v", err)
 	}
 }

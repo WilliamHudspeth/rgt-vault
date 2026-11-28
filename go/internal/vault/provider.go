@@ -42,11 +42,11 @@ type MasterRecovery interface {
 	// unconfirmed rotation; an error (wrapping fs.ErrNotExist) when none is
 	// kept.
 	PreviousMasterSecret() ([]byte, error)
-	// ConfirmMasterSecret is called once the current secret has unwrapped
-	// keychain.json of vault vaultID: the provider may drop the previous
-	// secret and record which vault the key belongs to. An error fails the
-	// open.
-	ConfirmMasterSecret(vaultID string) error
+	// ConfirmMasterSecret is called once master has unwrapped keychain.json
+	// of vault vaultID: the provider may drop the previous secret (if it
+	// still holds master) and record which vault the key belongs to. An
+	// error fails the open.
+	ConfirmMasterSecret(vaultID string, master []byte) error
 	// RecoveryHint tells the operator how to restore the previous secret.
 	RecoveryHint() string
 }

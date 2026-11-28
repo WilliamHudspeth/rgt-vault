@@ -14,3 +14,8 @@ func openChecked(string, Options) (*os.File, int64, error) { return nil, 0, errU
 func checkDirChain(string) error { return errUnsupported }
 
 func createExclusive(string, []byte) error { return errUnsupported }
+
+// Lock is not supported on this platform.
+func Lock(string) (func(), error) { return nil, errUnsupported }
+
+func tryLockOnce(string) (func(), error) { return nil, errUnsupported }

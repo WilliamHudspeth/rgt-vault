@@ -192,7 +192,7 @@ func (v *Vault) RotateMaster(ctx context.Context) error {
 	_ = v.km.Close()
 	v.km, v.keyEpoch = km, newEpoch
 	if r, ok := v.provider.(MasterRecovery); ok { // the new keychain is installed: drop the previous secret
-		_ = r.ConfirmMasterSecret(v.vaultID) // best effort: the next Open confirms again
+		_ = r.ConfirmMasterSecret(v.vaultID, newMaster) // best effort: the next Open confirms again
 	}
 	return v.logAudit(ctx, "ROTATE", store.Name("MASTER_KEY"), "Master key rotated successfully")
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/auth"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/keychain"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/providers"
+	"github.com/WilliamHudspeth/rgt-vault/go/internal/secfile"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/servecmd"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/server"
 	"github.com/WilliamHudspeth/rgt-vault/go/internal/vault"
@@ -382,7 +383,7 @@ func initVault(ctx context.Context, res servecmd.Resolved) ([]string, error) {
 	if err := os.MkdirAll(filepath.Dir(res.DB), 0o700); err != nil {
 		return nil, fmt.Errorf("vault directory: %w", err)
 	}
-	unlock, err := lockInit(res.DB + ".init.lock")
+	unlock, err := secfile.Lock(res.DB + ".init.lock")
 	if err != nil {
 		return nil, err
 	}

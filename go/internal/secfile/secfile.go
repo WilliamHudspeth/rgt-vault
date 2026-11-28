@@ -44,6 +44,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // DefaultMaxSize is the size limit when [Options.MaxSize] is zero.
@@ -242,4 +243,26 @@ func writeAndSync(f *os.File, path string, data []byte) error {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
+}
+
+// errWouldBlock: the lock is held elsewhere.
+var errWouldBlock = errors.New("lock is held")
+
+// ErrLockTimeout is returned by [TryLock] when the lock stayed held.
+var ErrLockTimeout = errors.New("timed out waiting for the lock")
+
+// TryLock is [Lock] with a deadline: it polls until timeout and then
+// returns ErrLockTimeout.
+func TryLock(path string, timeout time.Duration) (func(), error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		unlock, err := tryLockOnce(path)
+		if !errors.Is(err, errWouldBlock) {
+			return unlock, err
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("%w: %s", ErrLockTimeout, path)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }

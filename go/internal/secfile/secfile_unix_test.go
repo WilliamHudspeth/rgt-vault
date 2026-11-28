@@ -393,6 +393,8 @@ func TestCredentialRule(t *testing.T) {
 		{"group writable", 0o460, root, root, true, true, nil, false},
 		{"other readable", 0o444, root, root, true, true, nil, false},
 		{"dir not root", 0o440, root, user, true, true, nil, false},
+		{"file group not root", 0o440, &syscall.Stat_t{Uid: 0, Gid: 1000}, root, true, true, nil, false},
+		{"dir group not root", 0o440, root, &syscall.Stat_t{Uid: 0, Gid: 1000}, true, true, nil, false},
 		{"not in memory", 0o440, root, root, false, true, nil, false},
 		{"not read-only", 0o440, root, root, true, false, nil, false},
 		{"statfs failed", 0o440, root, root, true, true, errors.New("x"), false},
@@ -481,5 +483,20 @@ func TestCheckCreatable(t *testing.T) {
 	writeKey(t, f, 0o600)
 	if err := CheckCreatable(filepath.Join(f, "x")); err == nil {
 		t.Fatal("CheckCreatable under a regular file succeeded")
+	}
+}
+
+func TestLockRefusesSymlink(t *testing.T) {
+	d := keyDir(t)
+	target := filepath.Join(d, "target")
+	link := filepath.Join(d, "k.lock")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Lock(link); err == nil {
+		t.Fatal("Lock followed a symlink")
+	}
+	if _, err := os.Lstat(target); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal("the symlink target was created")
 	}
 }

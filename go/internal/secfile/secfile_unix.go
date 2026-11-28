@@ -100,10 +100,14 @@ func credentialRule(perm fs.FileMode, file, dir *syscall.Stat_t, inMemory, readO
 		return errors.New("cannot read owners")
 	case file.Uid != 0:
 		return errors.New("the file is not owned by root")
+	case file.Gid != 0:
+		return errors.New("the file's group is not root")
 	case perm&^0o440 != 0:
 		return fmt.Errorf("mode %04o allows more than owner/group read", perm)
 	case dir.Uid != 0:
 		return errors.New("its directory is not owned by root")
+	case dir.Gid != 0:
+		return errors.New("its directory's group is not root")
 	case fsErr != nil:
 		return fmt.Errorf("filesystem not checked: %v", fsErr)
 	case !inMemory:
@@ -205,4 +209,44 @@ func createExclusive(path string, data []byte) error {
 		return fmt.Errorf("chmod %s: %w", path, err)
 	}
 	return writeAndSync(f, path, data)
+}
+
+// Lock takes an exclusive advisory lock (flock) on path, creating it 0600
+// (no symlink followed) if it is missing, and returns the release function.
+// It blocks while another open file description holds the lock, in this or
+// another process. The lock file is never removed (removing a lock file is
+// racy).
+func Lock(path string) (func(), error) {
+	return lockFile(path, false)
+}
+
+// tryLockOnce takes the lock without blocking; errWouldBlock if it is held.
+func tryLockOnce(path string) (func(), error) { return lockFile(path, true) }
+
+func lockFile(path string, nonBlocking bool) (func(), error) {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+	how := syscall.LOCK_EX
+	if nonBlocking {
+		how |= syscall.LOCK_NB
+	}
+	for {
+		err = syscall.Flock(int(f.Fd()), how)
+		if err != syscall.EINTR {
+			break
+		}
+	}
+	if err != nil {
+		_ = f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, errWouldBlock
+		}
+		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
 }

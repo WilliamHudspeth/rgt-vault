@@ -284,3 +284,43 @@ func createExclusive(path string, data []byte) error {
 	}
 	return writeAndSync(os.NewFile(uintptr(h), path), path, data)
 }
+
+// Lock takes an exclusive LockFileEx lock on path (created with a protected
+// DACL if missing) and returns the release function. It blocks while
+// another handle holds the lock. The lock file is never removed.
+func Lock(path string) (func(), error) { return lockFile(path, false) }
+
+// tryLockOnce takes the lock without blocking; errWouldBlock if it is held.
+func tryLockOnce(path string) (func(), error) { return lockFile(path, true) }
+
+func lockFile(path string, nonBlocking bool) (func(), error) {
+	sa, err := protectedSA()
+	if err != nil {
+		return nil, err
+	}
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	h, err := windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, sa, windows.OPEN_ALWAYS, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+	ol := new(windows.Overlapped)
+	flags := uint32(windows.LOCKFILE_EXCLUSIVE_LOCK)
+	if nonBlocking {
+		flags |= windows.LOCKFILE_FAIL_IMMEDIATELY
+	}
+	if err := windows.LockFileEx(h, flags, 0, 1, 0, ol); err != nil {
+		_ = windows.CloseHandle(h)
+		if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+			return nil, errWouldBlock
+		}
+		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+	return func() {
+		_ = windows.UnlockFileEx(h, 0, 1, 0, ol)
+		_ = windows.CloseHandle(h)
+	}, nil
+}

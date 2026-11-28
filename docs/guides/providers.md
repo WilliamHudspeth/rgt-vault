@@ -41,17 +41,31 @@ opening fails: rgt-vault never makes a new key for a vault that already has secr
 **One key, one vault.** Once a key has opened a vault, rgt-vault records that vault's id in
 `<key>.vault-id` (0600). A key file that belongs to another vault is refused (by `init`, by every open and by
 rotation): two vaults sharing a key would mean that rotating one locks the other out. Give every vault its
-own key file.
+own key file. The refusal names the vault the key belongs to. Only if that vault is really gone (its data
+cannot be opened without this key) remove `<key>.vault-id` to release the key.
+
+**Copies and backups share the key.** A copied vault directory or a restored backup keeps its vault id, so
+it opens with the same key file. After a master rotation the old key is gone (`.prev` is removed once the new
+key works). A backup taken before the rotation needs the OLD key: save a copy of the key file with every vault
+backup (and keep the two apart, see the threat model).
 
 **Rotation.** `rgt-vault rotate --target master` first keeps the current key as `<key>.prev` (0600, never
 over an existing `.prev`), then writes the new key to a temp file in the same directory (same checks) and
-renames it over the old one. `<key>.prev` is removed only once the vault has installed the re-wrapped
-keychain, or at the next open that works with the new key. If the process dies in between (the re-wrap takes
-seconds of Argon2id), the next open says that the new key does not open the vault but `<key>.prev` does, and
-how to restore it (`mv <key>.prev <key>`). rgt-vault never switches keys on its own. A rotation is refused
-while an unconfirmed `.prev` exists. `provider seal file --force` over an existing key also keeps it as
-`.prev`. With a systemd credential, rotation is refused before anything changes: re-seal a new key (below)
-and restart.
+renames it over the old one. The rotating process holds `<key>.lock` (an `flock`; `LockFileEx` on Windows;
+the file stays) from that point until the re-wrapped keychain is installed. `<key>.prev` is removed only
+under that lock, only by the vault the key is bound to, and only when the key file still holds the key that
+has just opened the vault. Another process that opened the vault with the old key, an offline `export` for
+example, therefore never removes a running rotation's `.prev`. While another process holds the lock, opening
+simply leaves `.prev` alone; it does not wait. If the rotating process dies before the re-wrap is on disk (it
+takes seconds of Argon2id), the next open says that the new key does not open the vault but `<key>.prev`
+does, and how to restore it (`mv <key>.prev <key>`). rgt-vault never switches keys on its own. A rotation is
+refused while an unconfirmed `.prev` exists. With a systemd credential, rotation is refused before anything
+changes: re-seal a new key (below) and restart.
+
+`provider seal file --force` over an existing key keeps the replaced key as
+`<key>.replaced-<UTC timestamp>`, a name that rgt-vault never removes. It may be the only key of the vault
+that used it: delete it yourself once that vault is gone or re-keyed. `--force` also removes `<key>.vault-id`,
+so the new key can serve a new vault.
 
 ### Checks on every read
 

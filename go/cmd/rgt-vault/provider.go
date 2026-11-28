@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -79,16 +80,19 @@ func newSealFileCmd(stdout io.Writer) *cobra.Command {
 			write := secfile.CreateSecret
 			if force {
 				write = secfile.ReplaceSecret
-				// The key being replaced may be a live vault's: keep it as
-				// <key>.prev (never over an existing .prev), and drop the
-				// vault binding so the new key can serve a new vault.
+				// The key being replaced may be a live vault's only key: keep it
+				// under a name nothing ever removes automatically (review
+				// MED-2; .prev belongs to rotations and is auto-removed), and
+				// drop the vault binding so the new key can serve a new vault.
 				if old, err := secfile.OpenSecret(path, secfile.Options{MaxSize: providers.MaxKeyFileSize}); err == nil {
-					err = secfile.CreateSecret(providers.PrevPath(path), old)
+					kept := path + ".replaced-" + time.Now().UTC().Format("20060102T150405.000000000Z")
+					err = secfile.CreateSecret(kept, old)
 					providers.Wipe(old)
 					if err != nil {
-						return fmt.Errorf("keeping the replaced key as %s: %w (check and remove it first)", providers.PrevPath(path), err)
+						return fmt.Errorf("keeping the replaced key as %s: %w", kept, err)
 					}
-					fmt.Fprintf(stdout, "The replaced key is kept in %s.\n", providers.PrevPath(path))
+					fmt.Fprintf(stdout, "The replaced key is kept in %s: it is the only key of the vault that used it. "+
+						"Delete it yourself once you are sure that vault is gone or re-keyed.\n", kept)
 				} else if !errors.Is(err, os.ErrNotExist) {
 					return fmt.Errorf("refusing to replace %s: %w", path, err)
 				}

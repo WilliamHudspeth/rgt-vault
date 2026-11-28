@@ -302,7 +302,7 @@ func (v *Vault) load(ctx context.Context) error {
 		return err
 	}
 	if r, ok := v.provider.(MasterRecovery); ok {
-		if err := r.ConfirmMasterSecret(v.vaultID); err != nil {
+		if err := r.ConfirmMasterSecret(v.vaultID, master); err != nil {
 			_ = km.Close()
 			keychain.Wipe(dek)
 			return err
