@@ -168,6 +168,65 @@ written to the audit log first (`TOTP_SECRET_REPLACED`). The provisioning URI an
 once, on the terminal; when stdout is redirected they are not printed unless you pass
 `--show-secret`, so they do not end up in logs.
 
+## `use` and `actions`: run an action with a secret
+
+```bash
+rgt-vault actions                          # name, description and the parameters each action accepts
+rgt-vault use GITHUB_TOKEN --namespace ci --action http_get_with_auth \
+    --purpose ci-build --param url=https://api.github.com/user
+echo '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}' | \
+    rgt-vault use OPENAI_API_KEY --namespace openai --action openai_chat --purpose inference --params-json -
+```
+
+`use` is the product's main action: the server unseals the secret, runs the named action
+(`POST /v1/secrets/{ns}/{name}/use`) and prints only the action's result as JSON. The secret value never
+reaches the CLI. The built-in actions are `http_get_with_auth`, `http_post_with_auth`, `openai_chat` and
+`echo` (a safe end-to-end check: it returns the secret's length, never the value).
+
+- `--param key=value` is repeatable and always a string. `--params-json FILE` (or `-` for stdin) takes a
+  JSON object for values that are not strings (a `messages` list, a `body` object). The two combine; a key
+  given twice is an error.
+- The token needs the `agent` scope. A policy denial prints the server's reason and incident id (see
+  "Errors" below).
+- On a server started with `--require-approval`, `use` waits until an operator decides (see below).
+
+## `requests`: the approval queue
+
+```bash
+rgt-vault requests list                    # id, agent, namespace/secret, action, purpose, 2fa, created
+rgt-vault requests approve REQUEST_ID      # asks for the TOTP code when the secret needs one
+rgt-vault requests deny REQUEST_ID --reason "not during the freeze"
+```
+
+These commands need an operator token (`--token`, `$RGT_VAULT_TOKEN`, `$RGT_VAULT_TOKEN_FILE`, or the
+`operator.token` that `init` wrote), like `audit`. They send no operator name: the server takes the approver
+from the token.
+
+For a secret stored with `--require-2fa`, `requests approve` asks for the code on the terminal **without
+echo**. When stdin is not a terminal and no code was given, it refuses. For scripts, `--totp-code CODE` is
+accepted, but the code is then visible to other local users in the process list and in shell history; use it
+only where that is acceptable. A code is single use, and a wrong one prints the server's message.
+
+To store a secret that needs a second factor, and a note:
+
+```bash
+echo "sk-..." | rgt-vault set SIGNING_KEY --namespace prod --purpose setup --require-2fa --note "prod signing key"
+```
+
+## Errors
+
+Every command that talks to the server prints the server's reason, error class, HTTP status and incident id:
+
+```
+Error: use failed: Agent 'rogue' denied read access to 'GITHUB_TOKEN' (github/ci-build) (HTTP 403 PolicyDeniedError, incident 77cb31cd4a6983ea)
+```
+
+The incident id finds the matching line in the server log. When the answer is not the server's standard error
+body (a proxy's page, for example) only the status is shown (`use failed: HTTP 502`). Text from the server is
+shown with control characters replaced by `?`, so it cannot change what the terminal displays. Exit codes are
+unchanged: 1 for an error, 2 for a broken audit chain. `get` with a token that lacks the `lease` scope says
+so and points to a token with `--scope agent,lease` or to `--offline`.
+
 ## Coming from the Python line
 
 ```bash
