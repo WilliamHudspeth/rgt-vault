@@ -243,10 +243,14 @@ func TestASVS_V5_SQLInjectionProbesOnStore(t *testing.T) {
 	}
 
 	// Verify store.Open rejects SQLite URI/DSN parameter injection (RGT-367, RGT-372).
-	// Using _pragma=foreign_keys(1) ensures the probe would otherwise succeed if the
-	// '?' guard in store.Open (store.go:102-105) were removed.
+	// Using non-_pragma query parameters (mode=ro, cache=shared) ensures these
+	// probes are non-vacuous: store.Open appends "?" + connParams (store.go:137),
+	// so a non-_pragma parameter absorbs the second '?' into its value and would
+	// otherwise succeed in modernc.org/sqlite if the '?' guard in store.Open
+	// (store.go:102-105) were removed.
 	for _, badPath := range []string{
-		filepath.Join(t.TempDir(), "vault.db?_pragma=foreign_keys(1)"),
+		filepath.Join(t.TempDir(), "vault.db?mode=ro"),
+		filepath.Join(t.TempDir(), "vault.db?cache=shared"),
 		"file:" + filepath.Join(t.TempDir(), "vault.db"),
 	} {
 		if badStore, err := store.Open(ctx, badPath); err == nil {
@@ -422,7 +426,7 @@ func TestASVS_V5_SourceScanNoShellExecAndAllowlistedImports(t *testing.T) {
 		"internal/providers/exec.go": true,
 		"internal/providers/tpm.go":  true,
 	}
-	// The single first-party file in go/ permitted to import "unsafe" (G6 Windows DPAPI).
+	// The single first-party file in go/ permitted to import `unsafe` (G6 Windows DPAPI).
 	allowedUnsafe := map[string]bool{
 		"internal/providers/dpapi_windows.go": true,
 	}
@@ -472,10 +476,10 @@ func TestASVS_V5_SourceScanNoShellExecAndAllowlistedImports(t *testing.T) {
 			if strings.Contains(strings.ToLower(pkgPath), "ld"+"ap") {
 				t.Errorf("%s imports LDAP package %q (RGT-370)", rel, pkgPath)
 			}
-			if pkgPath == "unsafe" {
+			if pkgPath == "un"+"safe" {
 				seenUnsafe = true
 				if !allowedUnsafe[rel] {
-					t.Errorf("%s imports \"unsafe\" outside allowlist %v (RGT-374)", rel, allowedUnsafe)
+					t.Errorf("%s imports unsafe outside allowlist %v (RGT-374)", rel, allowedUnsafe)
 				}
 			}
 			if pkgPath == "os/exec" {
@@ -557,38 +561,9 @@ func TestASVS_V5_SourceScanNoShellExecAndAllowlistedImports(t *testing.T) {
 
 				// Check package-internal variadic format helper functions:
 				// fail, newValueError, validationErr, deniedErr, execErr, payloadErr, newErr, newError.
-				if ident, ok := call.Fun.(*ast.Ident); ok {
-					switch ident.Name {
-					case "fail", "newValueError", "validationErr", "deniedErr", "execErr", "payloadErr":
-						// Single-arg helpers in internal/hooks (validationErr(msg)) and
-						// internal/mcp/sdk_e2e_test.go (fail(msg)) take a plain message, not a format string.
-						if len(call.Args) <= 1 && (strings.HasPrefix(rel, "internal/hooks/") || isTest) {
-							break
-						}
-						if len(call.Args) > 0 && !isConstantFormatArg(call.Args[0], inFormatWrapper || inClosureWrapper) {
-							pos := fset.Position(call.Pos())
-							t.Errorf("%s:%d non-constant format string in %s(...) (RGT-375)", rel, pos.Line, ident.Name)
-						}
-					case "newErr":
-						// captoken.newErr(kind, format, ...) has format at index 1;
-						// vault.newErr(kinds, cause, format, ...) has format at index 2.
-						fmtIdx := 1
-						if strings.HasPrefix(rel, "internal/vault/") {
-							fmtIdx = 2
-						}
-						if fmtIdx < len(call.Args) && !isConstantFormatArg(call.Args[fmtIdx], inFormatWrapper || inClosureWrapper) {
-							pos := fset.Position(call.Pos())
-							t.Errorf("%s:%d non-constant format string in newErr(...) (RGT-375)", rel, pos.Line)
-						}
-					case "newError":
-						// capabilities.newError(pyClass, cause, kinds, format, a...) has format at index 3.
-						if strings.HasPrefix(rel, "internal/capabilities/") && len(call.Args) > 3 {
-							if !isConstantFormatArg(call.Args[3], inFormatWrapper || inClosureWrapper) {
-								pos := fset.Position(call.Pos())
-								t.Errorf("%s:%d non-constant format string in newError(...) (RGT-375)", rel, pos.Line)
-							}
-						}
-					}
+				if badHelper, bad := checkInternalFormatHelperCall(rel, isTest, call, inFormatWrapper || inClosureWrapper); bad {
+					pos := fset.Position(call.Pos())
+					t.Errorf("%s:%d non-constant format string in %s(...) (RGT-375)", rel, pos.Line, badHelper)
 				}
 				return true
 			})
@@ -600,6 +575,150 @@ func TestASVS_V5_SourceScanNoShellExecAndAllowlistedImports(t *testing.T) {
 	}
 	if !seenExec {
 		t.Error("expected to scan internal/providers/exec.go importing os/exec")
+	}
+}
+
+func checkInternalFormatHelperCall(rel string, isTest bool, call *ast.CallExpr, inWrapper bool) (string, bool) {
+	ident, ok := call.Fun.(*ast.Ident)
+	if !ok {
+		return "", false
+	}
+	switch ident.Name {
+	case "fail", "newValueError", "validationErr", "deniedErr", "execErr", "payloadErr":
+		// Single-arg helpers in internal/hooks (validationErr(msg)) and
+		// internal/mcp/sdk_e2e_test.go (fail(msg)) take a plain message, not a format string.
+		if len(call.Args) <= 1 && (strings.HasPrefix(rel, "internal/hooks/") || isTest) {
+			return "", false
+		}
+		if len(call.Args) > 0 && !isConstantFormatArg(call.Args[0], inWrapper) {
+			return ident.Name, true
+		}
+	case "newErr":
+		// captoken.newErr(kind, format, ...) has format at index 1;
+		// vault.newErr(kinds, cause, format, ...) has format at index 2.
+		fmtIdx := 1
+		if strings.HasPrefix(rel, "internal/vault/") {
+			fmtIdx = 2
+		}
+		if fmtIdx < len(call.Args) && !isConstantFormatArg(call.Args[fmtIdx], inWrapper) {
+			return ident.Name, true
+		}
+	case "newError":
+		// capabilities.newError(pyClass, cause, kinds, format, a...) has format at index 3.
+		if strings.HasPrefix(rel, "internal/capabilities/") && len(call.Args) > 3 {
+			if !isConstantFormatArg(call.Args[3], inWrapper) {
+				return ident.Name, true
+			}
+		}
+	}
+	return "", false
+}
+
+func TestASVS_V5_FormatGuardAcceptsAndRejects(t *testing.T) {
+	scanSnippet := func(t *testing.T, rel string, src string) []string {
+		t.Helper()
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, rel, src, 0)
+		if err != nil {
+			t.Fatalf("ParseFile(%s): %v", rel, err)
+		}
+		isTest := strings.HasSuffix(rel, "_test.go")
+		var violations []string
+		for _, decl := range f.Decls {
+			fnDecl, _ := decl.(*ast.FuncDecl)
+			inFormatWrapper := hasFormatParam(fnDecl)
+			ast.Inspect(decl, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				inClosureWrapper := enclosingFuncLitHasFormatParam(decl, call)
+				inWrap := inFormatWrapper || inClosureWrapper
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+					fnName := sel.Sel.Name
+					if fmtIdx, ok := formatArgIndex(fnName); ok && fmtIdx < len(call.Args) {
+						if !isConstantFormatArg(call.Args[fmtIdx], inWrap) {
+							violations = append(violations, "."+fnName)
+						}
+					}
+				}
+				if helper, bad := checkInternalFormatHelperCall(rel, isTest, call, inWrap); bad {
+					violations = append(violations, helper)
+				}
+				return true
+			})
+		}
+		return violations
+	}
+
+	// 1. Accepted format calls: constant literals, constant concatenations, and
+	// format-wrapper forwarding (including f + "\n" as in internal/transport/transport_test.go:37).
+	validSrc := `package sample
+import ("bytes"; "fmt")
+type logSink struct{ b bytes.Buffer }
+func (l *logSink) Logf(f string, a ...any) {
+	fmt.Fprintf(&l.b, f+"\n", a...)
+}
+func wrap(format string, args ...any) error {
+	return fmt.Errorf("prefix: "+format, args...)
+}
+func goodCalls() {
+	_ = fmt.Sprintf("literal %d", 1)
+	_ = fmt.Appendf(nil, "a"+"b %s", "ok")
+	closure := func(f string, a ...any) {
+		_ = fmt.Sprintf(f+"\n", a...)
+	}
+	closure("hi %s", "there")
+}
+`
+	if got := scanSnippet(t, "internal/transport/transport_test.go", validSrc); len(got) != 0 {
+		t.Fatalf("expected 0 violations on valid format calls, got %v", got)
+	}
+
+	// 2. Planted bad cases: non-constant format argument in fmt.Appendf (arg 1),
+	// cmd.Printf (arg 0), fmt.Errorf concatenation with non-wrapper variable,
+	// wrapper parameter concatenated with non-constant variable, and internal helper.
+	for _, tc := range []struct {
+		name string
+		rel  string
+		src  string
+		want string
+	}{
+		{
+			name: "fmt.Appendf with variable format at arg index 1",
+			rel:  "internal/sample/sample.go",
+			src:  `package sample; import "fmt"; func bad(userVar string) { _ = fmt.Appendf(nil, userVar, 1) }`,
+			want: ".Appendf",
+		},
+		{
+			name: "cmd.Printf with variable format at arg index 0",
+			rel:  "cmd/rgt-vault/sample.go",
+			src:  `package sample; type C struct{}; func (C) Printf(string, ...any) {}; func bad(cmd C, userVar string) { cmd.Printf(userVar) }`,
+			want: ".Printf",
+		},
+		{
+			name: "fmt.Errorf with non-wrapper variable concatenation",
+			rel:  "internal/sample/sample.go",
+			src:  `package sample; import "fmt"; func bad(userVar string) error { return fmt.Errorf(userVar+"%s", "x") }`,
+			want: ".Errorf",
+		},
+		{
+			name: "format wrapper concatenating f with non-constant variable",
+			rel:  "internal/transport/transport_test.go",
+			src:  `package sample; import ("io"; "fmt"); func Logf(w io.Writer, f string, extra string, a ...any) { fmt.Fprintf(w, f+extra, a...) }`,
+			want: ".Fprintf",
+		},
+		{
+			name: "internal helper newErr with non-constant format string",
+			rel:  "internal/captoken/sample.go",
+			src:  `package sample; func newErr(int, string, ...any) error { return nil }; func bad(userVar string) error { return newErr(1, userVar, "x") }`,
+			want: "newErr",
+		},
+	} {
+		got := scanSnippet(t, tc.rel, tc.src)
+		if len(got) != 1 || got[0] != tc.want {
+			t.Errorf("%s: got violations %v, want [%s]", tc.name, got, tc.want)
+		}
 	}
 }
 
@@ -672,19 +791,27 @@ func sqlQueryArgIndex(fn string) (int, bool) {
 }
 
 // isConstantFormatArg reports whether expr is a constant string literal (or
-// binary '+' concatenation thereof), or the forwarded 'format'/'fmtStr' parameter
+// binary '+' concatenation thereof), or the forwarded 'format'/'fmtStr'/'f'
+// parameter (optionally concatenated with constant string literals via '+')
 // inside a format wrapper function or test closure.
 func isConstantFormatArg(expr ast.Expr, inFormatWrapper bool) bool {
 	if inFormatWrapper {
-		if ident, ok := expr.(*ast.Ident); ok && (ident.Name == "format" || ident.Name == "fmtStr" || ident.Name == "f") {
-			return true
+		switch e := expr.(type) {
+		case *ast.Ident:
+			if e.Name == "format" || e.Name == "fmtStr" || e.Name == "f" {
+				return true
+			}
+		case *ast.BinaryExpr:
+			return e.Op == token.ADD && isConstantFormatArg(e.X, true) && isConstantFormatArg(e.Y, true)
+		case *ast.ParenExpr:
+			return isConstantFormatArg(e.X, true)
 		}
 	}
 	return isConstantStringExpr(expr)
 }
 
 // isConstantStringExpr reports whether expr is a string literal or a binary `+`
-// concatenation of string literals / constant identifiers.
+// concatenation of string literals.
 func isConstantStringExpr(expr ast.Expr) bool {
 	switch e := expr.(type) {
 	case *ast.BasicLit:
